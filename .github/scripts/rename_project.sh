@@ -17,10 +17,10 @@ echo "GitHub Username: $github_username";
 
 echo "Renaming project..."
 
-original_author="{{author_name}}"
-original_project_name="{{project_name}}"
-original_project_description="{{project_description}}"
-original_github_username="{{github_username}}"
+original_author="Evan McKinney"
+original_project_name="can_sandwich"
+original_project_description=""
+original_github_username="evmckinney9"
 
 # avoid renaming in .github/scripts/rename_project.sh
 for filename in $(git ls-files | grep -vP '^\.github/scripts/rename_project\.sh$')

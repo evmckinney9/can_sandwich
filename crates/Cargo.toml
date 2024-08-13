@@ -1,10 +1,10 @@
 [package]
-name = "{{project_name}}_accelerate"
+name = "_accelerate"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "{{project_name}}_accelerate"
+name = "_accelerate"
 crate-type = ["cdylib"]
 path = "src/lib.rs"
 
