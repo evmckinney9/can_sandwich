@@ -12,9 +12,9 @@ dependencies = [
     "numpy",
     "matplotlib",
     "LovelyPlots",
-    # "qiskit",
-    # "qutip",
-    # "weylchamber",
+    "qiskit",
+    "qutip",
+    "weylchamber",
 ]
 
 [project.optional-dependencies]
