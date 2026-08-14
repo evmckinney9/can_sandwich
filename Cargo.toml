@@ -1,0 +1,44 @@
+# Standalone seed of the from-scratch can-sandwich solver. Its own workspace root
+# (`[workspace]`) so it touches NO existing gulps file -- current gulps stays
+# byte-identical and runnable for baselines on the same linspace triples.
+[package]
+name = "can_sandwich"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[features]
+default = []
+# Fixed-action projective Spin inverse and bounded action schedulers. These are
+# theorem/research diagnostics, not part of the production realization spine.
+research-spin = []
+# Offline atlas controls. Default library builds are deterministic: process
+# environment variables cannot alter the realization candidate set.
+diagnostics = []
+
+[dependencies]
+nalgebra = "0.33"
+# Companion-matrix eigenvalues for the bounded algebraic four-Givens and
+# rank-structured constructions. Root-finding (QR eigensolve), not GN.
+faer = { version = "0.24", default-features = false, features = ["std"] }
+dyn-stack = "0.13"
+
+[[bin]]
+name = "can_sandwich"
+path = "src/main.rs"
+required-features = ["diagnostics"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+
+[[bin]]
+name = "probe_dump"
+path = "src/probe_dump.rs"
+required-features = ["diagnostics"]
+
+[[bin]]
+name = "wall_probe"
+path = "src/wall_probe.rs"
+required-features = ["diagnostics"]
