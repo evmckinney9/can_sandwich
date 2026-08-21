@@ -1841,6 +1841,86 @@ fn certified_cubic_pullback_roots(pullback: &CauerPullback) -> Option<Vec<f64>> 
     Some(roots)
 }
 
+/// Pendant values at which one core weight vanishes on the Heron curve.
+/// If weight i is zero, Heron is `-(x_j-x_k)^2`, so the remaining condition is
+/// exactly `x_j=x_k`. Eliminating sigma between that quadratic and the chosen
+/// affine weight gives `q0*l1^2-q1*l0*l1+q2*l0^2`.
+fn zero_weight_pendants(
+    prep: &ChartPrep,
+    delta: [C; 4],
+    lam: [C; 4],
+    target: &[C; 4],
+    certified: bool,
+) -> Vec<f64> {
+    let Some((a0, a1, b0, b1)) = weight_numerators(prep) else {
+        return Vec::new();
+    };
+    let x: [[Poly; 3]; 3] = std::array::from_fn(|i| {
+        [
+            pmul(&a0[i], &b0[i]),
+            padd(&pmul(&a0[i], &b1[i]), &pmul(&a1[i], &b0[i])),
+            pmul(&a1[i], &b1[i]),
+        ]
+    });
+    let mut roots = Vec::new();
+    let pair = prep.chart.1;
+    for family in 0..2 {
+        for i in 0..3 {
+            let zero_column = if family == 0 { pair.0 } else { pair.1 };
+            if !zero_weight_character_supported(
+                &delta,
+                &lam,
+                target,
+                prep.chart,
+                prep.core[i],
+                zero_column,
+                certified,
+            ) {
+                super::prof::hit(65);
+                continue;
+            }
+            let (j, k) = ((i + 1) % 3, (i + 2) % 3);
+            let (l0, l1) = if family == 0 {
+                (&a0[i], &a1[i])
+            } else {
+                (&b0[i], &b1[i])
+            };
+            let q: [Poly; 3] = std::array::from_fn(|s| psub(&x[j][s], &x[k][s]));
+            let resultant = padd(
+                &psub(&pmul(&q[0], &pmul(l1, l1)), &pmul(&q[1], &pmul(l0, l1))),
+                &pmul(&q[2], &pmul(l0, l0)),
+            );
+            let scale = resultant.max_abs();
+            if scale == 0.0 || !scale.is_finite() {
+                continue;
+            }
+            let candidates = poly_roots(resultant.as_slice());
+            if certified {
+                let seeds: Vec<(f64, f64)> =
+                    candidates.iter().map(|root| (root.re, root.im)).collect();
+                if let Some(isolated) =
+                    super::arb_roots::real_roots_power_seeded(resultant.as_slice(), &seeds)
+                {
+                    roots.extend(
+                        isolated
+                            .into_iter()
+                            .filter(|&root| root > 1e-7 && root < 1.0 - 1e-7),
+                    );
+                    continue;
+                }
+            }
+            for root in candidates {
+                if root.im.abs() < 2e-6 && root.re > 1e-7 && root.re < 1.0 - 1e-7 {
+                    roots.push(root.re);
+                }
+            }
+        }
+    }
+    roots.sort_by(|a, b| (a - 0.5).abs().total_cmp(&(b - 0.5).abs()));
+    roots.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+    roots
+}
+
 #[cfg(test)]
 mod coefficient_tests {
     use super::*;
@@ -2094,84 +2174,4 @@ mod coefficient_tests {
             }
         }
     }
-}
-
-/// Pendant values at which one core weight vanishes on the Heron curve.
-/// If weight i is zero, Heron is `-(x_j-x_k)^2`, so the remaining condition is
-/// exactly `x_j=x_k`. Eliminating sigma between that quadratic and the chosen
-/// affine weight gives `q0*l1^2-q1*l0*l1+q2*l0^2`.
-fn zero_weight_pendants(
-    prep: &ChartPrep,
-    delta: [C; 4],
-    lam: [C; 4],
-    target: &[C; 4],
-    certified: bool,
-) -> Vec<f64> {
-    let Some((a0, a1, b0, b1)) = weight_numerators(prep) else {
-        return Vec::new();
-    };
-    let x: [[Poly; 3]; 3] = std::array::from_fn(|i| {
-        [
-            pmul(&a0[i], &b0[i]),
-            padd(&pmul(&a0[i], &b1[i]), &pmul(&a1[i], &b0[i])),
-            pmul(&a1[i], &b1[i]),
-        ]
-    });
-    let mut roots = Vec::new();
-    let pair = prep.chart.1;
-    for family in 0..2 {
-        for i in 0..3 {
-            let zero_column = if family == 0 { pair.0 } else { pair.1 };
-            if !zero_weight_character_supported(
-                &delta,
-                &lam,
-                target,
-                prep.chart,
-                prep.core[i],
-                zero_column,
-                certified,
-            ) {
-                super::prof::hit(65);
-                continue;
-            }
-            let (j, k) = ((i + 1) % 3, (i + 2) % 3);
-            let (l0, l1) = if family == 0 {
-                (&a0[i], &a1[i])
-            } else {
-                (&b0[i], &b1[i])
-            };
-            let q: [Poly; 3] = std::array::from_fn(|s| psub(&x[j][s], &x[k][s]));
-            let resultant = padd(
-                &psub(&pmul(&q[0], &pmul(l1, l1)), &pmul(&q[1], &pmul(l0, l1))),
-                &pmul(&q[2], &pmul(l0, l0)),
-            );
-            let scale = resultant.max_abs();
-            if scale == 0.0 || !scale.is_finite() {
-                continue;
-            }
-            let candidates = poly_roots(resultant.as_slice());
-            if certified {
-                let seeds: Vec<(f64, f64)> =
-                    candidates.iter().map(|root| (root.re, root.im)).collect();
-                if let Some(isolated) =
-                    super::arb_roots::real_roots_power_seeded(resultant.as_slice(), &seeds)
-                {
-                    roots.extend(
-                        isolated
-                            .into_iter()
-                            .filter(|&root| root > 1e-7 && root < 1.0 - 1e-7),
-                    );
-                    continue;
-                }
-            }
-            for root in candidates {
-                if root.im.abs() < 2e-6 && root.re > 1e-7 && root.re < 1.0 - 1e-7 {
-                    roots.push(root.re);
-                }
-            }
-        }
-    }
-    roots.sort_by(|a, b| (a - 0.5).abs().total_cmp(&(b - 0.5).abs()));
-    roots.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
-    roots
 }

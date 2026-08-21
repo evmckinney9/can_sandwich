@@ -110,7 +110,7 @@ pub fn sdist(x: &[C; 4], y: &[C; 4]) -> f64 {
         }
         for i in 0..k {
             heap(k - 1, idx, x, y, best);
-            if k % 2 == 0 {
+            if k.is_multiple_of(2) {
                 idx.swap(i, k - 1)
             } else {
                 idx.swap(0, k - 1)
@@ -182,9 +182,19 @@ fn roots_small(p: &[C]) -> ([C; 4], usize) {
         }
         3 => {
             let disc = (p[1] * p[1] - p[0] * p[2] * 4.0).sqrt();
+            // Branch-matched quadratic: the large root from the non-cancelling
+            // numerator, the small root from the product c/a -- the naive
+            // (-b +- disc)/2a form loses the small root's digits when
+            // b ~ +-disc (the closure chain's wall data).
+            let (np_, nm_) = (-p[1] + disc, -p[1] - disc);
+            let big = if np_.norm() >= nm_.norm() { np_ } else { nm_ } / (p[0] * 2.0);
             let mut out = [zero; 4];
-            out[0] = (-p[1] + disc) / (p[0] * 2.0);
-            out[1] = (-p[1] - disc) / (p[0] * 2.0);
+            out[0] = big;
+            out[1] = if big.norm() > 1e-300 {
+                p[2] / (p[0] * big)
+            } else {
+                big
+            };
             (out, 2)
         }
         4 => {
@@ -194,10 +204,11 @@ fn roots_small(p: &[C]) -> ([C; 4], usize) {
             let pd = cc - bb * bb / 3.0;
             let qd = bb * bb * bb * (2.0 / 27.0) - bb * cc / 3.0 + dd;
             let sq = (qd * qd / 4.0 + pd * pd * pd / 27.0).sqrt();
-            let mut cst = (-qd / 2.0 + sq).powf(1.0 / 3.0);
-            if cst.norm() < 1e-30 {
-                cst = (-qd / 2.0 - sq).powf(1.0 / 3.0);
-            }
+            // Cardano branch by magnitude: the smaller branch is the
+            // half-cancelled one whenever qd/2 ~ +-sq, not only at exact zero.
+            let (cp, cm) = (-qd / 2.0 + sq, -qd / 2.0 - sq);
+            let mut cst = if cp.norm() >= cm.norm() { cp } else { cm }.powf(1.0 / 3.0);
+            let _ = &mut cst;
             let mut out = [zero; 4];
             if cst.norm() < 1e-30 {
                 let r = -bb / 3.0;
@@ -247,6 +258,18 @@ fn residues_v(
                 }
             }
             used[mi] = true;
+        }
+        // A kept mu coinciding with the node makes this residue zero BY
+        // THEOREM (the completion's pass-through, applied here too): the
+        // numerical product would instead yield sqrt-of-noise dirt in a
+        // component the zero-strata law says is exactly absent.
+        if mu
+            .iter()
+            .enumerate()
+            .any(|(i, &m)| !used[i] && (m - delta[k]).norm_sqr() < XTOL * XTOL)
+        {
+            vv[k] = 0.0;
+            continue;
         }
         let mut num = C::new(1.0, 0.0);
         for (i, &m) in mu.iter().enumerate() {
@@ -361,49 +384,76 @@ fn free_pair_beta(
 ) -> Option<BetaClosure> {
     let zero = C::default();
     let pp2 = pp * pp;
-    // q = (m-t1)(m-t2), qt = (pp - t1 m)(pp - t2 m), squared (len 5)
-    let q = [C::new(1.0, 0.0), -(t1 + t2), t1 * t2];
-    let qt = [t1 * t2, -pp * (t1 + t2), pp2];
-    let mut q2 = [zero; 5];
-    let mut qt2 = [zero; 5];
-    for i in 0..3 {
-        for j in 0..3 {
-            q2[i + j] += q[i] * q[j];
-            qt2[i + j] += qt[i] * qt[j];
+    let (k1, k2) = (m1c.min(2), m2c.min(2));
+    // The closure F = pp^2 P qt^2 - Pt q^2 carries its trivial roots (the
+    // pins and their mirrors, at data multiplicity) in EACH TERM separately:
+    // P and its reversal vanish at the pins/mirrors as exact data roots, and
+    // the q/qt factors carry them symbolically.  Deflate PER TERM, exactly,
+    // BEFORE the subtraction -- deflating the assembled difference instead
+    // divides the subtraction's cancellation noise by near-zero factors and
+    // was the margin band's closure floor.
+    let deflate = |poly: &mut [C; 9], len: &mut usize, r: C| {
+        // synthetic division by (m - r) at an exact root, high-first
+        for i in 1..(*len - 1) {
+            let prev = poly[i - 1];
+            poly[i] += prev * r;
         }
+        *len -= 1;
+    };
+    // P deflated at the pins; Pt (the pp-reversal) deflated at the mirrors.
+    let mut pdef = [zero; 9];
+    pdef.copy_from_slice(&p_poly[..9]);
+    let mut plen = 9usize;
+    for _ in 0..k1 {
+        deflate(&mut pdef, &mut plen, t1);
     }
-    // F = pp^2 P qt2 - Pt q2 (separate accumulators, late scale: the
-    // operation order matches the polynomial ops it replaced, so root
-    // positions are bit-stable against the previous behavior)
-    let mut acc1 = [zero; 13];
-    let mut acc2 = [zero; 13];
-    let mut ppi = C::new(1.0, 0.0);
+    for _ in 0..k2 {
+        deflate(&mut pdef, &mut plen, t2);
+    }
     let mut pt = [zero; 9];
+    let mut ppi = C::new(1.0, 0.0);
     for (i, slot) in pt.iter_mut().enumerate() {
         *slot = p_poly[8 - i] * ppi;
         ppi *= pp;
     }
-    for i in 0..9 {
-        for j in 0..5 {
-            acc1[i + j] += p_poly[i] * qt2[j];
-            acc2[i + j] += pt[i] * q2[j];
+    let mut ptlen = 9usize;
+    for _ in 0..k1 {
+        deflate(&mut pt, &mut ptlen, pp / t1);
+    }
+    for _ in 0..k2 {
+        deflate(&mut pt, &mut ptlen, pp / t2);
+    }
+    // remaining symbolic factors: q^2 keeps (m-t1)^{2-k1}(m-t2)^{2-k2};
+    // qt^2 = t1^2 t2^2 (m-pp/t1)^2 (m-pp/t2)^2 keeps the mirror complement.
+    let poly_from = |factors: &[(C, usize)], scale: C| -> ([C; 5], usize) {
+        let mut out = [zero; 5];
+        out[0] = scale;
+        let mut n = 1usize;
+        for &(r, count) in factors {
+            for _ in 0..count {
+                for i in (1..=n).rev() {
+                    let prev = out[i - 1];
+                    out[i] -= r * prev;
+                }
+                n += 1;
+            }
+        }
+        (out, n)
+    };
+    let (q2d, q2len) = poly_from(&[(t1, 2 - k1), (t2, 2 - k2)], C::new(1.0, 0.0));
+    let (qt2d, qt2len) = poly_from(&[(pp / t1, 2 - k1), (pp / t2, 2 - k2)], t1 * t1 * t2 * t2);
+    // f = pp^2 * Pdef * qt2def - Ptdef * q2def  (both conditioned now)
+    let mut f = [zero; 13];
+    let len = plen + qt2len - 1;
+    debug_assert_eq!(len, ptlen + q2len - 1);
+    for i in 0..plen {
+        for j in 0..qt2len {
+            f[i + j] += pdef[i] * qt2d[j] * pp2;
         }
     }
-    let mut f = [zero; 13];
-    for k in 0..13 {
-        f[k] = acc1[k] * pp2 - acc2[k];
-    }
-    // synthetic deflation of the trivial roots at full order (a pin with
-    // data multiplicity mc is an order-mc root of F, mirror included;
-    // under-deflation poisons the beta slots)
-    let mut len = 13usize;
-    for (t, mc) in [(t1, m1c), (pp / t1, m1c), (t2, m2c), (pp / t2, m2c)] {
-        for _ in 0..mc.min(2) {
-            for i in 1..(len - 1) {
-                let prev = f[i - 1];
-                f[i] += prev * t;
-            }
-            len -= 1;
+    for i in 0..ptlen {
+        for j in 0..q2len {
+            f[i + j] -= pt[i] * q2d[j];
         }
     }
     // divide by m^2 - pp
@@ -414,7 +464,7 @@ fn free_pair_beta(
     }
     // v is self-inversive of degree 2d (weight pp^d); the beta polynomial
     // (beta = m + pp/m) for the three possible degrees
-    if vlen < 3 || vlen % 2 == 0 {
+    if vlen < 3 || vlen.is_multiple_of(2) {
         return None;
     }
     let d = (vlen - 1) / 2;
@@ -464,9 +514,12 @@ fn lift_beta_roots(beta: BetaClosure, pp: C) -> ([C; 8], usize) {
     let mut n = 0;
     let (beta_arr, n_beta) = roots_small(&beta.coefficients[..beta.len]);
     for be in beta_arr[..n_beta].iter().copied().chain(beta.double_root) {
-        // m^2 - beta m + pp = 0; one representative per mirror pair
+        // m^2 - beta m + pp = 0; one representative per mirror pair --
+        // taking the NON-CANCELLING branch (the two roots are the mirror
+        // pair m, pp/m, so either serves; be ~ -disc cancels the naive one).
         let disc = (be * be - pp * 4.0).sqrt();
-        let m = (be + disc) / 2.0;
+        let (np_, nm_) = (be + disc, be - disc);
+        let m = if np_.norm() >= nm_.norm() { np_ } else { nm_ } / 2.0;
         if m.norm() > 1e-3 {
             out[n] = m / m.norm();
             n += 1;
@@ -944,6 +997,124 @@ fn problem_base(delta: &[C; 4], dcl: &Clusters4, w: &[C; 4]) -> ProblemBase {
     ProblemBase { cis, ph, np }
 }
 
+/// Roots of a small monic complex polynomial (degree <= 4), coefficients
+/// highest-first, by closed-form radicals (quadratic / Cardano / Ferrari).
+/// Bounded and deterministic -- the mirror law's mu' solve: N-hat = B B*
+/// and mu' = roots(B*) is the swapped-peel-order intermediate spectrum,
+/// on the unit circle by theorem, so the solve is well-conditioned there.
+fn complex_monic_roots_small(p: &[C], out: &mut [C; 8]) -> Option<usize> {
+    let deg = p.len().checked_sub(1)?;
+    let quad = |b: C, c0: C, o: &mut [C]| {
+        let s = (b * b - c0 * 4.0).sqrt();
+        let q = if (b + s).norm_sqr() >= (b - s).norm_sqr() {
+            -(b + s) * 0.5
+        } else {
+            -(b - s) * 0.5
+        };
+        o[0] = q;
+        o[1] = if q.norm_sqr() > 0.0 { c0 / q } else { -b - q };
+    };
+    let cbrt = |z: C| -> C {
+        if z.norm_sqr() == 0.0 {
+            C::default()
+        } else {
+            C::from_polar(z.norm().cbrt(), z.arg() / 3.0)
+        }
+    };
+    let cardano = |a: C, b: C, c0: C, o: &mut [C]| {
+        // monic z^3 + a z^2 + b z + c0, depressed t = z + a/3
+        let p1 = b - a * a / 3.0;
+        let q1 = a * a * a * (2.0 / 27.0) - a * b / 3.0 + c0;
+        let dsc = (q1 * 0.5) * (q1 * 0.5) + (p1 / 3.0) * (p1 / 3.0) * (p1 / 3.0);
+        let s = dsc.sqrt();
+        let e1 = -q1 * 0.5 + s;
+        let e2 = -q1 * 0.5 - s;
+        let u = cbrt(if e1.norm_sqr() >= e2.norm_sqr() {
+            e1
+        } else {
+            e2
+        });
+        let w1 = C::new(-0.5, 0.75f64.sqrt());
+        if u.norm_sqr() < 1e-300 {
+            let t = cbrt(-q1);
+            for (k, ok) in o.iter_mut().take(3).enumerate() {
+                *ok = t * if k == 0 {
+                    C::new(1.0, 0.0)
+                } else if k == 1 {
+                    w1
+                } else {
+                    w1 * w1
+                } - a / 3.0;
+            }
+            return;
+        }
+        let v = -p1 / (u * 3.0);
+        let mut rot = C::new(1.0, 0.0);
+        for ok in o.iter_mut().take(3) {
+            *ok = u * rot + v * rot.conj() - a / 3.0;
+            rot *= w1;
+        }
+    };
+    match deg {
+        0 => Some(0),
+        1 => {
+            out[0] = -p[1];
+            Some(1)
+        }
+        2 => {
+            quad(p[1], p[2], &mut out[..2]);
+            Some(2)
+        }
+        3 => {
+            cardano(p[1], p[2], p[3], &mut out[..3]);
+            Some(3)
+        }
+        4 => {
+            let (a, b, c0, d0) = (p[1], p[2], p[3], p[4]);
+            // depress: z = y - a/4
+            let p1 = b - a * a * (3.0 / 8.0);
+            let q1 = c0 - a * b * 0.5 + a * a * a * 0.125;
+            let r1 = d0 - a * c0 * 0.25 + a * a * b / 16.0 - a * a * a * a * (3.0 / 256.0);
+            let shift = -a * 0.25;
+            let scale = p1.norm().max(q1.norm()).max(r1.norm()).max(1.0);
+            if q1.norm() < 1e-14 * scale {
+                // biquadratic: y^2 solves t^2 + p1 t + r1
+                let mut t2 = [C::default(); 2];
+                quad(p1, r1, &mut t2);
+                for (k, &t) in t2.iter().enumerate() {
+                    let s = t.sqrt();
+                    out[2 * k] = s + shift;
+                    out[2 * k + 1] = -s + shift;
+                }
+                return Some(4);
+            }
+            // resolvent 8m^3 + 8 p1 m^2 + (2 p1^2 - 8 r1) m - q1^2 = 0
+            let mut mr = [C::default(); 3];
+            cardano(p1, p1 * p1 * 0.25 - r1, -q1 * q1 * 0.125, &mut mr);
+            let m = *mr
+                .iter()
+                .max_by(|x, y| x.norm_sqr().partial_cmp(&y.norm_sqr()).unwrap())
+                .unwrap();
+            let s = (m * 2.0).sqrt();
+            if s.norm_sqr() < 1e-300 {
+                return None;
+            }
+            let t = (p1 + m * 2.0 - q1 / s) * 0.5;
+            let u = (p1 + m * 2.0 + q1 / s) * 0.5;
+            let mut o1 = [C::default(); 2];
+            let mut o2 = [C::default(); 2];
+            quad(s, t, &mut o1);
+            quad(-s, u, &mut o2);
+            out[0] = o1[0] + shift;
+            out[1] = o1[1] + shift;
+            out[2] = o2[0] + shift;
+            out[3] = o2[1] + shift;
+            Some(4)
+        }
+        _ => None,
+    }
+}
+
 /// Quantities fixed by `mu` across every sign-class lift of the same
 /// characteristic.  Building this once is the algebraic analogue of
 /// deflating the common factor before evaluating its different cofactors.
@@ -995,16 +1166,33 @@ fn mirror_base(
     for c in 0..dcl.k {
         let k0 = dcl.cluster_rep(c);
         let d = delta[k0];
+        // Same exact-zero pass-through as residues_v / the completion: a kept
+        // mu-hat at the node makes V here zero by theorem.
+        if muhat[..nm]
+            .iter()
+            .any(|&m| (m - d).norm_sqr() < XTOL * XTOL)
+        {
+            vv[k0] = 0.0;
+            continue;
+        }
         let mut bd = C::new(1.0, 0.0);
         for &m in &muhat[..nm] {
             bd *= d - m;
         }
         let vi = -bd / pre_rho1_ac[k0];
         if !vi.re.is_finite() || !vi.im.is_finite() || vi.im.abs() > 1e-6 {
+            #[cfg(feature = "diagnostics")]
+            if std::env::var_os("MU_DUMP").is_some() {
+                eprintln!("GATE vimag {:e}", vi.im.abs());
+            }
             crate::can_sandwich::prof::hit(33);
             return None;
         }
         if vi.re < -1e-7 {
+            #[cfg(feature = "diagnostics")]
+            if std::env::var_os("MU_DUMP").is_some() {
+                eprintln!("GATE vneg {:e}", vi.re);
+            }
             crate::can_sandwich::prof::hit(34);
             return None;
         }
@@ -1108,15 +1296,15 @@ fn mirror_completion(
             }
         }
     }
-    // B*: gamma = 0 stays entirely in root form (mu-hat' is the
-    // complementary half of P-hat's roots, so pass-through zeros are
-    // exact products). Otherwise N-hat = P-hat + rho1 rho2 g-hat^2 is
-    // exactly B B*. Both factors are monic of degree D <= 4, hence the
-    // high-to-low triangular quotient recurrence recovers B* in at most
-    // D^2 <= 16 complex multiply-adds, without root-order-dependent
-    // sequential deflation.
-    let mut bstar = [C::default(); 9];
-    let mut bslen = 0;
+    // THE SYMMETRIC LAW: both factors of N-hat = B B* in root form.
+    // mu' = roots(B*) is the swapped-peel-order intermediate spectrum
+    // (unit circle by theorem); one bounded radical solve per candidate.
+    // Every node value below is then a product of gaps: a pin is an
+    // ordinary zero factor on either side, and the exact-zero
+    // pass-through is one uniform on-circle gap test -- the former
+    // coefficient-Horner arms (k-fold derivative quotient, per-branch
+    // zero detections) were cancellation patches for the asymmetric
+    // representation and are gone (2026-08-19 symmetric-mirror change).
     let mut mup = [C::default(); 8];
     let mut nmup = 0;
     if skeleton {
@@ -1153,7 +1341,8 @@ fn mirror_completion(
                 nhat[plen - 2 * ghlen + 1 + i + j] += rr * gcoef[i] * gcoef[j];
             }
         }
-        (bstar, bslen) = monic_complement(&nhat[..plen], &muhat[..nm])?;
+        let (bstar, bslen) = monic_complement(&nhat[..plen], &muhat[..nm])?;
+        nmup = complex_monic_roots_small(&bstar[..bslen], &mut mup)?;
     }
     // the block invariants at each distinct node
     let mut u2 = [C::default(); 4];
@@ -1161,19 +1350,14 @@ fn mirror_completion(
     for c_ in 0..dcl.k {
         let k0 = dcl.cluster_rep(c_);
         let d = delta[k0];
+        // root form: pins are exact zeros, never sqrt-of-noise (ghlen > 0
+        // implies ng > 0, so no coefficient fallback exists here)
         let gd = if ng > 0 {
-            // root form: pins are exact zeros, never sqrt-of-noise
             let mut g = gam;
             for &r in &gr[..ng] {
                 g *= d - r;
             }
             g
-        } else if ghlen > 0 {
-            let mut acc = C::default();
-            for &co in &gcoef[..ghlen] {
-                acc = acc * d + co;
-            }
-            acc
         } else {
             C::default()
         };
@@ -1182,19 +1366,27 @@ fn mirror_completion(
             .any(|&m| (m - d).norm_sqr() < XTOL * XTOL);
         let wmatch = w.iter().any(|&wj| (wj - d).norm_sqr() < XTOL * XTOL);
         let ui = if pinned && wmatch {
-            C::default() // pass-through one level up: zero by theorem
-        } else if bslen > 0 {
-            let mut acc = C::default();
-            for &co in &bstar[..bslen] {
-                acc = acc * d + co;
-            }
-            -acc / pre_rho2_ac[k0]
+            C::default() // pass-through one level up: zero by theorem (exact data test)
         } else {
+            // U_i = -prod(d - mu') / (rho2 a_i C_i). An exact B*-root at
+            // the node -- any provenance: complementary collision, w-side
+            // coincidence, deep pass-through -- is the ONE uniform on-circle
+            // gap test, so u is zero by theorem instead of sqrt-of-noise.
             let mut acc = C::new(1.0, 0.0);
+            let mut zero = false;
             for &r in &mup[..nmup] {
-                acc *= d - r;
+                let gap = d - r;
+                if gap.norm_sqr() < XTOL * XTOL {
+                    zero = true;
+                    break;
+                }
+                acc *= gap;
             }
-            -acc / pre_rho2_ac[k0]
+            if zero {
+                C::default()
+            } else {
+                -acc / pre_rho2_ac[k0]
+            }
         };
         let xi = gd / pre_ac[k0];
         if !ui.re.is_finite() || !ui.im.is_finite() || !xi.re.is_finite() {
@@ -1207,6 +1399,10 @@ fn mirror_completion(
     let sre: f64 = u2.iter().map(|z| z.re * z.re).sum();
     let simm: f64 = u2.iter().map(|z| z.im * z.im).sum();
     if simm > sre || u2.iter().any(|z| z.re < 0.0 && z.re * z.re > simm) {
+        #[cfg(feature = "diagnostics")]
+        if std::env::var_os("MU_DUMP").is_some() {
+            eprintln!("GATE ureal simm {:e} sre {:e} u2 {:?}", simm, sre, u2);
+        }
         crate::can_sandwich::prof::hit(29);
         return None;
     }
@@ -1214,6 +1410,10 @@ fn mirror_completion(
         .map(|c_| u2[dcl.cluster_rep(c_)].re.max(0.0))
         .sum();
     if (s2 - 1.0).abs() >= 1e-4 {
+        #[cfg(feature = "diagnostics")]
+        if std::env::var_os("MU_DUMP").is_some() {
+            eprintln!("GATE usum {:e}", (s2 - 1.0).abs());
+        }
         crate::can_sandwich::prof::hit(30);
         return None;
     }
@@ -1230,12 +1430,26 @@ fn mirror_completion(
             uc[k0] = xr[k0].signum() * ui.sqrt();
         } else {
             uc[k0] = xr[k0] / vv[k0];
-            uc[dcl.cluster_second(c_)] = (ui - uc[k0] * uc[k0]).max(0.0).sqrt();
+            let head = uc[k0] * uc[k0];
+            let rem = ui - head;
+            // Full cancellation means the cluster's second component is
+            // exactly zero (the same zero-strata pass-through as the node
+            // formulas); sqrt of the noise difference would inject ~1e-8
+            // dirt into an exactly-absent component.
+            uc[dcl.cluster_second(c_)] = if rem.abs() < XTOL * (ui.abs() + head) {
+                0.0
+            } else {
+                rem.max(0.0).sqrt()
+            };
         }
     }
     let out = verify(c, a, &vv, &uc, rho1, rho2, w);
     if out.is_some() {
         crate::can_sandwich::prof::hit(31);
+        #[cfg(feature = "diagnostics")]
+        if std::env::var_os("MU_DUMP").is_some() {
+            eprintln!("MU_WIN vv {:?} uc {:?}", vv, uc);
+        }
     }
     out
 }
@@ -1263,10 +1477,21 @@ fn try_mu(
 ) -> Option<Solved> {
     let Some((g2, t1, t2)) = gq else { return None };
     crate::can_sandwich::prof::hit(26);
+    #[cfg(feature = "diagnostics")]
+    if std::env::var_os("MU_DUMP").is_some() {
+        eprintln!(
+            "MU_CAND c {:?} rho1 {:?} rho2 {:?} mu {:?} w {:?} delta {:?}",
+            c, rho1, rho2, mu, w, delta
+        );
+    }
     let tb = crate::can_sandwich::prof::start();
     let mb0 = mirror_base(mu, delta, dcl, pre_rho1_ac);
     crate::can_sandwich::prof::rec(36, tb);
     let Some(mb) = mb0 else {
+        #[cfg(feature = "diagnostics")]
+        if std::env::var_os("MU_DUMP").is_some() {
+            eprintln!("MU_FATE base");
+        }
         crate::can_sandwich::prof::hit(27);
         crate::can_sandwich::prof::hit(match method {
             "forced" => 45,
@@ -1303,7 +1528,15 @@ fn try_mu(
     );
     crate::can_sandwich::prof::rec(16, tp);
     if let Some(s) = mc {
+        #[cfg(feature = "diagnostics")]
+        if std::env::var_os("MU_DUMP").is_some() {
+            eprintln!("MU_FATE accept");
+        }
         return Some(s);
+    }
+    #[cfg(feature = "diagnostics")]
+    if std::env::var_os("MU_DUMP").is_some() {
+        eprintln!("MU_FATE completion");
     }
     if g2 == C::default() {
         return None;
@@ -1390,7 +1623,16 @@ fn verify_inner(
 /// counting target letters in the four delta gaps; neither operation depends
 /// on the pin pair.
 struct StrictWord {
+    /// Distinct delta angles, sorted; `gaps` of them.  A clustered delta
+    /// contributes ONE node here: its forced mu copy sits AT the node (the
+    /// confluent limit of the interlacing law -- the collapsing gap carries
+    /// its mu into the forced copy), and the remaining `gaps` free values
+    /// obey the same one-per-gap word law over the distinct nodes.
     delta: [f64; 4],
+    gaps: usize,
+    /// Nodes carrying a forced (clustered) copy: a pin at such a node is the
+    /// forced letter and imposes NO word constraint.
+    forced: [bool; 4],
     target: [f64; 4],
     target_count: [i32; 4],
     offset: [i32; 4],
@@ -1415,35 +1657,56 @@ impl StrictWord {
         d.min(TAU - d)
     }
 
-    fn arc_in(delta: &[f64; 4], p: f64) -> usize {
-        (delta.iter().filter(|&&x| x <= p).count() + 3) % 4
+    fn arc_in(delta: &[f64], p: f64) -> usize {
+        let gaps = delta.len();
+        (delta.iter().filter(|&&x| x <= p).count() + gaps - 1) % gaps
     }
 
     fn new(delta: &[C; 4], w: &[C; 4]) -> Option<Self> {
-        let mut dn = delta.map(Self::angle);
-        dn.sort_by(f64::total_cmp);
+        let mut all = delta.map(Self::angle);
+        all.sort_by(f64::total_cmp);
+        // Cluster coincident delta angles: one node per cluster (the forced
+        // copies live AT their nodes and are not free letters).
+        let mut dn = [0.0f64; 4];
+        let mut forced = [false; 4];
+        let mut gaps = 0usize;
+        for &a_ in &all {
+            if gaps == 0 || Self::cyclic_distance(dn[gaps - 1], a_) >= XTOL {
+                dn[gaps] = a_;
+                gaps += 1;
+            } else {
+                forced[gaps - 1] = true;
+            }
+        }
+        if gaps >= 2 && Self::cyclic_distance(dn[0], dn[gaps - 1]) < XTOL {
+            gaps -= 1; // wrap-around cluster
+            forced[0] = true;
+        }
+        if gaps < 2 {
+            return None; // no word structure to prune with
+        }
         let wl = w.map(Self::angle);
         for i in 0..4 {
             for j in (i + 1)..4 {
-                if Self::cyclic_distance(dn[i], dn[j]) < XTOL
-                    || Self::cyclic_distance(wl[i], wl[j]) < XTOL
-                {
+                if Self::cyclic_distance(wl[i], wl[j]) < XTOL {
                     return None;
                 }
             }
+        }
+        for &node in &dn[..gaps] {
             for &target in &wl {
-                if Self::cyclic_distance(dn[i], target) < XTOL {
+                if Self::cyclic_distance(node, target) < XTOL {
                     return None;
                 }
             }
         }
         let mut target_count = [0i32; 4];
         for &target in &wl {
-            target_count[Self::arc_in(&dn, target)] += 1;
+            target_count[Self::arc_in(&dn[..gaps], target)] += 1;
         }
         let mut offset = [0i32; 4];
         let (mut prefix, mut x0_lo, mut x0_hi) = (0i32, 0i32, 4i32);
-        for j in 0..4 {
+        for j in 0..gaps {
             offset[j] = j as i32 - prefix;
             x0_lo = x0_lo.max(-offset[j]);
             x0_hi = x0_hi.min(target_count[j] - offset[j]);
@@ -1451,6 +1714,8 @@ impl StrictWord {
         }
         Some(Self {
             delta: dn,
+            gaps,
+            forced,
             target: wl,
             target_count,
             offset,
@@ -1460,7 +1725,7 @@ impl StrictWord {
     }
 
     fn arc(&self, p: f64) -> usize {
-        Self::arc_in(&self.delta, p)
+        Self::arc_in(&self.delta[..self.gaps], p)
     }
 
     fn coordinate(p: f64, lo: f64) -> f64 {
@@ -1488,8 +1753,13 @@ impl StrictWord {
                 .count() as i32;
             return Some([(g, rank), (g, rank + 1)]);
         }
-        if let Some(k) = (0..4).find(|&k| Self::cyclic_distance(p, self.delta[k]) < XTOL) {
-            let before = (k + 3) % 4;
+        if let Some(k) = (0..self.gaps).find(|&k| Self::cyclic_distance(p, self.delta[k]) < XTOL) {
+            if self.forced[k] {
+                // The pin is the forced copy at a clustered node: it is not a
+                // free letter and imposes no word constraint.
+                return Some([(usize::MAX, 0), (usize::MAX, 0)]);
+            }
+            let before = (k + self.gaps - 1) % self.gaps;
             return Some([(k, 0), (before, self.target_count[before])]);
         }
         None
@@ -1507,6 +1777,20 @@ impl StrictWord {
         // outright.  No enumeration of the five possible x_0 values remains.
         for &(g1, fixed1) in &o1 {
             for &(g2, fixed2) in &o2 {
+                let v1 = g1 == usize::MAX;
+                let v2 = g2 == usize::MAX;
+                if v1 && v2 {
+                    return true; // both pins forced: no word constraint at all
+                }
+                if v1 || v2 {
+                    // One vacuous pin: the other alone must fit the box.
+                    let (g, fixed) = if v1 { (g2, fixed2) } else { (g1, fixed1) };
+                    let x0 = fixed - self.offset[g];
+                    if self.x0_lo <= x0 && x0 <= self.x0_hi {
+                        return true;
+                    }
+                    continue;
+                }
                 if g1 == g2 {
                     continue; // one mu in every strict delta gap
                 }
@@ -1726,6 +2010,69 @@ pub fn two_step<R>(
         // mirror_completion so the result is bit-identical.
         let pre_rho1_ac: [C; 4] = std::array::from_fn(|k| rho1 * a[k] * pb.cis[k]);
         let pre_rho2_ac: [C; 4] = std::array::from_fn(|k| rho2 * a[k] * pb.cis[k]);
+        // SINGLE-STEP CELLS (2026-08-19): v = e_k exactly. The first peel is
+        // then diagonal, so mu is data-explicit with one shifted value
+        // a_k (c + rho1) that must pass through to a target root -- an exact
+        // data gate -- and the remainder is one n=3 rank-one update with
+        // classical Cauchy weights. Closed form, no cell search; the mirror
+        // variant (u = e_k) arrives via this same block on the swapped peel
+        // order. Restores the rho-lift equivariance of the cell family: the
+        // two margin rows reached this cell only through the orbit
+        // re-encoding (their direct encodings carry the pass-through match
+        // at 2e-16, measured 2026-08-19).
+        for k in 0..4 {
+            let mstar = a[k] * (c + rho1);
+            let (mut wm, mut best) = (usize::MAX, f64::INFINITY);
+            for (j, &wj) in w.iter().enumerate() {
+                let dd = (wj - mstar).norm_sqr();
+                if dd < best {
+                    best = dd;
+                    wm = j;
+                }
+            }
+            if wm == usize::MAX || best >= XTOL * XTOL {
+                continue;
+            }
+            // n=3 Cauchy weights on the complementary block:
+            // u_j^2 = -prod_{t != wm}(c a_j - w_t)
+            //         / (rho2 a_j prod_{l != j,k}(c a_j - c a_l))
+            let mut vv = [0.0f64; 4];
+            vv[k] = 1.0;
+            let mut uc = [0.0f64; 4];
+            let mut ok = true;
+            for j in 0..4 {
+                if j == k {
+                    continue;
+                }
+                let caj = c * a[j];
+                let mut num = C::new(1.0, 0.0);
+                for (t, &wt) in w.iter().enumerate() {
+                    if t != wm {
+                        num *= caj - wt;
+                    }
+                }
+                let mut den = rho2 * a[j];
+                for (l, &al) in a.iter().enumerate() {
+                    if l != j && l != k {
+                        den *= caj - c * al;
+                    }
+                }
+                let uj2 = -num / den;
+                if !uj2.re.is_finite() || uj2.im.abs() > 1e-6 || uj2.re < -1e-7 {
+                    ok = false;
+                    break;
+                }
+                uc[j] = uj2.re.max(0.0).sqrt();
+            }
+            if !ok {
+                continue;
+            }
+            if let Some(s) = verify(c, a, &vv, &uc, rho1, rho2, w) {
+                if let Some(hit) = accept(s) {
+                    return Some(hit);
+                }
+            }
+        }
         {
             // fully-forced mu (3+ forced slots pin the intermediate);
             // subset rungs run once, in the shallow pass only
@@ -1974,51 +2321,41 @@ pub fn two_step<R>(
                         }
                     }
                     let n_reps = dcl.k as usize;
-                    match n_two {
-                        1 => {
-                            let letter = delta[two_buf[0]];
-                            let t1c = (t1 - letter).norm_sqr() < 1e-8;
-                            let t2c = (t2 - letter).norm_sqr() < 1e-8;
-                            if t1c ^ t2c {
-                                let t_surv = if t1c { t2 } else { t1 };
-                                PairGateR::new(
-                                    &[t_surv],
-                                    pp,
-                                    &reps_buf[..n_reps],
-                                    &delta,
-                                    &pb.cis,
-                                    rho1,
-                                    rho2,
-                                    a,
-                                    w,
-                                    &two_buf[..n_two],
-                                )
-                            } else {
-                                None
+                    {
+                        // Drop pins that ARE inheritance copies (at 2-cluster
+                        // letters); the survivors feed the generic reduced
+                        // gate.  A pair putting BOTH pins on the SAME letter
+                        // is a multiplicity-ambiguous configuration and stays
+                        // ungated, as before.
+                        let at_letter =
+                            |t: C| (0..n_two).find(|&i| (t - delta[two_buf[i]]).norm_sqr() < 1e-8);
+                        let (l1, l2) = (at_letter(t1), at_letter(t2));
+                        if l1.is_some() && l1 == l2 {
+                            None
+                        } else {
+                            let mut pins_buf = [C::default(); 2];
+                            let mut npins = 0usize;
+                            if l1.is_none() {
+                                pins_buf[npins] = t1;
+                                npins += 1;
                             }
-                        }
-                        2 => {
-                            let (la, lb) = (delta[two_buf[0]], delta[two_buf[1]]);
-                            let both = ((t1 - la).norm_sqr() < 1e-8 && (t2 - lb).norm_sqr() < 1e-8)
-                                || ((t1 - lb).norm_sqr() < 1e-8 && (t2 - la).norm_sqr() < 1e-8);
-                            if both {
-                                PairGateR::new(
-                                    &[],
-                                    pp,
-                                    &reps_buf[..n_reps],
-                                    &delta,
-                                    &pb.cis,
-                                    rho1,
-                                    rho2,
-                                    a,
-                                    w,
-                                    &two_buf[..n_two],
-                                )
-                            } else {
-                                None
+                            if l2.is_none() {
+                                pins_buf[npins] = t2;
+                                npins += 1;
                             }
+                            PairGateR::new(
+                                &pins_buf[..npins],
+                                pp,
+                                &reps_buf[..n_reps],
+                                &delta,
+                                &pb.cis,
+                                rho1,
+                                rho2,
+                                a,
+                                w,
+                                &two_buf[..n_two],
+                            )
                         }
-                        _ => None,
                     }
                 } else {
                     None
@@ -2191,10 +2528,19 @@ fn rank_one(c: C, d: C, a: &[C; 4], w: &[C; 4]) -> Option<Solved> {
     let rho = d - c;
     let delta: [C; 4] = std::array::from_fn(|k| c * a[k]);
     let dcl = clusters4(&delta, CTOL);
-    let v = residues_v(w, &delta, &dcl, rho, a)?;
+    let v = residues_v(w, &delta, &dcl, rho, a);
+    #[cfg(feature = "diagnostics")]
+    if std::env::var_os("MU_DUMP").is_some() {
+        eprintln!("R1 v {:?}", v);
+    }
+    let v = v?;
     let m = assemble(c, a, &[(v, rho)]);
     let spec = eig4(&m)?;
     let r = sdist(&spec, w);
+    #[cfg(feature = "diagnostics")]
+    if std::env::var_os("MU_DUMP").is_some() {
+        eprintln!("R1 r {:e}", r);
+    }
     (r <= 1e-9).then_some(Solved {
         m,
         frame: Some(Frame {
@@ -2367,6 +2713,43 @@ mod beta_interval_tests {
         let beta = closure_from_real_power(&power, h, phase);
         assert_eq!(beta_interval_variations(beta, h * h, -0.55, -0.25), Some(0));
         assert_ne!(beta_interval_variations(beta, h * h, -0.7, -0.25), Some(0));
+    }
+
+    #[test]
+    fn complex_monic_roots_small_recovers_unit_circle_roots() {
+        // the production population: monic deg 1..4 with unit-modulus roots
+        // (mu' is a spectrum), incl. near-coincident pairs
+        let seeds: [&[C]; 5] = [
+            &[C::new(0.6, 0.8)],
+            &[C::new(0.6, 0.8), C::new(-0.28, -0.96)],
+            &[C::new(0.6, 0.8), C::new(-0.28, -0.96), C::new(0.96, -0.28)],
+            &[
+                C::new(0.6, 0.8),
+                C::new(-0.28, -0.96),
+                C::new(0.96, -0.28),
+                C::new(-0.8, 0.6),
+            ],
+            &[
+                C::new(0.6, 0.8),
+                C::new(0.6000001, 0.7999999),
+                C::new(0.96, -0.28),
+                C::new(-0.8, 0.6),
+            ],
+        ];
+        for roots in seeds {
+            let p = poly_from_roots(C::new(1.0, 0.0), roots);
+            let mut out = [C::default(); 8];
+            let n = complex_monic_roots_small(&p[..=roots.len()], &mut out)
+                .expect("solver must handle deg <= 4");
+            assert_eq!(n, roots.len());
+            for &r in roots.iter() {
+                let best = out[..n]
+                    .iter()
+                    .map(|&z| (z - r).norm())
+                    .fold(f64::INFINITY, f64::min);
+                assert!(best < 5e-8, "root {r} recovered at {best:e}");
+            }
+        }
     }
 
     #[test]

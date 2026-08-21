@@ -15,6 +15,8 @@ pub type C = Complex<f64>;
 mod arb_roots;
 #[path = "axis_quartic.rs"]
 mod axis_quartic;
+#[path = "chord.rs"]
+mod chord;
 #[path = "klein.rs"]
 mod klein;
 #[path = "one_plus_three.rs"]
@@ -23,6 +25,8 @@ mod one_plus_three;
 mod pair22;
 #[path = "problem.rs"]
 mod problem;
+#[path = "resonance.rs"]
+mod resonance;
 #[path = "secular.rs"]
 mod secular;
 #[cfg(any(test, feature = "research-spin"))]
@@ -31,6 +35,10 @@ mod spin_selector;
 
 #[path = "three_givens.rs"]
 mod three_givens;
+
+#[cfg(feature = "research-kf")]
+#[path = "kernel_frame.rs"]
+pub mod kernel_frame;
 pub type Mat4 = Matrix4<C>;
 
 #[cfg(test)]
@@ -43,7 +51,7 @@ pub mod prof {
     #[cfg(feature = "diagnostics")]
     use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
     #[cfg(feature = "diagnostics")]
-    pub const N: usize = 66;
+    pub const N: usize = 72;
     #[cfg(feature = "diagnostics")]
     pub const NAMES: [&str; N] = [
         "rank_perms",
@@ -112,6 +120,12 @@ pub mod prof {
         "axis_reconstruct",
         "axis_hull_skip",
         "axis_weight_hull_skip",
+        "opt_walls",
+        "opt_dense",
+        "seg_prepare",
+        "seg_edgegate",
+        "seg_vertex",
+        "seg_rootgate",
     ];
     #[cfg(feature = "diagnostics")]
     pub static NS: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
@@ -204,6 +218,14 @@ pub fn rho_weyl(w: [f64; 3]) -> [f64; 3] {
     [1.0 - w[0], w[1], -w[2]]
 }
 
+/// Central-rho reflection in monodromy coordinates.  `solve` receives
+/// monodromy triples, so gate-orbit construction must use this conjugate of
+/// [`rho_weyl`] rather than applying the Weyl formula to the wrong chart.
+#[inline]
+fn rho_monodromy(m: [f64; 3]) -> [f64; 3] {
+    [m[2] + 0.5, 0.5 - (m[0] + m[1] + m[2]), m[0] - 0.5]
+}
+
 /// The 4 magic-basis eigenphases of `Can(w)` in closed form (no matrix): the diagonal
 /// of `mb(Can(w))`, i.e. `D_C = diag(exp(i·eigphases))`. Same order as `dphase`.
 pub fn eigphases(w: [f64; 3]) -> [f64; 4] {
@@ -220,11 +242,36 @@ pub fn eigphases(w: [f64; 3]) -> [f64; 4] {
 /// Elementary symmetric functions `e₁..e₄` of four scalars (the diagonal-spectrum
 /// fast path: `symfn` without forming any matrix).
 pub fn esym4(s: [C; 4]) -> [C; 4] {
-    let e1 = s[0] + s[1] + s[2] + s[3];
-    let e2 = s[0] * s[1] + s[0] * s[2] + s[0] * s[3] + s[1] * s[2] + s[1] * s[3] + s[2] * s[3];
-    let e3 = s[0] * s[1] * s[2] + s[0] * s[1] * s[3] + s[0] * s[2] * s[3] + s[1] * s[2] * s[3];
+    let e1 = compensated_sum(s);
+    let e2 = compensated_sum([
+        s[0] * s[1],
+        s[0] * s[2],
+        s[0] * s[3],
+        s[1] * s[2],
+        s[1] * s[3],
+        s[2] * s[3],
+    ]);
+    let e3 = compensated_sum([
+        s[0] * s[1] * s[2],
+        s[0] * s[1] * s[3],
+        s[0] * s[2] * s[3],
+        s[1] * s[2] * s[3],
+    ]);
     let e4 = s[0] * s[1] * s[2] * s[3];
     [e1, e2, e3, e4]
+}
+
+#[inline]
+pub(super) fn compensated_sum<const N: usize>(terms: [C; N]) -> C {
+    let mut sum = C::default();
+    let mut correction = C::default();
+    for term in terms {
+        let adjusted = term - correction;
+        let next = sum + adjusted;
+        correction = (next - sum) - adjusted;
+        sum = next;
+    }
+    sum
 }
 
 /// One signed permutation frame `P ∈ SO(4)`: the permutation matrix `P_{i,p_i}=1`
@@ -278,74 +325,15 @@ fn heap(a: &mut [usize; 4], k: usize, out: &mut Vec<[usize; 4]>) {
     }
     for i in 0..k {
         heap(a, k - 1, out);
-        let swap = if k % 2 == 0 { i } else { 0 };
+        let swap = if k.is_multiple_of(2) { i } else { 0 };
         a.swap(swap, k - 1);
     }
-}
-
-#[inline]
-fn cross2(left: C, right: C) -> f64 {
-    left.re * right.im - left.im * right.re
-}
-
-/// Membership in a finite convex hull in the complex trace plane.  By
-/// Caratheodory, a point in a planar hull lies in one triangle of its
-/// vertices.  The tolerance is outward-only, so this is safe as a necessary
-/// feasibility gate near a hull face.
-pub(super) fn point_in_complex_hull<const N: usize>(vertices: &[C; N], point: C) -> bool {
-    let scale = vertices
-        .iter()
-        .map(|vertex| vertex.norm())
-        .fold(point.norm().max(1.0), f64::max);
-    let linear_tolerance = 2e-10 * scale;
-    let area_tolerance = linear_tolerance * scale;
-    if vertices
-        .iter()
-        .any(|vertex| (*vertex - point).norm() <= linear_tolerance)
-    {
-        return true;
-    }
-    for i in 0..N.saturating_sub(2) {
-        for j in i + 1..N.saturating_sub(1) {
-            for k in j + 1..N {
-                let (p, q, r) = (vertices[i], vertices[j], vertices[k]);
-                let area = cross2(q - p, r - p);
-                if area.abs() <= area_tolerance {
-                    for (x, y) in [(p, q), (p, r), (q, r)] {
-                        let direction = y - x;
-                        let length2 = direction.norm_sqr();
-                        if length2 <= area_tolerance * area_tolerance {
-                            continue;
-                        }
-                        let parameter = ((point - x).re * direction.re
-                            + (point - x).im * direction.im)
-                            / length2;
-                        let distance = cross2(point - x, direction).abs() / length2.sqrt();
-                        if (-2e-10..=1.0 + 2e-10).contains(&parameter)
-                            && distance <= linear_tolerance
-                        {
-                            return true;
-                        }
-                    }
-                    continue;
-                }
-                let s0 = cross2(q - p, point - p) / area;
-                let s1 = cross2(point - p, r - p) / area;
-                let s2 = 1.0 - s0 - s1;
-                if s0 >= -2e-10 && s1 >= -2e-10 && s2 >= -2e-10 {
-                    return true;
-                }
-            }
-        }
-    }
-    false
 }
 
 /// Elementary symmetric functions `e₁..e₄` of `eig(A)` via Newton's identities on
 /// traces -- no eigendecomposition, so it does not floor at spectrum degeneracy.
 /// Production uses the matrix-free `compound_residual` (s184); this remains the
 /// test-side reference implementation.
-#[cfg(test)]
 pub fn symfn(a: &Mat4) -> [C; 4] {
     let a2 = a * a;
     let a3 = a2 * a;
@@ -388,23 +376,29 @@ pub fn compound_residual(dc: &Mat4, lam: &Mat4, o: &Mat4, target: &[C; 4]) -> f6
     let or_: [[f64; 4]; 4] = std::array::from_fn(|i| std::array::from_fn(|j| o[(i, j)].re));
 
     // e1 = sum_{i,j} a_i * or[i][j]^2 * lv_j  (16 terms)
-    let mut e1 = C::default();
+    let mut e1_terms = [C::default(); 16];
+    let mut term_index = 0;
     for i in 0..4 {
         for j in 0..4 {
-            e1 += a[i] * lv[j] * (or_[i][j] * or_[i][j]);
+            e1_terms[term_index] = a[i] * lv[j] * (or_[i][j] * or_[i][j]);
+            term_index += 1;
         }
     }
+    let e1 = compensated_sum(e1_terms);
 
     // e2 = sum_{i0<i1, j0<j1} a[i0]*a[i1] * det(O_{IJ})^2 * lv[j0]*lv[j1]  (36 terms)
     const PAIRS: [(usize, usize); 6] = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];
-    let mut e2 = C::default();
+    let mut e2_terms = [C::default(); 36];
+    term_index = 0;
     for &(i0, i1) in &PAIRS {
         let ai = a[i0] * a[i1];
         for &(j0, j1) in &PAIRS {
             let m = or_[i0][j0] * or_[i1][j1] - or_[i0][j1] * or_[i1][j0];
-            e2 += ai * lv[j0] * lv[j1] * (m * m);
+            e2_terms[term_index] = ai * lv[j0] * lv[j1] * (m * m);
+            term_index += 1;
         }
     }
+    let e2 = compensated_sum(e2_terms);
 
     // Reduced certificate: max(|Δe1|, |Re(Δe2/s)|). Equal to smooth_residual because
     // |e4|=1 forces |De3|=|De1| and De4=0, and e2/s ∈ R so |Re(De2/s)| = |De2| exactly.
@@ -1027,11 +1021,15 @@ fn may_have_unit_root(a0: &[f64; 7], lo: f64, hi: f64) -> usize {
 /// Which bounded construction produced the certified frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Rung {
+    /// A frame transported from an adjacent exact stratum and certified
+    /// directly against the original problem. This is a finite algebraic
+    /// transition chart, not a numerical correction.
+    Constructive,
     Vertex,
     Edge,
     Face,
-    /// Routed `1 + 3` peel: rank-drop formulas and nine quadratic zero-entry
-    /// walls. Dense residual fibers continue to the complete global axis tier.
+    /// Routed `1 + 3` peel: rank-drop formulas, nine quadratic zero-entry
+    /// walls, and the dense residual selector.
     OnePlusThree,
     Interior,
     /// Per-chart six-bracket Cauer reduction: one decic, one cubic/quadratic
@@ -1050,14 +1048,30 @@ pub enum Rung {
     /// split-pair theta characteristics), tried in all four orientations and
     /// re-gated on the original smooth residual.
     Radical,
-    /// Generic projective Spin action slice (research route until its bounded
-    /// action-selection contract is complete).
+    /// Generic projective Spin action slice. A bounded action prefix is a
+    /// constructor only; its exhaustion never certifies infeasibility.
     Spin,
     Unsolved,
 }
 
 pub struct Solution {
     pub o: Mat4,
+    /// Real Takagi frame of the certified compound:
+    /// `dc·o·lam·oᵀ·dc = takagi·diag(target roots)·takagiᵀ`, columns in the
+    /// accepted branch's root order.  This is the complete spectral
+    /// factorization the certificate verifies, returned so the stitch can
+    /// consume it as a formula instead of re-extracting it.  `None` only at
+    /// repeated target spectra (certified algebraically instead).
+    pub takagi: Option<Mat4>,
+    /// Which central-rho lift of the target the certificate matched.
+    pub rho_branch: bool,
+    /// Which gate-lifted representative certified, 0 for the shipped
+    /// 4-representative orbit.  Bits: 1 = C rho-lifted, 2 = G rho-lifted,
+    /// 4 = roles swapped. Production returns convert lifted hits through the
+    /// exact magic-basis SO(4) equivalence and re-certify them against the
+    /// caller's representatives. A nonzero tag is retained only when that
+    /// conversion declines and is diagnostic, not stitchable.
+    pub orbit_rep: u8,
     pub rung: Rung,
     pub residual: f64,
 }
@@ -1073,8 +1087,8 @@ pub const ACCEPT: f64 = 1e-9;
 const FRAME_ACCEPT: f64 = 2e-10;
 
 #[inline]
-fn certified_solution(o: Mat4, rung: Rung, residual: f64) -> Option<Solution> {
-    if !residual.is_finite() || residual > ACCEPT {
+fn framed_solution(o: Mat4, rung: Rung, residual: f64) -> Option<Solution> {
+    if !residual.is_finite() {
         return None;
     }
     let metrics = frame_metrics(&o)?;
@@ -1083,56 +1097,398 @@ fn certified_solution(o: Mat4, rung: Rung, residual: f64) -> Option<Solution> {
     }
     Some(Solution {
         o: orient_so4(o),
+        takagi: None,
+        rho_branch: false,
+        orbit_rep: 0,
         rung,
         residual,
     })
+}
+
+#[inline]
+#[cfg(any(test, feature = "research-spin"))]
+fn certified_solution(o: Mat4, rung: Rung, residual: f64) -> Option<Solution> {
+    if residual > ACCEPT {
+        return None;
+    }
+    framed_solution(o, rung, residual)
 }
 
 /// Rootwise certificate for the public compiler boundary. Symmetric-function
 /// residuals are the stable algebraic test used inside the solver, but their
 /// inverse map is ill-conditioned at repeated spectra: an `O(1e-9)` coefficient
 /// error can represent an `O(1e-5)` class error. Once per returned candidate,
-/// match the four roots of the realized master matrix against both target lifts.
+/// diagonalize the realized master against the target roots via Sylvester
+/// spectral projectors (eigenvalues known, no iteration): the diagonalization
+/// residual IS the rootwise certificate, and the real frame it produces is the
+/// complete spectral factorization, kept on the solution for the stitch.
 fn compiler_solution(
     problem: &PreparedSandwich,
     o: Mat4,
     rung: Rung,
     residual: f64,
 ) -> Option<Solution> {
-    let solution = certified_solution(o, rung, residual)?;
+    // The coefficient residual is a fast construction gate, not the public
+    // certificate: it becomes ill-conditioned at root collisions.  A valid
+    // frame may therefore proceed to the direct rootwise test even when that
+    // proxy is large.
+    let mut solution = framed_solution(o, rung, residual)?;
+    let master = sandwich_master(problem, &solution.o);
+    // Signed-permutation witnesses make the master diagonal.  Match those
+    // roots directly, before invoking coefficient polynomials or projectors;
+    // this remains well-conditioned even when several roots nearly collide.
+    let off_diagonal = (0..4)
+        .flat_map(|row| (0..4).map(move |column| (row, column)))
+        .filter(|(row, column)| row != column)
+        .map(|(row, column)| master[(row, column)].norm())
+        .fold(0.0f64, f64::max);
+    if off_diagonal < 1e-10 {
+        for (branch, roots) in problem.target_roots.iter().enumerate() {
+            for permutation in *PERMS24 {
+                let error = (0..4)
+                    .map(|i| (master[(i, i)] - roots[permutation[i]]).norm())
+                    .fold(off_diagonal, f64::max);
+                if error < 1e-8 {
+                    let mut takagi = Mat4::zeros();
+                    for i in 0..4 {
+                        takagi[(i, permutation[i])] = C::new(1.0, 0.0);
+                    }
+                    solution.takagi = Some(orient_so4(takagi));
+                    solution.rho_branch = branch == 1;
+                    solution.residual = error;
+                    return Some(solution);
+                }
+            }
+        }
+    }
     let repeated_target = problem.target_roots[0].iter().enumerate().any(|(i, root)| {
         problem.target_roots[0][i + 1..]
             .iter()
             .any(|other| (root - other).norm() < 1e-8)
     });
     if repeated_target {
-        // Root solvers are themselves ill-conditioned (and may take a very long
-        // QR tail) at an exact multiple root. Require a machine-scale algebraic
-        // certificate there instead. This rejects the loose near-edge frames
-        // that motivated the rootwise gate without diagonalizing the confluent case.
-        return (residual < 1e-12).then_some(solution);
+        // The target roots are known.  Diagonalize the realized symmetric
+        // unitary against those roots directly before forming divided
+        // projectors.  At a collision the latter amplify a machine-scale
+        // construction error by the inverse root gap; the known-spectrum
+        // Takagi factorization instead treats the repeated eigenspace as one
+        // algebraic block and verifies the full complex reconstruction.
+        for (branch, roots) in problem.target_roots.iter().enumerate() {
+            if let Some(real) = klein::takagi_real(&master, roots) {
+                let takagi = Mat4::from_fn(|row, column| C::new(real[(row, column)], 0.0));
+                let diagonalized = takagi.transpose() * master * takagi;
+                let mut error = 0.0f64;
+                for row in 0..4 {
+                    for column in 0..4 {
+                        let want = if row == column {
+                            roots[row]
+                        } else {
+                            C::default()
+                        };
+                        error = error.max((diagonalized[(row, column)] - want).norm());
+                    }
+                }
+                if error < 1e-8 {
+                    solution.takagi = Some(orient_so4(takagi));
+                    solution.rho_branch = branch == 1;
+                    solution.residual = error;
+                    return Some(solution);
+                }
+            }
+        }
+        // Repeated roots are exactly where divided spectral projectors lose
+        // conditioning.  A Hermitian projection of the unitary master keeps
+        // the repeated eigenspace intact and supplies a direct multiset check;
+        // try it before the historical projector fallback.
+        for (branch, roots) in problem.target_roots.iter().enumerate() {
+            if let Some((actual, off_diagonal)) = klein::unitary_eigenvalues(&master, roots) {
+                for permutation in *PERMS24 {
+                    let error = (0..4)
+                        .map(|i| (actual[i] - roots[permutation[i]]).norm())
+                        .fold(off_diagonal, f64::max);
+                    if error < 1e-8 {
+                        solution.rho_branch = branch == 1;
+                        solution.residual = error;
+                        return Some(solution);
+                    }
+                }
+            }
+        }
+        // Root separation powers the simple-target projector certificate, so
+        // a repeated target needs a machine-scale certificate of its own; the
+        // stitch falls back to extraction there. The symmetric-function
+        // residual is only a forward proxy on collision data: it can be tiny
+        // while a split repeated root is still outside the public tolerance.
+        // Consequently no proxy-only acceptance is sound here; every
+        // candidate proceeds through a direct root/multiplicity certificate.
+        for roots in problem.target_roots.iter() {
+            let mut vals = [C::default(); 4];
+            let mut nv = 0usize;
+            for &r in roots {
+                if !vals[..nv].iter().any(|&v| (v - r).norm() < 1e-8) {
+                    vals[nv] = r;
+                    nv += 1;
+                }
+            }
+            let shift = |v: C| {
+                let mut m = master;
+                for i in 0..4 {
+                    m[(i, i)] -= v;
+                }
+                m
+            };
+            let mut worst = 0.0f64;
+            for gi in 0..nv {
+                let mut pg = Mat4::identity();
+                for hi in 0..nv {
+                    if hi != gi {
+                        pg = shift(vals[hi]) * pg / (vals[gi] - vals[hi]);
+                    }
+                }
+                let nil = shift(vals[gi]) * pg;
+                for i in 0..4 {
+                    for j in 0..4 {
+                        worst = worst.max(nil[(i, j)].norm());
+                    }
+                }
+                // The annihilation identity proves only that the realized
+                // spectrum is a subset of the target's DISTINCT values. Its
+                // projector trace supplies the missing algebraic
+                // multiplicity: without this, {+1,+1,+1,+1} falsely
+                // certified against {+1,+1,-1,-1}.
+                let multiplicity = roots
+                    .iter()
+                    .filter(|&&root| (root - vals[gi]).norm() < 1e-8)
+                    .count() as f64;
+                worst = worst.max((pg.trace() - C::new(multiplicity, 0.0)).norm());
+            }
+            // Public monodromy coordinates are quantized, so a sandwich made
+            // from an exact unitary can differ from its stored collision
+            // target by a few 1e-12.  This is a rootwise error, not the
+            // ill-conditioned coefficient proxy; keep a two-order margin over
+            // that representation floor.  This is the same direct rootwise
+            // threshold used for simple targets below; unlike the symmetric-
+            // function proxy, it does not lose conditioning at a collision.
+            if worst < 1e-8 {
+                solution.residual = worst;
+                return Some(solution);
+            }
+            if std::env::var_os("TRACE_PATH").is_some() {
+                eprintln!(
+                    "repeated-target projector rejected residual={residual:.3e} worst={worst:.3e}"
+                );
+            }
+        }
+        // A clustered coefficient solve can land on the correct real
+        // eigenframe while splitting a repeated root by O(sqrt(eps)). Replace
+        // that spectrum in the same frame, peel the left diagonal, and recover
+        // the gate frame from its known spectrum. This is a fixed algebraic
+        // reconstruction; the complete rebuilt sandwich is checked below.
+        for (branch, roots) in problem.target_roots.iter().enumerate() {
+            let Some((target_master, target_frame)) = klein::retarget_symmetric(&master, roots)
+            else {
+                continue;
+            };
+            let inverse_dc = problem.dc.map(|value| value.conj());
+            let peeled = inverse_dc * target_master * inverse_dc;
+            let Some(real_o) = klein::takagi_real(&peeled, &problem.right) else {
+                continue;
+            };
+            let o = orient_so4(Mat4::from_fn(|row, column| {
+                C::new(real_o[(row, column)], 0.0)
+            }));
+            let rebuilt = sandwich_master(problem, &o);
+            let error = rebuilt
+                .iter()
+                .zip(target_master.iter())
+                .map(|(actual, expected)| (*actual - *expected).norm())
+                .fold(0.0f64, f64::max);
+            if error < 1e-8 {
+                let mut repaired = framed_solution(o, rung, error)?;
+                repaired.takagi = Some(orient_so4(target_frame));
+                repaired.rho_branch = branch == 1;
+                repaired.residual = error;
+                return Some(repaired);
+            }
+        }
+        return None;
     }
-    let master = problem.dc * solution.o * problem.lam * solution.o.transpose() * problem.dc;
-    let matrix = faer::Mat::<C>::from_fn(4, 4, |i, j| master[(i, j)]);
-    let roots = matrix.eigenvalues().ok()?;
-    let error = problem
-        .target_roots
-        .iter()
-        .flat_map(|target| {
-            PERMS24.iter().map(|order| {
-                (0..4)
-                    .map(|i| (roots[i] - target[order[i]]).norm())
-                    .fold(0.0_f64, f64::max)
-            })
-        })
-        .fold(f64::INFINITY, f64::min);
-    (error < 1e-8).then_some(solution)
+    // The correct central-rho branch is picked (up to numerical ties) by the
+    // free trace test tr(master) = e1(branch); trying it first saves a full
+    // projector build + orthogonality check on rho-branch rows. Pure reorder:
+    // both branches still run until one certifies, so the accept set is
+    // unchanged.
+    let trace = master.trace();
+    let branch_order = if (trace - problem.targets[0][0]).norm_sqr()
+        <= (trace - problem.targets[1][0]).norm_sqr()
+    {
+        [0usize, 1]
+    } else {
+        [1usize, 0]
+    };
+    // Use a Hermitian projection before either Takagi projectors or a generic
+    // complex eigensolve.  The master is unitary and normal, so this preserves
+    // its eigenspaces and remains backward stable when roots cluster.
+    for &branch in &branch_order {
+        let roots = &problem.target_roots[branch];
+        if let Some((actual, off_diagonal)) = klein::unitary_eigenvalues(&master, roots) {
+            let mut best_error = f64::INFINITY;
+            for permutation in *PERMS24 {
+                let error = (0..4)
+                    .map(|i| (actual[i] - roots[permutation[i]]).norm())
+                    .fold(off_diagonal, f64::max);
+                best_error = best_error.min(error);
+                if error < 1e-8 {
+                    solution.rho_branch = branch == 1;
+                    solution.residual = error;
+                    return Some(solution);
+                }
+            }
+            if std::env::var_os("TRACE_PATH").is_some() {
+                eprintln!("unitary root rejection branch {branch} best={best_error:.3e}");
+            }
+        }
+    }
+    for &branch in &branch_order {
+        let roots = &problem.target_roots[branch];
+        let Some(frame) = klein::takagi_real(&master, roots) else {
+            if std::env::var_os("TRACE_PATH").is_some() {
+                eprintln!("simple-target Takagi branch {branch} unavailable");
+            }
+            continue;
+        };
+        let v = Mat4::from_fn(|i, j| C::new(frame[(i, j)], 0.0));
+        let t = v.transpose() * master * v;
+        let mut error = 0.0f64;
+        for r in 0..4 {
+            for c in 0..4 {
+                let want = if r == c { roots[r] } else { C::default() };
+                error = error.max((t[(r, c)] - want).norm());
+            }
+        }
+        if error < 1e-8 {
+            solution.takagi = Some(v);
+            solution.rho_branch = branch == 1;
+            solution.residual = error;
+            return Some(solution);
+        }
+        if std::env::var_os("TRACE_PATH").is_some() {
+            eprintln!("simple-target Takagi branch {branch} error={error:.3e}");
+        }
+    }
+    // The master is normal, so its direct 4x4 eigensolve is backward stable
+    // even at a root collision. This is a stronger fallback than solving its
+    // characteristic polynomial, whose inverse map is ill-conditioned there.
+    let matrix = faer::Mat::<C>::from_fn(4, 4, |row, column| master[(row, column)]);
+    if let Ok(values) = matrix.eigenvalues() {
+        let actual: [C; 4] = std::array::from_fn(|i| values[i]);
+        let mut best_error = f64::INFINITY;
+        for &branch in &branch_order {
+            for permutation in *PERMS24 {
+                let error = (0..4)
+                    .map(|i| (actual[i] - problem.target_roots[branch][permutation[i]]).norm())
+                    .fold(0.0f64, f64::max);
+                best_error = best_error.min(error);
+                if error < 1e-8 {
+                    solution.rho_branch = branch == 1;
+                    solution.residual = error;
+                    return Some(solution);
+                }
+            }
+        }
+        if std::env::var_os("TRACE_PATH").is_some() {
+            eprintln!("simple-target master eig rejection best={best_error:.3e}");
+        }
+    }
+    // A real Takagi frame can be numerically awkward at a collision in an
+    // INPUT spectrum even when the target roots are simple.  Certify the
+    // realized master's roots directly before declining.  The caller already
+    // has a clean-product extraction fallback when `takagi` is absent.
+    let e = symfn(&master);
+    let coefficients = [C::new(1.0, 0.0), -e[0], e[1], -e[2], e[3]];
+    let actual = crate::cpoly::roots(&coefficients);
+    if actual.len() == 4 {
+        let mut best_error = f64::INFINITY;
+        for &branch in &branch_order {
+            for permutation in *PERMS24 {
+                let error = (0..4)
+                    .map(|i| (actual[i] - problem.target_roots[branch][permutation[i]]).norm())
+                    .fold(0.0f64, f64::max);
+                best_error = best_error.min(error);
+                if error < 1e-8 {
+                    solution.rho_branch = branch == 1;
+                    solution.residual = error;
+                    return Some(solution);
+                }
+            }
+        }
+        if std::env::var_os("TRACE_PATH").is_some() {
+            eprintln!("simple-target polynomial root rejection best={best_error:.3e}");
+        }
+    }
+    None
+}
+
+/// Reuse a Takagi frame from a numerically indistinguishable snapped-input
+/// problem.  This avoids re-extracting a frame at an input collision, but the
+/// frame is accepted only after direct rootwise verification on the original
+/// master matrix.
+fn compiler_solution_with_takagi(
+    problem: &PreparedSandwich,
+    o: Mat4,
+    rung: Rung,
+    residual: f64,
+    takagi: &Mat4,
+    rho_branch: bool,
+) -> Option<Solution> {
+    let mut solution = framed_solution(o, rung, residual)?;
+    let branch = usize::from(rho_branch);
+    let master = sandwich_master(problem, &solution.o);
+    let diagonalized = takagi.transpose() * master * takagi;
+    let mut error = 0.0f64;
+    for row in 0..4 {
+        for column in 0..4 {
+            let want = if row == column {
+                problem.target_roots[branch][row]
+            } else {
+                C::default()
+            };
+            error = error.max((diagonalized[(row, column)] - want).norm());
+        }
+    }
+    if error >= 1e-8 {
+        return None;
+    }
+    solution.takagi = Some(*takagi);
+    solution.rho_branch = rho_branch;
+    solution.residual = error;
+    Some(solution)
+}
+
+/// `dc·O·Λ·Oᵀ·dc` with the diagonality of `dc` and `Λ` folded into entry
+/// scalings: one bilinear pass instead of four dense 4×4 products. Exact
+/// same arithmetic content as the dense chain.
+#[inline]
+fn sandwich_master(problem: &PreparedSandwich, o: &Mat4) -> Mat4 {
+    let d: [C; 4] = std::array::from_fn(|i| problem.dc[(i, i)]);
+    let l: [C; 4] = std::array::from_fn(|j| problem.lam[(j, j)]);
+    let ol: [[C; 4]; 4] = std::array::from_fn(|i| std::array::from_fn(|k| o[(i, k)] * l[k]));
+    Mat4::from_fn(|i, j| {
+        let mut s = C::default();
+        for k in 0..4 {
+            s += ol[i][k] * o[(j, k)];
+        }
+        d[i] * s * d[j]
+    })
 }
 
 #[inline]
 fn unsolved_solution() -> Solution {
     Solution {
         o: Mat4::identity(),
+        takagi: None,
+        rho_branch: false,
+        orbit_rep: 0,
         rung: Rung::Unsolved,
         residual: f64::INFINITY,
     }
@@ -1278,35 +1634,64 @@ pub fn interior_class_root() -> (i32, i32) {
 }
 
 pub fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solution {
-    let tpre = prof::start();
-    let problem = PreparedSandwich::new(c, g, t);
+    solve_with_stratum(c, g, t, false)
+}
 
-    // A vertex or one-Givens edge preserves routed eigenvalues a_i*g_j. Test
-    // that necessary spectral signature before enumerating support incidences.
-    // The gate carries its branch masks into the edge solve, so the certificate
-    // is computed only once.
-    let edge_gate = secular::edge_gate(&problem.routed, &problem.target_roots);
-    let mut support_perms = None;
-    if let Some(viable) = edge_gate.edge.as_ref() {
-        let cand = *PERMS24;
-        for p in cand {
-            // A vertex needs all four routed roots on the same target branch.
-            let branch_mask = (0..4).fold(0b11u8, |mask, k| mask & viable[k][p[k]]);
-            if branch_mask == 0 {
-                continue;
-            }
-            let r = perm_vertex_residual(&problem.left, &problem.right, &problem.targets, &p);
-            if r < ACCEPT {
-                if let Some(solution) = compiler_solution(&problem, signed_perm(p), Rung::Vertex, r)
-                {
-                    return solution;
-                }
-            }
-        }
-        support_perms = Some(cand);
+/// `interior_hint`: the caller certifies the target is STRICTLY INTERIOR to
+/// the reach polytope of (gate, prefix) -- no Horn facet tight (the witness
+/// DP's stratum certificate; frame-safe because interiority is rho-invariant).
+/// The support strata (vertex/edge/face/1+3) are facet-tied constructions and
+/// are skipped on that certificate.  The hint is consequence-free: a hinted
+/// decline falls back to one full unhinted solve.
+pub fn solve_with_stratum(c: [f64; 3], g: [f64; 3], t: [f64; 3], interior_hint: bool) -> Solution {
+    let solution = solve_inner(c, g, t, interior_hint, true, true);
+    if interior_hint && (matches!(solution.rung, Rung::Unsolved) || solution.orbit_rep != 0) {
+        return solve_inner(c, g, t, false, true, true);
     }
+    solution
+}
 
-    prof::rec(10, tpre);
+/// Run the complete certified fast atlas but stop before the expensive
+/// Spin/constructive tail. This is a constructor-only preflight used to choose
+/// among equal-cost Horn witnesses; `Unsolved` does not mean unreachable.
+pub fn solve_bounded_with_stratum(
+    c: [f64; 3],
+    g: [f64; 3],
+    t: [f64; 3],
+    interior_hint: bool,
+) -> Solution {
+    let solution = solve_inner(c, g, t, interior_hint, true, false);
+    if interior_hint && (matches!(solution.rung, Rung::Unsolved) || solution.orbit_rep != 0) {
+        solve_inner(c, g, t, false, true, false)
+    } else {
+        solution
+    }
+}
+
+#[cfg(feature = "diagnostics")]
+#[allow(clippy::print_stderr)]
+fn orbit_tag(stage: u8, s: Solution) -> Solution {
+    if std::env::var_os("ORBIT_DUMP").is_some() {
+        eprintln!("ORBIT {stage} {:?}", s.rung);
+    }
+    s
+}
+#[cfg(not(feature = "diagnostics"))]
+fn orbit_tag(_stage: u8, s: Solution) -> Solution {
+    s
+}
+
+fn solve_inner(
+    c: [f64; 3],
+    g: [f64; 3],
+    t: [f64; 3],
+    interior_hint: bool,
+    allow_snap: bool,
+    allow_expensive: bool,
+) -> Solution {
+    let tp = prof::start();
+    let problem = PreparedSandwich::new(c, g, t);
+    prof::rec(68, tp);
     if chartall_mode() {
         // Full primary-atlas scan with early-return disabled: records the direct
         // frame's valid chart set in INTERIOR_VALID_CLASSES. Transported target-slot
@@ -1322,11 +1707,411 @@ pub fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solution {
             &cand,
         );
         return Solution {
+            takagi: None,
+            rho_branch: false,
+            orbit_rep: 0,
             o: Mat4::identity(),
             rung: Rung::Interior,
             residual: 0.0,
         };
     }
+    // The class's representative orbit: the central rho lift and the C<->G
+    // swap are exact encodings of the same class.  Every representative's
+    // cheap prefix runs before ANY expensive tail (the measured worst-case
+    // declines were rows whose other representative solves on a microsecond
+    // rung), and the tails then complete the orbit, so a decline from this
+    // function is a decline of every representative -- the compiler needs no
+    // external retry.  Representatives are prepared lazily, and the FIRST
+    // certified hit returns: hunting a better residual than the certificate
+    // demands was measured to turn 30 us rows into ms rows for polish the
+    // contract never asked for.
+    // A machine-scale (< 1e-12, the boundary's own constant) prefix hit
+    // returns immediately -- the overwhelmingly common path, unchanged.  A
+    // certified hit ABOVE that scale is held while the REMAINING CHEAP
+    // PREFIX representatives are tried: the special-position walls that cost
+    // a cell its digits are encoding-aligned, so another representative
+    // usually evaluates the same class machine-exactly (measured: the
+    // margin band's rho lifts).  Bounded (at most the 4 prefix passes that
+    // already exist; tails are never entered on a certified hold -- the
+    // expensive-tail hunt is the measured ms-row pathology and stays
+    // banned).  Best certified candidate wins.
+    let mut held: Option<(u8, Solution)> = None;
+    let hold = |stage: u8, s: Solution, held: &mut Option<(u8, Solution)>| {
+        if held.as_ref().is_none_or(|(_, h)| s.residual < h.residual) {
+            *held = Some((stage, s));
+        }
+    };
+    if let Some(solution) = solve_prefix(&problem, interior_hint) {
+        if solution.residual < 1e-12 {
+            return orbit_tag(0, solution);
+        }
+        hold(0, solution, &mut held);
+    }
+    // Quantized coordinates can sit within the direct certificate scale of an
+    // exact Weyl stratum. Evaluate that finite adjacent-stratum lattice once,
+    // through the cheap algebraic prefix only, and certify every returned
+    // frame against the original unsnapped roots. No recursive solve and no
+    // numerical correction are involved.
+    if allow_snap {
+        let snapped_c = snap_to_weyl_stratum(c);
+        let snapped_g = snap_to_weyl_stratum(g);
+        let snapped_t = snap_to_weyl_stratum(t);
+        let available = u8::from(snapped_c.is_some())
+            | (u8::from(snapped_g.is_some()) << 1)
+            | (u8::from(snapped_t.is_some()) << 2);
+        for mask in [5, 6, available, 3, 1, 2, 4] {
+            if mask == 0 || mask & !available != 0 {
+                continue;
+            }
+            let adjacent = PreparedSandwich::new(
+                if mask & 1 != 0 { snapped_c.unwrap() } else { c },
+                if mask & 2 != 0 { snapped_g.unwrap() } else { g },
+                if mask & 4 != 0 { snapped_t.unwrap() } else { t },
+            );
+            let Some(candidate) = solve_prefix(&adjacent, false) else {
+                continue;
+            };
+            let Some(takagi) = candidate.takagi.as_ref() else {
+                continue;
+            };
+            let residual = problem
+                .targets
+                .iter()
+                .map(|target| compound_residual(&problem.dc, &problem.lam, &candidate.o, target))
+                .fold(f64::INFINITY, f64::min);
+            if let Some(solution) = compiler_solution_with_takagi(
+                &problem,
+                candidate.o,
+                Rung::Constructive,
+                residual,
+                takagi,
+                candidate.rho_branch,
+            ) {
+                return orbit_tag(49, solution);
+            }
+        }
+    }
+    let rho_t = rho_monodromy(t);
+    let rho_problem = PreparedSandwich::new(c, g, rho_t);
+    if let Some(mut solution) = solve_prefix(&rho_problem, interior_hint) {
+        // The lift index is relative to rho_problem's target; branch b there
+        // is branch 1-b of the caller's t.  The master matrix is identical,
+        // so the Takagi frame stays valid under the flipped flag.
+        solution.rho_branch = !solution.rho_branch;
+        if solution.residual < 1e-12 {
+            return orbit_tag(1, solution);
+        }
+        hold(1, solution, &mut held);
+    }
+    let swap_direct = PreparedSandwich::new(g, c, t);
+    if let Some(solution) =
+        solve_prefix(&swap_direct, interior_hint).and_then(|s| convert_swapped(&problem, s))
+    {
+        if solution.residual < 1e-12 {
+            return orbit_tag(2, solution);
+        }
+        hold(2, solution, &mut held);
+    }
+    let swap_rho = PreparedSandwich::new(g, c, rho_t);
+    if let Some(solution) =
+        solve_prefix(&swap_rho, interior_hint).and_then(|s| convert_swapped(&problem, s))
+    {
+        if solution.residual < 1e-12 {
+            return orbit_tag(3, solution);
+        }
+        hold(3, solution, &mut held);
+    }
+    if let Some((stage, solution)) = held {
+        return orbit_tag(stage, solution);
+    }
+    if let Some(solution) = solve_tail(&problem) {
+        return orbit_tag(4, solution);
+    }
+    if let Some(mut solution) = solve_tail(&rho_problem) {
+        solution.rho_branch = !solution.rho_branch;
+        return orbit_tag(5, solution);
+    }
+    if let Some(solution) = solve_tail(&swap_direct).and_then(|s| convert_swapped(&problem, s)) {
+        return orbit_tag(6, solution);
+    }
+    if let Some(solution) = solve_tail(&swap_rho).and_then(|s| convert_swapped(&problem, s)) {
+        return orbit_tag(7, solution);
+    }
+    // Gate-lifted representatives. The central-rho lift of a gate is the same
+    // local-equivalence class in a different SO(4) encoding, so a difficult
+    // unlifted fibre can be a microsecond construction in a lifted one.
+    // Enter only after the complete unlifted orbit declines; any hit is later
+    // converted algebraically and re-certified against the original problem.
+    let rho_c = rho_monodromy(c);
+    let rho_g = rho_monodromy(g);
+    let lifted_pairs: [(u8, [f64; 3], [f64; 3]); 6] = [
+        (0b001, rho_c, g),
+        (0b010, c, rho_g),
+        (0b011, rho_c, rho_g),
+        (0b101, g, rho_c),
+        (0b110, rho_g, c),
+        (0b111, rho_g, rho_c),
+    ];
+    let mut lifted: Vec<(u8, bool, PreparedSandwich)> = Vec::with_capacity(12);
+    if regular_problem(&problem) {
+        for &(bits, cc, gg) in &lifted_pairs {
+            lifted.push((bits, false, PreparedSandwich::new(cc, gg, t)));
+            lifted.push((bits, true, PreparedSandwich::new(cc, gg, rho_t)));
+        }
+    }
+    let mut lifted_held: Option<(u8, Solution)> = None;
+    for (i, (bits, lifted_t, rep)) in lifted.iter().enumerate() {
+        if let Some(mut solution) = solve_prefix(rep, interior_hint) {
+            solution.orbit_rep = *bits;
+            if *lifted_t {
+                solution.rho_branch = !solution.rho_branch;
+            }
+            hold(9 + i as u8, solution, &mut lifted_held);
+        }
+    }
+    for (i, (bits, lifted_t, rep)) in lifted.iter().enumerate() {
+        if let Some(mut solution) = solve_tail(rep) {
+            solution.orbit_rep = *bits;
+            if *lifted_t {
+                solution.rho_branch = !solution.rho_branch;
+            }
+            hold(21 + i as u8, solution, &mut lifted_held);
+            break;
+        }
+    }
+
+    // A gate within roundoff of a chamber vertex need not satisfy the exact
+    // routed-support mask used to prune the normal vertex pass.  On a total
+    // atlas decline, test the finite permutation set without that mask.  The
+    // residual and compiler certificates remain the acceptance criterion.
+    if let Some(solution) = solve_vertex_ungated(&problem) {
+        return orbit_tag(33, solution);
+    }
+    if let Some(mut solution) = solve_vertex_ungated(&rho_problem) {
+        solution.rho_branch = !solution.rho_branch;
+        return orbit_tag(34, solution);
+    }
+    if let Some(solution) =
+        solve_vertex_ungated(&swap_direct).and_then(|solution| convert_swapped(&problem, solution))
+    {
+        return orbit_tag(35, solution);
+    }
+    if let Some(solution) =
+        solve_vertex_ungated(&swap_rho).and_then(|solution| convert_swapped(&problem, solution))
+    {
+        return orbit_tag(36, solution);
+    }
+    for (i, (bits, lifted_t, rep)) in lifted.iter().enumerate() {
+        if let Some(mut solution) = solve_vertex_ungated(rep) {
+            solution.orbit_rep = *bits;
+            if *lifted_t {
+                solution.rho_branch = !solution.rho_branch;
+            }
+            hold(37 + i as u8, solution, &mut lifted_held);
+            break;
+        }
+    }
+
+    if !allow_expensive {
+        return unsolved_solution();
+    }
+
+    if let Some((stage, solution)) = lifted_held {
+        if let Some(unlifted) = convert_gate_lifted(&problem, &solution) {
+            return orbit_tag(54, unlifted);
+        }
+        return orbit_tag(stage, solution);
+    }
+    unsolved_solution()
+}
+
+fn snap_to_weyl_stratum(m: [f64; 3]) -> Option<[f64; 3]> {
+    // This only selects a seed on the adjacent exact stratum. The returned
+    // frame is corrected and rootwise-certified against the original data,
+    // so the seed radius is a conditioning choice rather than an acceptance
+    // tolerance. Beyond the direct certificate scale a snapped frame would
+    // require a forbidden numerical correction and must not launch a recursive
+    // atlas replay.
+    const SNAP: f64 = 2e-9;
+    let w = weyl_from_monodromy(m);
+    let mut bary = [
+        1.0 - w[0] - w[1],
+        w[0] - w[1],
+        2.0 * (w[1] - w[2]),
+        2.0 * w[2],
+    ];
+    let mut changed = false;
+    for value in &mut bary {
+        // Raw invariant extraction can put a chamber-face barycentric value a
+        // few ulps on the negative side. This routine only chooses a seed and
+        // the original problem is still certified, so snap the complete
+        // two-sided numerical transition layer.
+        if *value != 0.0 && value.abs() < SNAP {
+            *value = 0.0;
+            changed = true;
+        }
+    }
+    if !changed {
+        return None;
+    }
+    let sum: f64 = bary.iter().sum();
+    if !sum.is_finite() || sum <= 0.0 {
+        return None;
+    }
+    for value in &mut bary {
+        *value /= sum;
+    }
+    let snapped_w = [
+        bary[1] + 0.5 * (bary[2] + bary[3]),
+        0.5 * (bary[2] + bary[3]),
+        0.5 * bary[3],
+    ];
+    Some([
+        0.5 * (snapped_w[0] + snapped_w[1] - snapped_w[2]),
+        0.5 * (snapped_w[0] - snapped_w[1] + snapped_w[2]),
+        0.5 * (-snapped_w[0] + snapped_w[1] + snapped_w[2]),
+    ])
+}
+
+fn solve_vertex_ungated(problem: &PreparedSandwich) -> Option<Solution> {
+    for p in *PERMS24 {
+        let residual = perm_vertex_residual(&problem.left, &problem.right, &problem.targets, &p);
+        if let Some(solution) = compiler_solution(problem, signed_perm(p), Rung::Vertex, residual) {
+            return Some(solution);
+        }
+    }
+    None
+}
+
+/// Convert a swapped-orientation solution back to the original edge:
+/// `u` solves `(C,G,T)` iff `uᵀ` solves `(G,C,T)`; in the magic basis
+/// `mb(uᵀ) = E·mb(u)ᵀ·E` with `E = diag(1,-1,1,-1)`.  The converted frame is
+/// re-certified against the original lift; a conversion that fails
+/// certification falls through to the next representative.
+fn convert_swapped(problem: &PreparedSandwich, solution: Solution) -> Option<Solution> {
+    let mut o = solution.o.transpose();
+    for i in 0..4 {
+        for j in 0..4 {
+            if (i + j) % 2 == 1 {
+                o[(i, j)] = -o[(i, j)];
+            }
+        }
+    }
+    let residual = problem
+        .targets
+        .iter()
+        .map(|tg| compound_residual(&problem.dc, &problem.lam, &o, tg))
+        .fold(f64::INFINITY, f64::min);
+    compiler_solution(problem, o, solution.rung, residual)
+}
+
+/// Convert a certificate built with central-rho gate representatives back to
+/// the caller's canonical representatives.  In the magic basis,
+///
+/// `D(rho(w)) = i L D(w) R`,
+///
+/// where `R` swaps the two coordinate pairs and `L = diag(1,1,-1,-1) R`.
+/// Both are in SO(4), hence are ordinary local frames.  Outer `L`/`R`
+/// factors do not affect the target class; the inner factors update `O`.
+/// The transformed frame is always rechecked by `compiler_solution`.
+fn convert_gate_lifted(problem: &PreparedSandwich, solution: &Solution) -> Option<Solution> {
+    let swapped = solution.orbit_rep & 0b100 != 0;
+    let left_lifted = if swapped {
+        solution.orbit_rep & 0b010 != 0
+    } else {
+        solution.orbit_rep & 0b001 != 0
+    };
+    let right_lifted = if swapped {
+        solution.orbit_rep & 0b001 != 0
+    } else {
+        solution.orbit_rep & 0b010 != 0
+    };
+
+    let r = Mat4::from_fn(|row, column| {
+        C::new(
+            if column == [2usize, 3, 0, 1][row] {
+                1.0
+            } else {
+                0.0
+            },
+            0.0,
+        )
+    });
+    let signs = Mat4::from_diagonal(&nalgebra::Vector4::new(
+        C::new(1.0, 0.0),
+        C::new(1.0, 0.0),
+        C::new(-1.0, 0.0),
+        C::new(-1.0, 0.0),
+    ));
+    let l = signs * r;
+    let mut o = solution.o;
+    if left_lifted {
+        o = r.transpose() * o;
+    }
+    if right_lifted {
+        o *= l;
+    }
+    if swapped {
+        o = o.transpose();
+        for i in 0..4 {
+            for j in 0..4 {
+                if (i + j) % 2 == 1 {
+                    o[(i, j)] = -o[(i, j)];
+                }
+            }
+        }
+    }
+    let residual = problem
+        .targets
+        .iter()
+        .map(|target| compound_residual(&problem.dc, &problem.lam, &o, target))
+        .fold(f64::INFINITY, f64::min);
+    compiler_solution(problem, o, solution.rung, residual)
+}
+
+/// Every microsecond-scale exact stage: support strata, Klein, the
+/// multiplicity formulas, the 1+3 walls, the boundary accelerators, and the
+/// float pass of the dense 1+3 selector.
+fn solve_prefix(problem: &PreparedSandwich, interior_hint: bool) -> Option<Solution> {
+    let tpre = prof::start();
+    // A vertex or one-Givens edge preserves routed eigenvalues a_i*g_j. Test
+    // that necessary spectral signature before enumerating support incidences.
+    // The gate carries its branch masks into the edge solve, so the certificate
+    // is computed only once.  An interior stratum certificate kills every
+    // facet-tied support construction (vertex/edge/1+3 via the empty gate,
+    // face via its own guard) outright.
+    let teg = prof::start();
+    let edge_gate = if interior_hint {
+        secular::RoutedSupport {
+            edge: None,
+            exact: [[0; 4]; 4],
+        }
+    } else {
+        secular::edge_gate(&problem.routed, &problem.target_roots)
+    };
+    prof::rec(69, teg);
+    let tvx = prof::start();
+    let mut support_perms = None;
+    if let Some(viable) = edge_gate.edge.as_ref() {
+        let cand = *PERMS24;
+        for p in cand {
+            // A vertex needs all four routed roots on the same target branch.
+            let branch_mask = (0..4).fold(0b11u8, |mask, k| mask & viable[k][p[k]]);
+            if branch_mask == 0 {
+                continue;
+            }
+            let r = perm_vertex_residual(&problem.left, &problem.right, &problem.targets, &p);
+            if r < ACCEPT {
+                if let Some(solution) = compiler_solution(problem, signed_perm(p), Rung::Vertex, r)
+                {
+                    return Some(solution);
+                }
+            }
+        }
+        support_perms = Some(cand);
+    }
+    prof::rec(70, tvx);
+    prof::rec(10, tpre);
     // Exhaust the lower support strata before a broader section can cannibalize
     // their cheaper, better-conditioned formulas.
     if let (Some(viable), Some(cand)) = (edge_gate.edge.as_ref(), support_perms.as_ref()) {
@@ -1343,24 +2128,28 @@ pub fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solution {
         );
         prof::rec(1, tp);
         if let Some((o, r)) = hit {
-            if let Some(solution) = compiler_solution(&problem, o, Rung::Edge, r) {
-                return solution;
+            if let Some(solution) = compiler_solution(problem, o, Rung::Edge, r) {
+                return Some(solution);
             }
         }
     }
     let tp = prof::start();
-    let hit = secular::solve_face(
-        &problem.left,
-        &problem.right,
-        &problem.dc,
-        &problem.lam,
-        &problem.target_roots,
-        &problem.targets,
-    );
+    let hit = if interior_hint {
+        None // face frames are facet-tied; dead on an interior certificate
+    } else {
+        secular::solve_face(
+            &problem.left,
+            &problem.right,
+            &problem.dc,
+            &problem.lam,
+            &problem.target_roots,
+            &problem.targets,
+        )
+    };
     prof::rec(11, tp);
     if let Some((o, r)) = hit {
-        if let Some(solution) = compiler_solution(&problem, o, Rung::Face, r) {
-            return solution;
+        if let Some(solution) = compiler_solution(problem, o, Rung::Face, r) {
+            return Some(solution);
         }
     }
     // Klein-circulant acceleration: a one-sided section of the same realization
@@ -1377,8 +2166,85 @@ pub fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solution {
     );
     prof::rec(58, tk);
     if let Some((o, r)) = klein_hit {
-        if let Some(solution) = compiler_solution(&problem, o, Rung::Klein, r) {
-            return solution;
+        if let Some(solution) = compiler_solution(problem, o, Rung::Klein, r) {
+            return Some(solution);
+        }
+    }
+    // Near 2+2 inputs on a block-reducible outer face obey the same finite CS
+    // decomposition as the exact stratum, but with the individual roots kept
+    // distinct inside each block. The final direct certificate prevents the
+    // conditioning cluster from changing the accepted set.
+    if let Some(solution) = pair22::solve_near_double_with(
+        &problem.left,
+        &problem.right,
+        &problem.target_roots,
+        &problem.dc,
+        &problem.lam,
+        &problem.targets,
+        |o, residual| compiler_solution(problem, o, Rung::Pair22, residual),
+    ) {
+        return Some(solution);
+    }
+    // Pair22 is already a complete finite algebraic enumeration. Keep the
+    // public rootwise certificate inside that enumeration so a clustered-root
+    // coefficient near-hit cannot mask a later exact Pluecker candidate.
+    if problem.strata.g == SpectrumKind::Pair22 || problem.strata.c == SpectrumKind::Pair22 {
+        if let Some(solution) = pair22::solve_with(
+            &problem.left,
+            &problem.right,
+            &problem.target_roots,
+            &problem.dc,
+            &problem.lam,
+            &problem.targets,
+            problem.strata.g == SpectrumKind::Pair22,
+            problem.strata.c == SpectrumKind::Pair22,
+            [false; 2],
+            true,
+            true,
+            |o, residual| compiler_solution(problem, o, Rung::Pair22, residual),
+        ) {
+            return Some(solution);
+        }
+    }
+    let target_repeated = problem.strata.target.iter().any(|kind| kind.is_repeated());
+    if target_repeated {
+        if let Some(solution) = pair22::solve_block22_with(
+            &problem.left,
+            &problem.right,
+            &problem.target_roots,
+            &problem.dc,
+            &problem.lam,
+            &problem.targets,
+            |o, residual| compiler_solution(problem, o, Rung::Face, residual),
+        ) {
+            return Some(solution);
+        }
+    }
+    let mut resonance_best = None;
+    if problem.strata.has_confluence() && target_repeated {
+        let exact = resonance::solve_with(
+            &problem.left,
+            &problem.right,
+            &problem.target_roots,
+            &problem.dc,
+            &problem.lam,
+            &problem.targets,
+            |o, residual| {
+                let solution = compiler_solution(problem, o, Rung::Radical, residual)?;
+                if solution.residual < 1e-12 {
+                    return Some(solution);
+                }
+                if resonance_best
+                    .as_ref()
+                    .is_none_or(|candidate: &Solution| solution.residual < candidate.residual)
+                {
+                    resonance_best = Some(solution);
+                }
+                None
+            },
+        );
+        if let Some(solution) = exact {
+            return Some(solution);
         }
     }
     // Multiplicity formulas own only exact confluent signatures and run after
@@ -1392,15 +2258,15 @@ pub fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solution {
         &problem.targets,
         problem.strata,
     ) {
-        if let Some(solution) = compiler_solution(&problem, o, rung, r) {
-            return solution;
+        if let Some(solution) = compiler_solution(problem, o, rung, r) {
+            return Some(solution);
         }
     }
-    // Complete every routed `1 + 3` endpoint: rank drops, the nine bilinear
-    // zero-entry faces, then one degree-at-most-12 Birkhoff--Heron selector
-    // for a dense residual `SO(3)` trace fiber.  This closes the fixed-axis
-    // endpoints before the generic interior chart below.
-    let has_one_plus_three = edge_gate.exact.iter().flatten().any(|&mask| mask != 0);
+    if let Some(solution) = resonance_best {
+        return Some(solution);
+    }
+    let has_one_plus_three =
+        !interior_hint && edge_gate.exact.iter().flatten().any(|&mask| mask != 0);
     if has_one_plus_three {
         if let Some((o, residual)) = one_plus_three::solve_walls(
             &problem.left,
@@ -1410,14 +2276,14 @@ pub fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solution {
             &problem.lam,
             &problem.targets,
         ) {
-            if let Some(solution) = compiler_solution(&problem, o, Rung::OnePlusThree, residual) {
-                return solution;
+            if let Some(solution) = compiler_solution(problem, o, Rung::OnePlusThree, residual) {
+                return Some(solution);
             }
         }
     }
-    if let Some((o, residual, rung)) = solve_boundary_accelerators(&problem) {
-        if let Some(solution) = compiler_solution(&problem, o, rung, residual) {
-            return solution;
+    if let Some((o, residual, rung)) = solve_boundary_accelerators(problem) {
+        if let Some(solution) = compiler_solution(problem, o, rung, residual) {
+            return Some(solution);
         }
     }
     if has_one_plus_three {
@@ -1429,20 +2295,41 @@ pub fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solution {
             &problem.lam,
             &problem.targets,
         ) {
-            if let Some(solution) = compiler_solution(&problem, o, Rung::OnePlusThree, residual) {
-                return solution;
+            if let Some(solution) = compiler_solution(problem, o, Rung::OnePlusThree, residual) {
+                return Some(solution);
             }
         }
     }
-    // Per-chart six-bracket/Cauer realization peel. The finite row/zero-pair
-    // orbit is exact but not universal; a decline reaches the currently open
-    // dense-residual realization problem below.
-    if let Some((o, r)) = solve_axis_tier(&problem) {
-        if let Some(solution) = compiler_solution(&problem, o, Rung::AxisQuartic, r) {
-            return solution;
-        }
+    None
+}
+
+/// The millisecond-scale exact tail: the per-chart six-bracket/Cauer axis
+/// realization peel.  It runs only after every representative's cheap prefix
+/// has declined, so its cost bounds only genuinely hard rows.  The routed
+/// `1 + 3` endpoints this tail once completed are owned by the hardened
+/// resonance constructions in the secular dispatch (conic-pencil sections
+/// and the tripled-target dual rank-one), whose census made the dense
+/// selector's unique coverage empty.
+fn solve_tail(problem: &PreparedSandwich) -> Option<Solution> {
+    if !regular_problem(problem) {
+        return None;
     }
-    unsolved_solution()
+    solve_axis_tier_certified(problem)
+}
+
+/// Conditioning domain of the regular high-degree charts. Clustered spectra
+/// are dispatched to multiplicity formulas or alternate Horn witnesses; the
+/// generic eliminants are incomplete and ill-conditioned in this layer.
+fn regular_problem(problem: &PreparedSandwich) -> bool {
+    let separated =
+        |roots: &[C; 4]| (0..4).all(|i| (i + 1..4).all(|j| (roots[i] - roots[j]).norm() >= 2e-4));
+    // Exact multiplicities have their own stable algebra. A formally distinct
+    // but clustered spectrum is the bad transition layer for the regular
+    // eliminant, even when one of the other spectra is exactly repeated.
+    (problem.strata.c != SpectrumKind::Distinct || separated(&problem.left))
+        && (problem.strata.g != SpectrumKind::Distinct || separated(&problem.right))
+        && (problem.strata.target[0] != SpectrumKind::Distinct
+            || separated(&problem.target_roots[0]))
 }
 
 /// Research-only alternate tail used to census the generic Spin architecture.
@@ -1520,6 +2407,9 @@ fn solve_boundary_accelerators(problem: &PreparedSandwich) -> Option<(Mat4, f64,
     }
     // The transported Klein section solves (conj(C), W -> G), then a real
     // Takagi factor transports its symmetric-unitary output back to C/G.
+    // The anchor is a chart choice, not a class datum: both target lifts are
+    // enumerated here so the section is representative-independent (the
+    // orbit census showed the rho pass was silently doing this enumeration).
     let inverse_prefix: [C; 4] = std::array::from_fn(|j| problem.left[j].conj());
     let inverse_prefix_root: [C; 4] =
         std::array::from_fn(|k| C::from_polar(1.0, -problem.left_phases[k]));
@@ -1528,27 +2418,27 @@ fn solve_boundary_accelerators(problem: &PreparedSandwich) -> Option<(Mat4, f64,
         [-e[0], e[1], -e[2], e[3]]
     }];
     let anchor_dc = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(&inverse_prefix_root));
-    let anchor_lam =
-        Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(&problem.target_roots[0]));
-    let anchor_routed: [[C; 4]; 4] = std::array::from_fn(|i| {
-        std::array::from_fn(|j| inverse_prefix[i] * problem.target_roots[0][j])
-    });
-    if let Some((p, _)) = klein::solve(
-        &inverse_prefix,
-        &problem.target_roots[0],
-        &anchor_routed,
-        &anchored_targets,
-    ) {
-        let symmetric = anchor_dc * p * anchor_lam * p.transpose() * anchor_dc;
-        if let Some(frame) = klein::takagi_real(&symmetric, &problem.right) {
-            let o = Mat4::from_fn(|i, j| C::new(frame[(i, j)], 0.0));
-            let residual = problem
-                .targets
-                .iter()
-                .map(|target| compound_residual(&problem.dc, &problem.lam, &o, target))
-                .fold(f64::INFINITY, f64::min);
-            if residual < 1e-12 {
-                return Some((o, residual, Rung::Klein));
+    for anchor_roots in &problem.target_roots {
+        let anchor_lam = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(anchor_roots));
+        let anchor_routed: [[C; 4]; 4] =
+            std::array::from_fn(|i| std::array::from_fn(|j| inverse_prefix[i] * anchor_roots[j]));
+        if let Some((p, _)) = klein::solve(
+            &inverse_prefix,
+            anchor_roots,
+            &anchor_routed,
+            &anchored_targets,
+        ) {
+            let symmetric = anchor_dc * p * anchor_lam * p.transpose() * anchor_dc;
+            if let Some(frame) = klein::takagi_real(&symmetric, &problem.right) {
+                let o = Mat4::from_fn(|i, j| C::new(frame[(i, j)], 0.0));
+                let residual = problem
+                    .targets
+                    .iter()
+                    .map(|target| compound_residual(&problem.dc, &problem.lam, &o, target))
+                    .fold(f64::INFINITY, f64::min);
+                if residual < 1e-12 {
+                    return Some((o, residual, Rung::Klein));
+                }
             }
         }
     }
@@ -1575,11 +2465,17 @@ pub fn solve_axis_only(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solution {
     if let Some((o, residual)) = solve_axis_tier(&problem) {
         Solution {
             o,
+            takagi: None,
+            rho_branch: false,
+            orbit_rep: 0,
             rung: Rung::AxisQuartic,
             residual,
         }
     } else {
         Solution {
+            takagi: None,
+            rho_branch: false,
+            orbit_rep: 0,
             o: Mat4::identity(),
             rung: Rung::Unsolved,
             residual: f64::INFINITY,
@@ -1596,6 +2492,9 @@ pub fn solve_three_givens_only(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solutio
     let ranked = rank_perms_pre(&problem.left, &problem.right, &problem.targets);
     if ranked[0].1 < ACCEPT {
         return Solution {
+            takagi: None,
+            rho_branch: false,
+            orbit_rep: 0,
             o: signed_perm(ranked[0].0),
             rung: Rung::Vertex,
             residual: ranked[0].1,
@@ -1618,6 +2517,9 @@ pub fn solve_three_givens_only(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solutio
         &mut spectral_vertices,
     ) {
         return Solution {
+            takagi: None,
+            rho_branch: false,
+            orbit_rep: 0,
             o: orient_so4(o),
             rung: Rung::Interior,
             residual: r,
@@ -1628,11 +2530,17 @@ pub fn solve_three_givens_only(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solutio
     {
         Solution {
             o,
+            takagi: None,
+            rho_branch: false,
+            orbit_rep: 0,
             rung: Rung::Interior,
             residual,
         }
     } else {
         Solution {
+            takagi: None,
+            rho_branch: false,
+            orbit_rep: 0,
             o: Mat4::identity(),
             rung: Rung::Unsolved,
             residual: f64::INFINITY,
@@ -1673,6 +2581,9 @@ pub fn solve_canonical_three_givens_only(c: [f64; 3], g: [f64; 3], t: [f64; 3]) 
     let ranked = rank_perms_pre(&problem.left, &problem.right, &problem.targets);
     if ranked[0].1 < ACCEPT {
         return Solution {
+            takagi: None,
+            rho_branch: false,
+            orbit_rep: 0,
             o: signed_perm(ranked[0].0),
             rung: Rung::Vertex,
             residual: ranked[0].1,
@@ -1706,16 +2617,80 @@ pub fn solve_canonical_three_givens_only(c: [f64; 3], g: [f64; 3], t: [f64; 3]) 
         &mut spectral_vertices,
     ) {
         Some((o, r, _, _)) => Solution {
+            takagi: None,
+            rho_branch: false,
+            orbit_rep: 0,
             o: orient_so4(o),
             rung: Rung::Interior,
             residual: r,
         },
         None => Solution {
+            takagi: None,
+            rho_branch: false,
+            orbit_rep: 0,
             o: Mat4::identity(),
             rung: Rung::Unsolved,
             residual: f64::INFINITY,
         },
     }
+}
+
+#[inline]
+fn cross2(left: C, right: C) -> f64 {
+    left.re * right.im - left.im * right.re
+}
+
+/// Membership in a finite convex hull in the complex trace plane.  By
+/// Caratheodory, a point in a planar hull lies in one triangle of its
+/// vertices.  The tolerance is outward-only, so this is safe as a necessary
+/// feasibility gate near a hull face.
+pub(super) fn point_in_complex_hull<const N: usize>(vertices: &[C; N], point: C) -> bool {
+    let scale = vertices
+        .iter()
+        .map(|vertex| vertex.norm())
+        .fold(point.norm().max(1.0), f64::max);
+    let linear_tolerance = 2e-10 * scale;
+    let area_tolerance = linear_tolerance * scale;
+    if vertices
+        .iter()
+        .any(|vertex| (*vertex - point).norm() <= linear_tolerance)
+    {
+        return true;
+    }
+    for i in 0..N.saturating_sub(2) {
+        for j in i + 1..N.saturating_sub(1) {
+            for k in j + 1..N {
+                let (p, q, r) = (vertices[i], vertices[j], vertices[k]);
+                let area = cross2(q - p, r - p);
+                if area.abs() <= area_tolerance {
+                    for (x, y) in [(p, q), (p, r), (q, r)] {
+                        let direction = y - x;
+                        let length2 = direction.norm_sqr();
+                        if length2 <= area_tolerance * area_tolerance {
+                            continue;
+                        }
+                        let parameter = ((point - x).re * direction.re
+                            + (point - x).im * direction.im)
+                            / length2;
+                        let distance = cross2(point - x, direction).abs() / length2.sqrt();
+                        if (-2e-10..=1.0 + 2e-10).contains(&parameter)
+                            && distance <= linear_tolerance
+                        {
+                            return true;
+                        }
+                    }
+                    continue;
+                }
+                let s0 = cross2(q - p, point - p) / area;
+                let s1 = cross2(point - p, r - p) / area;
+                let s2 = 1.0 - s0 - s1;
+                if s0 >= -2e-10 && s1 >= -2e-10 && s2 >= -2e-10 {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Rung-10 axis tier: the bounded four-Givens algebraic fiber, tried at the
@@ -1729,12 +2704,13 @@ fn trace_in_permutation_hull4(left: &[C; 4], right: &[C; 4], trace: C) -> bool {
     point_in_complex_hull(&vertices, trace)
 }
 
-fn solve_axis_tier_direct(
+fn enumerate_axis_tier_direct<R>(
     problem: &PreparedSandwich,
     target_branch_count: usize,
     pass: axis_quartic::AxisPass,
     accept_threshold: f64,
-) -> Option<(Mat4, f64, bool)> {
+    mut certify: impl FnMut(Mat4, f64, bool) -> Option<R>,
+) -> Option<R> {
     debug_assert!((1..=2).contains(&target_branch_count));
     let mut active_branches = [0usize; 2];
     let mut active_count = 0;
@@ -1775,43 +2751,117 @@ fn solve_axis_tier_direct(
         } else {
             accept_threshold
         };
-        if i % 2 == 0 {
-            return (r <= threshold).then(|| (orient_so4(o), r, zero_weight_boundary));
-        }
-        // Swap results are re-gated on the original smooth residual.
-        let o = o.transpose();
-        let r = problem
-            .targets
-            .iter()
-            .map(|t| compound_residual(&problem.dc, &problem.lam, &o, t))
-            .fold(f64::INFINITY, f64::min);
-        (r <= threshold).then(|| (orient_so4(o), r, zero_weight_boundary))
+        let (o, r) = if i % 2 == 0 {
+            (o, r)
+        } else {
+            // Swap results are re-gated on the original smooth residual.
+            let o = o.transpose();
+            let r = problem
+                .targets
+                .iter()
+                .map(|t| compound_residual(&problem.dc, &problem.lam, &o, t))
+                .fold(f64::INFINITY, f64::min);
+            (o, r)
+        };
+        (r <= threshold)
+            .then(|| certify(orient_so4(o), r, zero_weight_boundary))
+            .flatten()
     };
     let hit = axis_quartic::solve_all(&combos[..2 * active_count], pass, accept);
     prof::rec(24, tp);
     hit
 }
 
+#[cfg(any(test, feature = "diagnostics"))]
+fn solve_axis_tier_direct(
+    problem: &PreparedSandwich,
+    target_branch_count: usize,
+    pass: axis_quartic::AxisPass,
+    accept_threshold: f64,
+) -> Option<(Mat4, f64, bool)> {
+    enumerate_axis_tier_direct(
+        problem,
+        target_branch_count,
+        pass,
+        accept_threshold,
+        |o, residual, zero_weight_boundary| Some((o, residual, zero_weight_boundary)),
+    )
+}
+
+/// Axis enumeration with the public rootwise certificate inside the candidate
+/// loop. A coefficient near-hit that fails at a repeated root must not stop
+/// the finite algebraic enumeration and hide all later roots/charts.
+fn solve_axis_tier_direct_certified(
+    problem: &PreparedSandwich,
+    target_branch_count: usize,
+    pass: axis_quartic::AxisPass,
+) -> Option<Solution> {
+    enumerate_axis_tier_direct(
+        problem,
+        target_branch_count,
+        pass,
+        ACCEPT,
+        |o, residual, _| compiler_solution(problem, o, Rung::AxisQuartic, residual),
+    )
+}
+
+#[cfg(any(test, feature = "diagnostics"))]
 fn solve_axis_tier(problem: &PreparedSandwich) -> Option<(Mat4, f64)> {
-    // The passes are deliberately disjoint: first try the bounded floating
-    // decic--cubic candidates across the whole finite orbit, then isolate the
-    // same algebraic tower and its boundary strata exactly.  Replaying the
-    // floating candidates in the certified pass cannot add a witness and used
-    // to double the work on every complete decline.
+    // Chord pre-pass (spec T8): machine-precision construction on the axis
+    // stratum; the descent passes below floor at ~1e-10 there (the pullback
+    // coefficient assembly).  Cheap for non-axis inputs: every chart
+    // declines at its line-consistency probe.
+    if let Some(hit) = chord::solve(
+        &problem.left,
+        &problem.right,
+        &problem.target_roots,
+        &problem.dc,
+        &problem.lam,
+        &problem.targets,
+    ) {
+        return Some(hit);
+    }
+    // Descent fallback: RESTORED 08-17 after a 10M-row sweep found 2 rows
+    // (one per ~5M) with descent-unique coverage that a 1.06M ablation had
+    // missed.  Chord owns the class's precision; the descent tower is the
+    // never-fail backstop until chord's chart orbit provably covers its
+    // remaining strata.  Deletion certification bar: the full 10M corpus.
     if let Some((o, residual, _)) =
         solve_axis_tier_direct(problem, 2, axis_quartic::AxisPass::CriticalFast, ACCEPT)
     {
         return Some((o, residual));
     }
-    if let Some((o, residual, _)) = solve_axis_tier_direct(
-        problem,
-        2,
-        axis_quartic::AxisPass::CriticalCertified,
-        ACCEPT,
-    ) {
-        return Some((o, residual));
+    if !problem.strata.target[0].is_repeated() {
+        if let Some((o, residual, _)) = solve_axis_tier_direct(
+            problem,
+            2,
+            axis_quartic::AxisPass::CriticalCertified,
+            ACCEPT,
+        ) {
+            return Some((o, residual));
+        }
     }
+    None
+}
 
+fn solve_axis_tier_certified(problem: &PreparedSandwich) -> Option<Solution> {
+    if let Some((o, residual)) = chord::solve(
+        &problem.left,
+        &problem.right,
+        &problem.target_roots,
+        &problem.dc,
+        &problem.lam,
+        &problem.targets,
+    ) {
+        if let Some(solution) = compiler_solution(problem, o, Rung::AxisQuartic, residual) {
+            return Some(solution);
+        }
+    }
+    if let Some(solution) =
+        solve_axis_tier_direct_certified(problem, 2, axis_quartic::AxisPass::CriticalFast)
+    {
+        return Some(solution);
+    }
     None
 }
 
@@ -1914,35 +2964,37 @@ impl<'a> CyclicThreeGivens<'a> {
         plane_end: usize,
         qz_all: bool,
     ) -> Option<(Mat4, f64)> {
-        // The second target encoding is the central-negated/pair-swapped Weyl image of this
-        // canonical one.  It added no coverage: the 15 corpus rows for which it happened to be
-        // the first cyclic chart were all accepted by the complete axis fallback in 32--70 us.
-        // Keep one target action here; the two transported side actions below have distinct chart
-        // images and are both performance-relevant.
-        let w = &self.problem.target_roots[0];
-        if !Self::distinct(w) || (self.product - w.iter().product::<C>()).norm() > 1e-8 {
-            return None;
-        }
-        let inverse_w: [C; 4] = std::array::from_fn(|k| w[k].conj());
-        // The two remaining cyclic side actions use the same boundary solver:
-        //   X_g targets C^-1 and transports back as O=S^T;
-        //   X_c targets G^-1 and transports back as O=S.
-        for (phase, target, diagonal, transpose) in [
-            (&self.problem.right_phases, &self.ct, &self.ctd, true),
-            (&self.problem.left_phases, &self.gt, &self.gtd, false),
-        ] {
-            if let Some(x) = solve_transported_three_givens(
-                phase,
-                &inverse_w,
-                target,
-                plane_start,
-                plane_end,
-                qz_all,
-            ) {
-                let frame = recover_frame(&x, diagonal);
-                let o = if transpose { frame.transpose() } else { frame };
-                if let Some(hit) = self.certify(o) {
-                    return Some(hit);
+        // Both target encodings are enumerated: the second (central-negated/
+        // pair-swapped) action's coverage used to arrive implicitly through the
+        // dispatch's rho representative -- the orbit census identified those
+        // "rho-unique" interior wins as exactly this chart.  Enumerating it
+        // here makes the section representative-independent; branch 0 keeps
+        // precedence so the common path is unchanged.
+        for w in &self.problem.target_roots {
+            if !Self::distinct(w) || (self.product - w.iter().product::<C>()).norm() > 1e-8 {
+                continue;
+            }
+            let inverse_w: [C; 4] = std::array::from_fn(|k| w[k].conj());
+            // The two transported cyclic side actions use the same boundary solver:
+            //   X_g targets C^-1 and transports back as O=S^T;
+            //   X_c targets G^-1 and transports back as O=S.
+            for (phase, target, diagonal, transpose) in [
+                (&self.problem.right_phases, &self.ct, &self.ctd, true),
+                (&self.problem.left_phases, &self.gt, &self.gtd, false),
+            ] {
+                if let Some(x) = solve_transported_three_givens(
+                    phase,
+                    &inverse_w,
+                    target,
+                    plane_start,
+                    plane_end,
+                    qz_all,
+                ) {
+                    let frame = recover_frame(&x, diagonal);
+                    let o = if transpose { frame.transpose() } else { frame };
+                    if let Some(hit) = self.certify(o) {
+                        return Some(hit);
+                    }
                 }
             }
         }
@@ -2086,7 +3138,7 @@ fn bernstein_excludes_unit(p: &[f64]) -> bool {
     for k in 0..=n {
         ch[k][0] = 1.0;
         for i in 1..=k {
-            ch[k][i] = ch[k - 1][i - 1] + if i <= k - 1 { ch[k - 1][i] } else { 0.0 };
+            ch[k][i] = ch[k - 1][i - 1] + if i < k { ch[k - 1][i] } else { 0.0 };
         }
     }
     let mut w = [0.0f64; 9];
@@ -2868,6 +3920,101 @@ mod tests {
     }
 
     #[test]
+    fn near_swap_repeated_gate_witness_is_realized() {
+        // Public-pipeline regression: the fast atlas declines this feasible
+        // sandwich because C is near SWAP and G has an exact repeated Weyl
+        // coordinate.  The target was formed by an explicit local sandwich.
+        let solution = solve(
+            [
+                0.251_567_175_907_25,
+                0.248_432_824_092_75,
+                0.246_902_391_208_76,
+            ],
+            [
+                0.033_635_662_418_36,
+                0.026_914_048_264_11,
+                0.026_914_048_264_11,
+            ],
+            [
+                0.278_977_270_160_45,
+                0.277_417_719_732_49,
+                0.160_565_542_174_26,
+            ],
+        );
+        assert_ne!(solution.rung, Rung::Unsolved);
+        assert!(
+            solution.residual < 1e-8,
+            "residual={:.3e}",
+            solution.residual
+        );
+        assert_eq!(solution.orbit_rep, 0);
+    }
+
+    #[test]
+    fn near_identity_gate_roundoff_is_realized() {
+        let c = [
+            0.423_503_315_564_57,
+            0.290_670_418_709_1,
+            -0.137_677_049_838_24,
+        ];
+        let g = [3.8e-13, 1.5e-13, 1.0e-13];
+        let t = [
+            0.423_503_315_564_27,
+            0.290_670_418_709_24,
+            -0.137_677_049_838_22,
+        ];
+        let problem = PreparedSandwich::new(c, g, t);
+        let mut minimum = f64::INFINITY;
+        let mut certified = 0usize;
+        for permutation in *PERMS24 {
+            let residual = perm_vertex_residual(
+                &problem.left,
+                &problem.right,
+                &problem.targets,
+                &permutation,
+            );
+            minimum = minimum.min(residual);
+            certified += usize::from(
+                compiler_solution(&problem, signed_perm(permutation), Rung::Vertex, residual)
+                    .is_some(),
+            );
+        }
+        let solution = solve(c, g, t);
+        assert_ne!(
+            solution.rung,
+            Rung::Unsolved,
+            "minimum vertex residual={minimum:.3e}, certified={certified}",
+        );
+    }
+
+    #[test]
+    fn near_scalar_triple_collision_uses_verified_takagi_fallback() {
+        // A projector frame built from the known target eigenvalues can be
+        // nonzero but wrong at this near-triple collision. Takagi extraction
+        // must verify that frame and continue to the eigensolver fallback.
+        let solution = solve(
+            [
+                0.076_301_851_551_263_62,
+                0.076_301_851_551_263_62,
+                0.076_301_851_551_263_62,
+            ],
+            [
+                4.853_548_865_645_266_6e-8,
+                8.227_351_897_810_43e-9,
+                -5.298_329_210_715_759e-9,
+            ],
+            [
+                0.076_301_900_013_802_94,
+                0.076_301_850_032_083_01,
+                0.076_301_803_530_515_3,
+            ],
+        );
+        assert_ne!(solution.rung, Rung::Unsolved);
+        assert!(solution.residual < 1e-8);
+        assert_eq!(solution.orbit_rep, 0);
+    }
+
+    #[test]
     fn public_solution_gate_rejects_nonframes() {
         let mut nonorthogonal = Mat4::identity();
         nonorthogonal[(0, 0)] = C::new(1.0 + 1e-6, 0.0);
@@ -2884,7 +4031,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "the complete dense residual selector has not been implemented yet"]
     fn exact_dense_rational_counterexample_requires_complete_fallback() {
         // This is the exact fixture from
         // realization_problem/docs/exact_finite_axis_counterexample.md, encoded with one
@@ -3004,31 +4150,50 @@ mod tests {
     }
 
     #[test]
-    fn finite_axis_orbit_has_24_distinct_valid_charts() {
-        let charts: [axis_quartic::Chart; axis_quartic::ORBIT_LEN] =
-            std::array::from_fn(axis_quartic::orbit_chart);
-        for index in 0..charts.len() {
-            assert!(!charts[..index].contains(&charts[index]));
-            let (axis, pair, pendant, reference) = charts[index];
-            assert!(axis < 4);
-            assert_ne!(pair.0, pair.1);
-            assert!(![pair.0, pair.1].contains(&pendant));
-            assert!(![pair.0, pair.1].contains(&reference));
-            assert_ne!(pendant, reference);
+    fn hardened_resonance_owns_the_retired_selector_unique_rows() {
+        // The three rows whose unique coverage once justified the 1+3 dense
+        // selector (feasible_linspace 107415/117216/619511): doubled-input x
+        // doubled-target pairs served by the conic-pencil sections, and the
+        // C = G tripled-target row served by the dual rank-one construction.
+        for (c, g, t) in [
+            (
+                [0.21875, 0.21875, -0.03125],
+                [0.40625, 0.28125, -0.21875],
+                [0.375, -0.0625, -0.0625],
+            ),
+            (
+                [0.25, 0.0625, -0.0625],
+                [0.25, 0.0625, -0.0625],
+                [0.375, -0.125, -0.125],
+            ),
+            (
+                [0.40625, 0.28125, -0.21875],
+                [0.21875, 0.21875, -0.03125],
+                [0.375, -0.0625, -0.0625],
+            ),
+        ] {
+            let solution = solve(c, g, t);
+            assert_ne!(solution.rung, Rung::Unsolved, "{c:?} {g:?} {t:?}");
+            assert!(
+                solution.residual < 1e-12,
+                "residual {:.3e}",
+                solution.residual
+            );
         }
     }
 
     #[test]
-    fn one_plus_three_zero_wall_uses_quadratic_block_solver() {
+    fn routed_zero_wall_row_survives_the_retired_dense_selector() {
         // feasible_linspace row 329583: one routed eigenvalue splits off and
-        // the remaining dense SO(3) block lies on a two-Givens wall.  This
-        // formerly reached the endpoint through cyclic three-Givens transport.
+        // the remaining dense SO(3) block lies on a two-Givens wall.  The
+        // retired 1+3 dense selector once owned this row; the hardened
+        // resonance/secular dispatch must keep it machine-precise.
         let solution = solve(
             [0.3125, 0.1875, -0.1875],
             [0.375, 0.3125, -0.1875],
             [0.375, 0.125, 0.0],
         );
-        assert_eq!(solution.rung, Rung::OnePlusThree);
+        assert_ne!(solution.rung, Rung::Unsolved);
         assert!(solution.residual < 1e-12);
     }
 
@@ -3074,21 +4239,8 @@ mod tests {
         planted[(3, 3)] = c(1.0, 0.0);
         assert!(compound_residual(&dc, &lam, &planted, &target) < 1e-12);
 
-        let mut routed = [[0u8; 4]; 4];
-        routed[3][3] = 1;
-        assert!(
-            one_plus_three::solve_walls(&a, &b, &routed, &dc, &lam, &targets).is_none(),
-            "the exact fixture has no zero-entry residual witness"
-        );
-        let routed_solution = one_plus_three::solve_dense(&a, &b, &routed, &dc, &lam, &targets)
-            .expect("the complete Birkhoff--Heron selector must own the dense routed fiber");
-        assert!(
-            routed_solution.1 < 1e-11,
-            "routed residual {:.17e}",
-            routed_solution.1
-        );
-
-        // The direct finite axis orbit also contains this fiber.
+        // The direct finite axis orbit contains this fiber; with the dense
+        // 1+3 selector retired, the axis tier is the fixture's owner.
         let master = dc * planted * lam * planted.transpose() * dc;
         let spectrum = eig4(&master);
         let et: [f64; 4] = spectrum.map(|z| z.arg() / 2.0);
@@ -3109,13 +4261,8 @@ mod tests {
             lam,
             strata: StratumSignature::new(&a, &b, &target_roots),
         };
-        let axis = solve_axis_tier_direct(
-            &problem,
-            2,
-            axis_quartic::AxisPass::CriticalCertified,
-            ACCEPT,
-        )
-        .expect("the direct finite axis orbit must realize the routed dense fixture");
+        let axis = solve_axis_tier(&problem)
+            .expect("the axis tier (chord) must realize the routed dense fixture");
         assert!(axis.1 < ACCEPT, "axis residual {:.17e}", axis.1);
     }
 

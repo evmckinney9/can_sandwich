@@ -1,6 +1,8 @@
 //! Fixed-action projective Spin selector.
 //!
-//! This is currently a theorem-backed test primitive, not a production rung.
+//! The bounded dense-action prefix is a production fallback constructor. Its
+//! exhaustion is not an infeasibility certificate; every returned frame is
+//! independently certified by the caller.
 //! Fixing one rational right Spin quaternion leaves two projective quadrics
 //! and one quartic in the left quaternion.  Over one retained coordinate the
 //! quadrics form a four-dimensional quotient algebra.  The norm of the
@@ -678,7 +680,7 @@ fn first_character_supported(left: &Quadric, right: &Quadric) -> bool {
         .expect("quartic pencil determinant");
     let mut quartic = [C::new(0.0, 0.0); 4];
     let algebraic = (determinant.coefficients[4].abs() >= 1e-13 * scale)
-        .then(|| super::axis_quartic::quartic_roots(&quartic_coefficients, &mut quartic))
+        .then(|| super::klein::quartic_roots(&quartic_coefficients, &mut quartic))
         .flatten();
     let breakpoints: Vec<C> = match algebraic {
         Some(count) => quartic[..count].to_vec(),
@@ -898,6 +900,7 @@ fn real_frame(p: [f64; 4], q: [f64; 4]) -> Mat4 {
 /// The sixteen matrices `L(e_a) R(conj(e_b))` are Frobenius-orthogonal, so
 /// their coefficients form the rank-one matrix `p q^T`.  This is an exact
 /// inverse of `real_frame` up to the central simultaneous sign.
+#[cfg(any(test, feature = "research-spin"))]
 fn spin_factors(frame: &Mat4) -> Option<([f64; 4], [f64; 4])> {
     let mut coefficients = [[0.0; 4]; 4];
     for a in 0..4 {
@@ -1190,6 +1193,7 @@ fn solve_fixed_action(
     solve_prepared_action(&FixedActionProblem::new(alpha, gate, target), q)
 }
 
+#[cfg(any(test, feature = "research-spin"))]
 fn stereographic_quaternion(value: [f64; 3]) -> [f64; 4] {
     let norm_squared = value.iter().map(|entry| entry * entry).sum::<f64>();
     let denominator = 1.0 + norm_squared;
@@ -1232,6 +1236,7 @@ fn spread_quaternion(index: usize) -> [f64; 4] {
 /// denominator is only an acceleration prefix: exhaustion returns `None`,
 /// never an infeasibility decision. Both full-half projections and both
 /// central target lifts are tried.
+#[cfg(any(test, feature = "research-spin"))]
 fn try_action(
     problems: &[FixedActionProblem; 4],
     action: [f64; 4],
@@ -1253,6 +1258,9 @@ fn try_action_mode(
 ) -> Option<Solution> {
     let swapped = mode % 2 == 1;
     solve_prepared_action(&problems[mode], action).map(|(o, residual)| Solution {
+        takagi: None,
+        rho_branch: false,
+        orbit_rep: 0,
         o: if swapped { o.transpose() } else { o },
         rung: Rung::Spin,
         residual,
@@ -1308,10 +1316,11 @@ pub fn solve_dyadic(
     (None, attempts)
 }
 
-/// Research route for the theorem-backed dense Kronecker--Hopf action order.
+/// Dense Kronecker--Hopf action order for the projective Spin fallback.
 /// Every quaternion is tried in both target lifts and factor orientations. A
 /// bounded prefix is only an acceleration experiment; exhaustion never
 /// certifies infeasibility.
+#[cfg(any(test, feature = "research-spin"))]
 pub fn solve_spread(
     c: [f64; 3],
     g: [f64; 3],
@@ -1327,6 +1336,31 @@ pub fn solve_spread(
         }
     }
     (None, attempts, maximum_actions)
+}
+
+/// Enumerate every algebraic candidate in a bounded dense-action prefix.
+/// Near a root collision the coefficient residual can admit a candidate that
+/// the rootwise compiler rejects, so production must not let that first proxy
+/// hit hide later actions or target/orientation modes.
+#[cfg(feature = "research-spin")]
+pub fn spread_candidates(
+    c: [f64; 3],
+    g: [f64; 3],
+    t: [f64; 3],
+    maximum_actions: usize,
+) -> Vec<Solution> {
+    let (alpha, gate, targets) = spectral_data(c, g, t);
+    let problems = action_problems(&alpha, &gate, &targets);
+    let mut candidates = Vec::new();
+    for index in 0..maximum_actions {
+        let action = spread_quaternion(index);
+        for mode in 0..4 {
+            if let Some(solution) = try_action_mode(&problems, action, mode) {
+                candidates.push(solution);
+            }
+        }
+    }
+    candidates
 }
 
 /// Diagnostic inverse: recover the true right Spin action from an existing
@@ -1355,6 +1389,9 @@ pub fn replay_frame_action(
         for order in AFFINE_CHARTS {
             if let Some((o, residual)) = solve_fixed_action_expected(&problem, q, Some(p), order) {
                 return Some(Solution {
+                    takagi: None,
+                    rho_branch: false,
+                    orbit_rep: 0,
                     o,
                     rung: Rung::Spin,
                     residual,

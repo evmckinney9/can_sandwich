@@ -25,7 +25,157 @@
 //!
 //! so squaring gives a REAL quartic `p(s)² = k²·D₄(s)`. `σ` is then read off from
 //! the sign of `p·k`, not searched.
-use super::{axis_quartic::quartic_roots, Mat4, ACCEPT, C};
+use super::{Mat4, ACCEPT, C, PERMS24};
+
+/// Diagonalize a nearly unitary normal matrix through a Hermitian projection.
+///
+/// A generic complex eigensolver can lose several digits on a clustered
+/// unit-circle spectrum even though the matrix is normal.  For unitary `y`,
+///
+/// `H(phi) = Re(exp(-i phi) y)`
+///
+/// is Hermitian and has the same eigenspaces as `y`.  We choose a projection
+/// direction that separates the requested target roots, use the backward-
+/// stable self-adjoint eigensolver, and recover the complex roots as Rayleigh
+/// quotients of `y`.  The returned error includes every off-diagonal entry in
+/// that basis, so callers do not have to assume that the input was exactly
+/// normal in floating point.
+pub(super) fn unitary_eigenvalues(y: &Mat4, target: &[C; 4]) -> Option<([C; 4], f64)> {
+    // This must agree with the compiler's repeated-root cluster. Attempting to
+    // separate two roots that the public boundary treats as one block makes
+    // the projection direction chase their O(1e-12) split and can collapse
+    // the gap between the actual eigenspaces.
+    const ROOT_CLUSTER: f64 = 1e-8;
+    let mut best_phi = 0.0;
+    let mut best_gap = -1.0f64;
+    for step in 0..64 {
+        let phi = std::f64::consts::TAU * step as f64 / 64.0;
+        let phase = C::from_polar(1.0, -phi);
+        let projected = target.map(|root| (phase * root).re);
+        let mut gap = f64::INFINITY;
+        let mut has_distinct_pair = false;
+        for i in 0..4 {
+            for j in i + 1..4 {
+                if (target[i] - target[j]).norm() >= ROOT_CLUSTER {
+                    has_distinct_pair = true;
+                    gap = gap.min((projected[i] - projected[j]).abs());
+                }
+            }
+        }
+        if !has_distinct_pair {
+            gap = f64::INFINITY;
+        }
+        if gap > best_gap {
+            best_gap = gap;
+            best_phi = phi;
+        }
+    }
+
+    let diagonalize = |phi: f64| -> Option<([C; 4], f64)> {
+        let phase = C::from_polar(1.0, -phi);
+        let hermitian = faer::Mat::<C>::from_fn(4, 4, |row, column| {
+            (phase * y[(row, column)] + phase.conj() * y[(column, row)].conj()) * 0.5
+        });
+        let decomposition = hermitian.self_adjoint_eigen(faer::Side::Lower).ok()?;
+        let vectors = decomposition.U();
+        let diagonalized = Mat4::from_fn(|row, column| {
+            let mut value = C::default();
+            for i in 0..4 {
+                for j in 0..4 {
+                    value += vectors[(i, row)].conj() * y[(i, j)] * vectors[(j, column)];
+                }
+            }
+            value
+        });
+        let off_diagonal = (0..4)
+            .flat_map(|row| (0..4).map(move |column| (row, column)))
+            .filter(|(row, column)| row != column)
+            .map(|(row, column)| diagonalized[(row, column)].norm())
+            .fold(0.0f64, f64::max);
+        let roots = std::array::from_fn(|i| diagonalized[(i, i)]);
+        Some((roots, off_diagonal))
+    };
+
+    let mut best = diagonalize(best_phi)?;
+    // At an exact target collision the target-optimal projection may itself
+    // be degenerate.  Only then, try a bounded set of transverse Hermitian
+    // projections and retain the basis that most nearly diagonalizes `y`.
+    if best.1 > 1e-9 {
+        for step in 1..8 {
+            let candidate = diagonalize(best_phi + std::f64::consts::PI * step as f64 / 8.0)?;
+            if candidate.1 < best.1 {
+                best = candidate;
+            }
+        }
+    }
+    Some(best)
+}
+
+/// Replace the spectrum of a nearby symmetric-unitary candidate in its real
+/// eigenframe. Symmetric unitaries have commuting real and imaginary parts,
+/// so one real self-adjoint eigendecomposition supplies that frame. The target
+/// assignment is a finite permutation, and the caller must still reconstruct
+/// and verify the original sandwich.
+pub(super) fn retarget_symmetric(y: &Mat4, target: &[C; 4]) -> Option<(Mat4, Mat4)> {
+    const ROOT_CLUSTER: f64 = 1e-8;
+    let mut best_phi = 0.0;
+    let mut best_gap = -1.0f64;
+    for step in 0..64 {
+        let phi = std::f64::consts::TAU * step as f64 / 64.0;
+        let phase = C::from_polar(1.0, -phi);
+        let projected = target.map(|root| (phase * root).re);
+        let mut gap = f64::INFINITY;
+        let mut distinct = false;
+        for i in 0..4 {
+            for j in i + 1..4 {
+                if (target[i] - target[j]).norm() >= ROOT_CLUSTER {
+                    distinct = true;
+                    gap = gap.min((projected[i] - projected[j]).abs());
+                }
+            }
+        }
+        if !distinct {
+            gap = f64::INFINITY;
+        }
+        if gap > best_gap {
+            best_gap = gap;
+            best_phi = phi;
+        }
+    }
+    let phase = C::from_polar(1.0, -best_phi);
+    let projected = nalgebra::Matrix4::<f64>::from_fn(|row, column| {
+        let forward = (phase * y[(row, column)]).re;
+        let reverse = (phase * y[(column, row)]).re;
+        0.5 * (forward + reverse)
+    });
+    let q = projected.symmetric_eigen().eigenvectors;
+    let actual: [C; 4] = std::array::from_fn(|column| {
+        let mut value = C::default();
+        for row in 0..4 {
+            for inner in 0..4 {
+                value += C::new(q[(row, column)] * q[(inner, column)], 0.0) * y[(row, inner)];
+            }
+        }
+        value
+    });
+    let permutation = PERMS24.iter().min_by(|left, right| {
+        let score = |p: &&[usize; 4]| {
+            (0..4)
+                .map(|i| (actual[i] - target[p[i]]).norm_sqr())
+                .sum::<f64>()
+        };
+        score(left).total_cmp(&score(right))
+    })?;
+    let mut ordered = Mat4::zeros();
+    for column in 0..4 {
+        for row in 0..4 {
+            ordered[(row, permutation[column])] = C::new(q[(row, column)], 0.0);
+        }
+    }
+    let diagonal = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(target));
+    let rebuilt = ordered * diagonal * ordered.transpose();
+    Some((rebuilt, ordered))
+}
 
 /// `L_q[j][m] = SGN[j][m] · q[XOR[j][m]]` -- the left-multiplication matrix of
 /// the quaternion `q = q₀ + q₁i + q₂j + q₃k`.
@@ -185,22 +335,33 @@ pub fn takagi_real(y: &Mat4, g: &[C; 4]) -> Option<nalgebra::Matrix4<f64>> {
         }
         // Sylvester's formula, not an eigensolver: with the eigenvalues KNOWN
         // and separated, the spectral projector Π_{j≠k}(M−λⱼ)/(λₖ−λⱼ) is rank
-        // one, so its largest column IS the eigenvector. Three 4×4 products
-        // per column, no iteration -- an iterative symmetric_eigen here costs
-        // ~2 us and eats the whole rung's migration gain.
+        // one, so its largest column IS the eigenvector. Horner form: the
+        // numerator is the divided characteristic m³−s₁m²+s₂m−s₃I with sᵢ the
+        // elementary symmetric functions of the three OTHER eigenvalues, so
+        // m² and m³ are shared across all four columns -- two 4×4 products
+        // total instead of twelve, no iteration.
         let m = a + b * t;
+        let m2 = m * m;
+        let m3 = m2 * m;
         let mut o = nalgebra::Matrix4::<f64>::zeros();
         let mut ok = true;
         for k in 0..4 {
-            let mut p = nalgebra::Matrix4::<f64>::identity();
+            let mut others = [0.0f64; 3];
+            let mut idx = 0;
+            let mut d = 1.0f64;
             for j in 0..4 {
                 if j != k {
-                    let mut f = m;
-                    for i in 0..4 {
-                        f[(i, i)] -= lam[j];
-                    }
-                    p *= f / (lam[k] - lam[j]);
+                    others[idx] = lam[j];
+                    idx += 1;
+                    d *= lam[k] - lam[j];
                 }
+            }
+            let s1 = others[0] + others[1] + others[2];
+            let s2 = others[0] * others[1] + others[0] * others[2] + others[1] * others[2];
+            let s3 = others[0] * others[1] * others[2];
+            let mut p = (m3 - m2 * s1 + m * s2) / d;
+            for i in 0..4 {
+                p[(i, i)] -= s3 / d;
             }
             let mut best = (0.0f64, 0usize);
             for cidx in 0..4 {
@@ -216,7 +377,42 @@ pub fn takagi_real(y: &Mat4, g: &[C; 4]) -> Option<nalgebra::Matrix4<f64>> {
             o.set_column(k, &(p.column(best.1) / best.0));
         }
         if ok {
-            return Some(o);
+            let oc = Mat4::from_fn(|r, k| C::new(o[(r, k)], 0.0));
+            let diagonalized = oc.transpose() * y * oc;
+            let mut error = 0.0f64;
+            for r in 0..4 {
+                for c in 0..4 {
+                    let want = if r == c { g[r] } else { C::default() };
+                    error = error.max((diagonalized[(r, c)] - want).norm());
+                }
+            }
+            if error < 1e-8 {
+                return Some(o);
+            }
+        }
+    }
+    // Near a target collision every fixed projection above can have a small
+    // eigenvalue gap, making divided projectors unusable even though the real
+    // Takagi frame itself is well conditioned as a subspace.  A symmetric
+    // eigensolve supplies an orthonormal basis of that subspace; enumerate its
+    // finite column order and accept only direct complex reconstruction.
+    for &t in &[0.0f64, 1.0, -1.0, 0.5, 2.0, -0.37] {
+        let m = a + b * t;
+        let eigenvectors = m.symmetric_eigen().eigenvectors;
+        for permutation in *PERMS24 {
+            let o = nalgebra::Matrix4::<f64>::from_fn(|r, k| eigenvectors[(r, permutation[k])]);
+            let oc = Mat4::from_fn(|r, k| C::new(o[(r, k)], 0.0));
+            let diagonalized = oc.transpose() * y * oc;
+            let mut error = 0.0f64;
+            for r in 0..4 {
+                for c in 0..4 {
+                    let want = if r == c { g[r] } else { C::default() };
+                    error = error.max((diagonalized[(r, c)] - want).norm());
+                }
+            }
+            if error < 1e-8 {
+                return Some(o);
+            }
         }
     }
     None
@@ -520,4 +716,97 @@ pub fn solve(
         }
     }
     None
+}
+
+/// All four roots of a real quartic in radicals (Ferrari / resolvent
+/// cubic) -- the section construction's own algebra, replacing a general
+/// companion eigensolve per section. Complex pairs are returned (the
+/// caller's small-imaginary filter is semantic). Returns None on a
+/// degenerate leading coefficient or non-finite intermediates; the
+/// caller falls back to the eigensolve rooter, so completeness never
+/// depends on this path.
+pub(super) fn quartic_roots(q: &[f64; 5], out: &mut [C; 4]) -> Option<usize> {
+    let scale = q.iter().fold(0.0f64, |m, &v| m.max(v.abs()));
+    if !(scale.is_finite()) || scale == 0.0 || q[4].abs() < 1e-12 * scale {
+        return None;
+    }
+    let (p3, p2, p1, p0) = (q[3] / q[4], q[2] / q[4], q[1] / q[4], q[0] / q[4]);
+    // depressed quartic y^4 + p y^2 + qq y + r, x = y - p3/4
+    let sh = p3 / 4.0;
+    let p = p2 - 3.0 * p3 * p3 / 8.0;
+    let qq = p1 - p3 * p2 / 2.0 + p3 * p3 * p3 / 8.0;
+    let r = p0 - p3 * p1 / 4.0 + p3 * p3 * p2 / 16.0 - 3.0 * p3.powi(4) / 256.0;
+    if !(p.is_finite() && qq.is_finite() && r.is_finite()) {
+        return None;
+    }
+    // resolvent cubic z^3 + 2p z^2 + (p^2-4r) z - qq^2: value at 0 is
+    // -qq^2 <= 0, so its largest real root is >= 0.
+    let (ca, cb, cc) = (2.0 * p, p * p - 4.0 * r, -qq * qq);
+    let z0 = {
+        // depress t = z - ca/3: t^3 + cp t + cq
+        let cp = cb - ca * ca / 3.0;
+        let cq = 2.0 * ca.powi(3) / 27.0 - ca * cb / 3.0 + cc;
+        let disc = -4.0 * cp.powi(3) - 27.0 * cq * cq;
+        let t = if disc >= 0.0 && cp < 0.0 {
+            // three real roots: take the largest (k = 0 branch)
+            let m = 2.0 * (-cp / 3.0).sqrt();
+            let arg = (3.0 * cq / (cp * m)).clamp(-1.0, 1.0);
+            m * (arg.acos() / 3.0).cos()
+        } else {
+            // one real root (Cardano)
+            let s = (cq * cq / 4.0 + cp.powi(3) / 27.0).max(0.0).sqrt();
+            let u = (-cq / 2.0 + s).cbrt();
+            let v = (-cq / 2.0 - s).cbrt();
+            u + v
+        };
+        (t - ca / 3.0).max(0.0)
+    };
+    let s = z0.sqrt();
+    // factor y^4 + p y^2 + qq y + r = (y^2 + s y + g0)(y^2 - s y + h0)
+    let (g0, h0) = if s > 1e-150 * (1.0 + p.abs()).sqrt() {
+        ((p + z0 - qq / s) / 2.0, (p + z0 + qq / s) / 2.0)
+    } else {
+        // biquadratic: y^2 = (-p +- sqrt(p^2 - 4r))/2
+        let d = p * p - 4.0 * r;
+        let sq = C::new(d.max(0.0).sqrt(), (-d).max(0.0).sqrt());
+        let y2a = (C::new(-p, 0.0) + sq) * 0.5;
+        let y2b = (C::new(-p, 0.0) - sq) * 0.5;
+        let mut n = 0;
+        for y2 in [y2a, y2b] {
+            let y = y2.sqrt();
+            out[n] = y - C::new(sh, 0.0);
+            out[n + 1] = -y - C::new(sh, 0.0);
+            n += 2;
+        }
+        return Some(4);
+    };
+    if !(g0.is_finite() && h0.is_finite()) {
+        return None;
+    }
+    let mut n = 0;
+    for (b, c0) in [(s, g0), (-s, h0)] {
+        let d = b * b - 4.0 * c0;
+        if d >= 0.0 {
+            // cancellation-free real pair
+            let sd = d.sqrt();
+            let t1 = if b >= 0.0 {
+                (-b - sd) / 2.0
+            } else {
+                (-b + sd) / 2.0
+            };
+            let (r1, r2) = if t1.abs() > 0.0 {
+                (t1, c0 / t1)
+            } else {
+                (0.0, -b)
+            };
+            out[n] = C::new(r1 - sh, 0.0);
+            out[n + 1] = C::new(r2 - sh, 0.0);
+        } else {
+            let im = (-d).sqrt() / 2.0;
+            out[n] = C::new(-b / 2.0 - sh, im);
+            out[n + 1] = C::new(-b / 2.0 - sh, -im);
+        }
+        n += 2;
+    }
+    Some(n)
 }

@@ -1,5 +1,5 @@
-//! Driver: run the whole `feasible_linspace` triple dataset through the depth-2
-//! can-sandwich solver, end-to-end, and report per-stratum coverage/residual.
+//! Driver: run an `(N, 3, 3)` corpus of monodromy triples through the depth-2
+//! can-sandwich solver and report coverage, residuals, timing, and rung counts.
 //! No select/witness/transport -- the problem is already a depth-2 subproblem.
 mod data;
 
@@ -27,6 +27,79 @@ fn main() {
     // `bench-npy <path> [stride]`: aggregate coverage, residual, determinant,
     // timing, and rung attribution for any unlabeled (N,3,3) triple corpus.
     let args: Vec<String> = std::env::args().collect();
+    // `bench-npy-par <path> [threads]`: corpus THROUGHPUT harness -- the same
+    // per-row solve() fanned over contiguous chunks with std::thread::scope
+    // (no dependency, no production dispatch change). Reports wall-clock per
+    // triple; per-row latency semantics stay with `bench-npy`.
+    if let Some(p) = args.iter().position(|a| a == "bench-npy-par") {
+        let triples = data::read_triples(&args[p + 1]);
+        let nthreads: usize = args
+            .get(p + 2)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, |n| n.get()));
+        let selected: Option<std::collections::BTreeSet<usize>> = args.get(p + 3).map(|path| {
+            std::fs::read_to_string(path)
+                .expect("failure manifest")
+                .lines()
+                .filter_map(|line| {
+                    let mut fields = line.split_whitespace();
+                    (fields.next() == Some("UNSOLVED"))
+                        .then(|| fields.next()?.parse().ok())
+                        .flatten()
+                })
+                .collect()
+        });
+        can_sandwich::init_tables();
+        let n = selected.as_ref().map_or(triples.len(), |rows| rows.len());
+        let t0 = std::time::Instant::now();
+        let results: Vec<(usize, f64)> = std::thread::scope(|s| {
+            let mut handles = Vec::new();
+            for k in 0..nthreads {
+                let triples = &triples;
+                let selected = &selected;
+                handles.push(s.spawn(move || {
+                    let mut solved = 0usize;
+                    let mut worst = 0.0f64;
+                    // strided assignment: expensive strata cluster in corpus
+                    // order, so stride-k rows balance load across threads
+                    for (row, r) in triples.iter().enumerate().skip(k).step_by(nthreads) {
+                        if selected.as_ref().is_some_and(|rows| !rows.contains(&row)) {
+                            continue;
+                        }
+                        let sol = can_sandwich::solve(
+                            [r[0], r[1], r[2]],
+                            [r[3], r[4], r[5]],
+                            [r[6], r[7], r[8]],
+                        );
+                        if !matches!(sol.rung, can_sandwich::Rung::Unsolved) && sol.orbit_rep == 0 {
+                            solved += 1;
+                            worst = worst.max(sol.residual);
+                        } else if std::env::var_os("DUMP_FAILURES").is_some() {
+                            println!(
+                                "UNSOLVED {row} orbit_rep=0b{:03b} C {:?} G {:?} T {:?}",
+                                sol.orbit_rep,
+                                [r[0], r[1], r[2]],
+                                [r[3], r[4], r[5]],
+                                [r[6], r[7], r[8]],
+                            );
+                        }
+                    }
+                    (solved, worst)
+                }));
+            }
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        let wall = t0.elapsed().as_secs_f64();
+        let solved: usize = results.iter().map(|r| r.0).sum();
+        let worst = results.iter().fold(0.0f64, |m, r| m.max(r.1));
+        println!(
+            "PAR OVERALL: {solved}/{n} solved; {nthreads} threads; wall {:.3} s; {:.3} us/triple",
+            wall,
+            wall * 1e6 / n as f64
+        );
+        println!("worst residual {worst:.3e}");
+        return;
+    }
     if let Some(p) = args.iter().position(|a| a == "bench-triple") {
         let values: Vec<f64> = args[p + 1..p + 10]
             .iter()
@@ -44,11 +117,204 @@ fn main() {
             solution.residual,
             started.elapsed().as_secs_f64() * 1e6
         );
+        if std::env::var_os("DUMP_O").is_some() {
+            for i in 0..4 {
+                for j in 0..4 {
+                    print!(
+                        "{:.17e} {:.17e} ",
+                        solution.o[(i, j)].re,
+                        solution.o[(i, j)].im
+                    );
+                }
+            }
+            println!();
+        }
         can_sandwich::prof::dump();
+        return;
+    }
+    #[cfg(feature = "research-kf")]
+    if let Some(p) = args.iter().position(|a| a == "kf-npy") {
+        let triples = data::read_triples(&args[p + 1]);
+        let selected: std::collections::BTreeSet<usize> = std::fs::read_to_string(&args[p + 2])
+            .expect("failure manifest")
+            .lines()
+            .filter_map(|line| {
+                let mut fields = line.split_whitespace();
+                (fields.next() == Some("UNSOLVED"))
+                    .then(|| fields.next()?.parse().ok())
+                    .flatten()
+            })
+            .collect();
+        let started = std::time::Instant::now();
+        let mut solved = 0usize;
+        for &row in &selected {
+            let triple = triples[row];
+            let hit = can_sandwich::kernel_frame::solve_row(
+                [triple[0], triple[1], triple[2]],
+                [triple[3], triple[4], triple[5]],
+                [triple[6], triple[7], triple[8]],
+            );
+            if let Some(solution) = hit {
+                solved += 1;
+                println!("KF_SOLVED {row} residual {:.3e}", solution.spec_err);
+            } else {
+                println!("KF_UNSOLVED {row}");
+            }
+        }
+        println!(
+            "kernel-frame: {solved}/{} solved; wall {:.3}s",
+            selected.len(),
+            started.elapsed().as_secs_f64(),
+        );
+        return;
+    }
+    #[cfg(feature = "research-kf")]
+    if let Some(p) = args.iter().position(|a| a == "kf-debug") {
+        let triples = data::read_triples(&args[p + 1]);
+        let row: usize = args.get(p + 2).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let tr = triples[row];
+        can_sandwich::kernel_frame::debug_row(
+            [tr[0], tr[1], tr[2]],
+            [tr[3], tr[4], tr[5]],
+            [tr[6], tr[7], tr[8]],
+        );
+        return;
+    }
+    #[cfg(feature = "research-kf")]
+    if let Some(p) = args.iter().position(|a| a == "kf-head2head") {
+        let triples = data::read_triples(&args[p + 1]);
+        let stride: usize = args.get(p + 2).and_then(|s| s.parse().ok()).unwrap_or(1);
+        let mut n = 0usize;
+        let mut n_gen = 0usize;
+        let mut k_ok_gen = 0usize;
+        let (mut p_ok, mut k_ok) = (0usize, 0usize);
+        let (mut p_res, mut k_res) = (Vec::new(), Vec::new());
+        let (mut p_us, mut k_us) = (Vec::new(), Vec::new());
+        for (row, triple) in triples.iter().enumerate().step_by(stride) {
+            n += 1;
+            let (c, g, t) = (
+                [triple[0], triple[1], triple[2]],
+                [triple[3], triple[4], triple[5]],
+                [triple[6], triple[7], triple[8]],
+            );
+            let t0 = std::time::Instant::now();
+            let prod = can_sandwich::solve(c, g, t);
+            let pdt = t0.elapsed().as_secs_f64() * 1e6;
+            if !matches!(prod.rung, can_sandwich::Rung::Unsolved) {
+                p_ok += 1;
+                p_res.push(prod.residual);
+                p_us.push(pdt);
+            }
+            let generic = [c, g, t].iter().all(|m| ndist(*m) == 4);
+            if generic {
+                n_gen += 1;
+            }
+            let t1 = std::time::Instant::now();
+            let kf = can_sandwich::kernel_frame::solve_row(c, g, t);
+            let kdt = t1.elapsed().as_secs_f64() * 1e6;
+            if let Some(sol) = kf {
+                k_ok += 1;
+                if generic {
+                    k_ok_gen += 1;
+                }
+                k_res.push(sol.spec_err);
+                k_us.push(kdt);
+            } else {
+                println!(
+                    "KF-DECLINE row {row} ndist c/g/t = {}/{}/{}",
+                    ndist([triple[0], triple[1], triple[2]]),
+                    ndist([triple[3], triple[4], triple[5]]),
+                    ndist([triple[6], triple[7], triple[8]])
+                );
+            }
+        }
+        let stats = |v: &mut Vec<f64>| -> (f64, f64) {
+            if v.is_empty() {
+                return (f64::NAN, f64::NAN);
+            }
+            v.sort_by(|a, b| a.total_cmp(b));
+            (v[v.len() / 2], v[v.len() - 1])
+        };
+        let (prm, prx) = stats(&mut p_res);
+        let (pum, pux) = stats(&mut p_us);
+        let (krm, krx) = stats(&mut k_res);
+        let (kum, kux) = stats(&mut k_us);
+        println!("rows {n}");
+        println!("production:   {p_ok}/{n}  res med {prm:.1e} max {prx:.1e}  lat med {pum:.0}us max {pux:.0}us");
+        println!("kernel-frame: {k_ok}/{n} total; GENERIC stratum {k_ok_gen}/{n_gen}  res med {krm:.1e} max {krx:.1e}  lat med {kum:.0}us max {kux:.0}us");
         return;
     }
     #[cfg(feature = "research-spin")]
     {
+        if let Some(p) = args.iter().position(|a| a == "spin-npy") {
+            let triples = data::read_triples(&args[p + 1]);
+            let bound = args
+                .get(p + 2)
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(64);
+            let selected: Option<std::collections::BTreeSet<usize>> = args.get(p + 3).map(|path| {
+                std::fs::read_to_string(path)
+                    .expect("failure manifest")
+                    .lines()
+                    .filter_map(|line| {
+                        let mut fields = line.split_whitespace();
+                        (fields.next() == Some("UNSOLVED"))
+                            .then(|| fields.next()?.parse().ok())
+                            .flatten()
+                    })
+                    .collect()
+            });
+            let started = std::time::Instant::now();
+            let mut solved = 0usize;
+            let mut tested = 0usize;
+            for (row, triple) in triples.iter().enumerate() {
+                if selected.as_ref().is_some_and(|rows| !rows.contains(&row)) {
+                    continue;
+                }
+                tested += 1;
+                let (solution, _, _) = can_sandwich::solve_spin_spread(
+                    [triple[0], triple[1], triple[2]],
+                    [triple[3], triple[4], triple[5]],
+                    [triple[6], triple[7], triple[8]],
+                    bound,
+                );
+                if solution.rung == can_sandwich::Rung::Spin {
+                    solved += 1;
+                } else {
+                    println!("SPIN_UNSOLVED {row}");
+                }
+            }
+            println!(
+                "spin spread {bound}: {solved}/{} solved; wall {:.3}s",
+                tested,
+                started.elapsed().as_secs_f64(),
+            );
+            return;
+        }
+        if let Some(p) = args.iter().position(|a| a == "spin-triple") {
+            let values: Vec<f64> = args[p + 1..p + 10]
+                .iter()
+                .map(|value| value.parse().expect("triple coordinate"))
+                .collect();
+            let bound = args
+                .get(p + 10)
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(4096);
+            let started = std::time::Instant::now();
+            let (solution, attempts, actions) = can_sandwich::solve_spin_spread(
+                [values[0], values[1], values[2]],
+                [values[3], values[4], values[5]],
+                [values[6], values[7], values[8]],
+                bound,
+            );
+            println!(
+                "rung {:?} residual {:.6e} actions {actions} attempts {attempts} latency_us {:.3}",
+                solution.rung,
+                solution.residual,
+                started.elapsed().as_secs_f64() * 1e6,
+            );
+            return;
+        }
         if let Some(p) = args.iter().position(|a| a == "spin-replay-row") {
             let triples = data::read_triples(&args[p + 1]);
             let row: usize = args[p + 2].parse().expect("row index");
@@ -244,11 +510,16 @@ fn main() {
                 can_sandwich::solve([r[0], r[1], r[2]], [r[3], r[4], r[5]], [r[6], r[7], r[8]])
             };
             nanos.push(t0.elapsed().as_nanos());
-            answer = Some((sol.rung, sol.residual, can_sandwich::interior_instr()));
+            answer = Some((
+                sol.rung,
+                sol.orbit_rep,
+                sol.residual,
+                can_sandwich::interior_instr(),
+            ));
         }
         nanos.sort_unstable();
         can_sandwich::prof::dump();
-        let (rung, residual, instr) = answer.unwrap();
+        let (rung, orbit_rep, residual, instr) = answer.unwrap();
         if std::env::var_os("GULPS_FUNNEL").is_some() {
             let counts = can_sandwich::funnel::snapshot();
             for (name, count) in can_sandwich::funnel::NAMES.iter().zip(counts) {
@@ -258,7 +529,8 @@ fn main() {
             }
         }
         println!(
-            "row {k} reps {reps} rung {rung:?} residual {residual:.3e} interior {:?} latency us average {:.2} min {:.2} median {:.2} max {:.2}",
+            "row {k} reps {reps} rung {rung:?} orbit_rep={:#05b} residual {residual:.3e} interior {:?} latency us average {:.2} min {:.2} median {:.2} max {:.2}",
+            orbit_rep,
             instr,
             nanos.iter().sum::<u128>() as f64 / reps as f64 / 1e3,
             nanos[0] as f64 / 1e3,
@@ -277,7 +549,7 @@ fn main() {
         let mut by_rung: BTreeMap<can_sandwich::Rung, usize> = BTreeMap::new();
         let mut by_signature: BTreeMap<([usize; 3], can_sandwich::Rung), usize> = BTreeMap::new();
         let mut timings: Vec<(u128, usize, can_sandwich::Rung)> = Vec::new();
-        let (mut n, mut solved, mut machine) = (0usize, 0usize, 0usize);
+        let (mut n, mut solved, mut machine, mut unusable_orbit) = (0usize, 0usize, 0usize, 0usize);
         let (mut worst_residual, mut worst_det) = (0.0f64, 0.0f64);
         let audit_gram = std::env::var_os("GULPS_AUDIT_GRAM").is_some();
         let (mut worst_gram, mut worst_gram_row) = (0.0f64, 0usize);
@@ -330,6 +602,19 @@ fn main() {
                 println!("VALIDSET {k} {}", s.join(","));
             }
             *by_rung.entry(sol.rung).or_default() += 1;
+            if std::env::var_os("DUMP_MARGIN").is_some()
+                && sol.rung != can_sandwich::Rung::Unsolved
+                && sol.residual >= 1e-12
+            {
+                println!(
+                    "MARGIN {k} rung {:?} res {:.3e} C {:?} G {:?} T {:?}",
+                    sol.rung,
+                    sol.residual,
+                    &r[0..3],
+                    &r[3..6],
+                    &r[6..9]
+                );
+            }
             if std::env::var_os("GULPS_SIGNATURES").is_some() {
                 let sig = [
                     ndist([r[0], r[1], r[2]]),
@@ -338,7 +623,7 @@ fn main() {
                 ];
                 *by_signature.entry((sig, sol.rung)).or_default() += 1;
             }
-            if sol.rung != can_sandwich::Rung::Unsolved {
+            if sol.rung != can_sandwich::Rung::Unsolved && sol.orbit_rep == 0 {
                 solved += 1;
                 worst_residual = worst_residual.max(sol.residual);
                 worst_det = worst_det.max((sol.o.map(|z| z.re).determinant() - 1.0).abs());
@@ -364,13 +649,17 @@ fn main() {
                             .or_default() += 1;
                     }
                 }
-            } else if std::env::var_os("DUMP_UNSOLVED").is_some() {
-                println!(
-                    "UNSOLVED {k} C {:?} G {:?} T {:?}",
-                    &r[0..3],
-                    &r[3..6],
-                    &r[6..9]
-                );
+            } else {
+                unusable_orbit += usize::from(sol.orbit_rep != 0);
+                if std::env::var_os("DUMP_UNSOLVED").is_some() {
+                    println!(
+                        "UNSOLVED {k} orbit_rep={:#05b} C {:?} G {:?} T {:?}",
+                        sol.orbit_rep,
+                        &r[0..3],
+                        &r[3..6],
+                        &r[6..9]
+                    );
+                }
             }
             n += 1;
         }
@@ -426,6 +715,9 @@ fn main() {
             100.0 * machine as f64 / solved.max(1) as f64,
         );
         println!("by rung: {by_rung:?}");
+        if unusable_orbit != 0 {
+            println!("unusable gate-lifted solutions: {unusable_orbit}");
+        }
         if audit_gram {
             println!(
                 "Gram audit: worst {:.3e} at row {}; failures above 2e-10 {:?}",
@@ -465,6 +757,85 @@ fn main() {
             worst.2,
         );
         can_sandwich::prof::dump();
+        if solved != n || unusable_orbit != 0 || (audit_gram && !gram_failures.is_empty()) {
+            std::process::exit(1);
+        }
+        return;
+    }
+    #[cfg(feature = "research-kf")]
+    if let Some(p) = args.iter().position(|a| a == "kf-debug") {
+        let triples = data::read_triples(&args[p + 1]);
+        let row: usize = args.get(p + 2).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let tr = triples[row];
+        can_sandwich::kernel_frame::debug_row(
+            [tr[0], tr[1], tr[2]],
+            [tr[3], tr[4], tr[5]],
+            [tr[6], tr[7], tr[8]],
+        );
+        return;
+    }
+    #[cfg(feature = "research-kf")]
+    if let Some(p) = args.iter().position(|a| a == "kf-head2head") {
+        let triples = data::read_triples(&args[p + 1]);
+        let stride: usize = args.get(p + 2).and_then(|s| s.parse().ok()).unwrap_or(1);
+        let mut n = 0usize;
+        let mut n_gen = 0usize;
+        let mut k_ok_gen = 0usize;
+        let (mut p_ok, mut k_ok) = (0usize, 0usize);
+        let (mut p_res, mut k_res) = (Vec::new(), Vec::new());
+        let (mut p_us, mut k_us) = (Vec::new(), Vec::new());
+        for (row, triple) in triples.iter().enumerate().step_by(stride) {
+            n += 1;
+            let (c, g, t) = (
+                [triple[0], triple[1], triple[2]],
+                [triple[3], triple[4], triple[5]],
+                [triple[6], triple[7], triple[8]],
+            );
+            let t0 = std::time::Instant::now();
+            let prod = can_sandwich::solve(c, g, t);
+            let pdt = t0.elapsed().as_secs_f64() * 1e6;
+            if !matches!(prod.rung, can_sandwich::Rung::Unsolved) {
+                p_ok += 1;
+                p_res.push(prod.residual);
+                p_us.push(pdt);
+            }
+            let generic = [c, g, t].iter().all(|m| ndist(*m) == 4);
+            if generic {
+                n_gen += 1;
+            }
+            let t1 = std::time::Instant::now();
+            let kf = can_sandwich::kernel_frame::solve_row(c, g, t);
+            let kdt = t1.elapsed().as_secs_f64() * 1e6;
+            if let Some(sol) = kf {
+                k_ok += 1;
+                if generic {
+                    k_ok_gen += 1;
+                }
+                k_res.push(sol.spec_err);
+                k_us.push(kdt);
+            } else {
+                println!(
+                    "KF-DECLINE row {row} ndist c/g/t = {}/{}/{}",
+                    ndist([triple[0], triple[1], triple[2]]),
+                    ndist([triple[3], triple[4], triple[5]]),
+                    ndist([triple[6], triple[7], triple[8]])
+                );
+            }
+        }
+        let stats = |v: &mut Vec<f64>| -> (f64, f64) {
+            if v.is_empty() {
+                return (f64::NAN, f64::NAN);
+            }
+            v.sort_by(|a, b| a.total_cmp(b));
+            (v[v.len() / 2], v[v.len() - 1])
+        };
+        let (prm, prx) = stats(&mut p_res);
+        let (pum, pux) = stats(&mut p_us);
+        let (krm, krx) = stats(&mut k_res);
+        let (kum, kux) = stats(&mut k_us);
+        println!("rows {n}");
+        println!("production:   {p_ok}/{n}  res med {prm:.1e} max {prx:.1e}  lat med {pum:.0}us max {pux:.0}us");
+        println!("kernel-frame: {k_ok}/{n} total; GENERIC stratum {k_ok_gen}/{n_gen}  res med {krm:.1e} max {krx:.1e}  lat med {kum:.0}us max {kux:.0}us");
         return;
     }
 
@@ -493,6 +864,41 @@ fn main() {
                 e[0], e[1], e[2], e[3]
             );
         }
+        return;
+    }
+    // `dump-all <path> <stride>`: batch dump-o for offline research harnesses.
+    // Per row: "row <k> rung <rung> res <residual>", 16 O entries, eb/ep/et phases.
+    if let Some(p) = args.iter().position(|a| a == "dump-all") {
+        let triples = data::read_triples(&args[p + 1]);
+        let stride: usize = args[p + 2].parse().unwrap();
+        let mut out = String::new();
+        for k in (0..triples.len()).step_by(stride) {
+            let r = triples[k];
+            let sol =
+                can_sandwich::solve([r[0], r[1], r[2]], [r[3], r[4], r[5]], [r[6], r[7], r[8]]);
+            out.push_str(&format!(
+                "row {k} rung {:?} res {:.3e}\n",
+                sol.rung, sol.residual
+            ));
+            for i in 0..4 {
+                for j in 0..4 {
+                    out.push_str(&format!("{:+.17e} ", sol.o[(i, j)].re));
+                }
+            }
+            out.push('\n');
+            for m in [[r[0], r[1], r[2]], [r[3], r[4], r[5]], [r[6], r[7], r[8]]] {
+                let e = can_sandwich::eigphases(can_sandwich::weyl_from_monodromy(m));
+                out.push_str(&format!(
+                    "{:+.17e} {:+.17e} {:+.17e} {:+.17e}\n",
+                    e[0], e[1], e[2], e[3]
+                ));
+            }
+            if out.len() > 1 << 20 {
+                print!("{out}");
+                out.clear();
+            }
+        }
+        print!("{out}");
         return;
     }
     // `solve-npy <path>` mode: run solve() on every triple of a (N,3,3) npy, print its rung per line.

@@ -16,6 +16,9 @@ research-spin = []
 # Offline atlas controls. Default library builds are deterministic: process
 # environment variables cannot alter the realization candidate set.
 diagnostics = []
+# Kernel-frame research solver (s336): additive research port for head-to-head
+# benchmarks; no production dispatch changes.
+research-kf = []
 
 [dependencies]
 nalgebra = "0.33"
@@ -32,13 +35,3 @@ required-features = ["diagnostics"]
 [profile.release]
 opt-level = 3
 lto = "thin"
-
-[[bin]]
-name = "probe_dump"
-path = "src/probe_dump.rs"
-required-features = ["diagnostics"]
-
-[[bin]]
-name = "wall_probe"
-path = "src/wall_probe.rs"
-required-features = ["diagnostics"]

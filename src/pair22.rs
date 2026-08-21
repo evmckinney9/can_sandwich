@@ -23,6 +23,128 @@ type Affine = [f64; 3];
 type Bi2 = [[f64; 3]; 3];
 type Bi4 = [[f64; 5]; 5];
 
+struct Forms {
+    values: [Affine; 6],
+    precise: [[Dd; 3]; 6],
+}
+
+impl std::ops::Index<usize> for Forms {
+    type Output = Affine;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.values[index]
+    }
+}
+
+impl<'a> IntoIterator for &'a Forms {
+    type Item = &'a Affine;
+    type IntoIter = std::slice::Iter<'a, Affine>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.values.iter()
+    }
+}
+
+/// Two-component expansion used only for the small confluent linear solve.
+/// Near a second 2+2 spectrum the independent rows differ at O(gap), and a
+/// plain f64 elimination loses the Pluecker coordinates needed to resolve a
+/// repeated target. This remains one fixed-size algebraic elimination.
+#[derive(Clone, Copy, Default)]
+struct Dd {
+    hi: f64,
+    lo: f64,
+}
+
+impl Dd {
+    #[inline]
+    fn from(value: f64) -> Self {
+        Self { hi: value, lo: 0.0 }
+    }
+
+    #[inline]
+    fn value(self) -> f64 {
+        self.hi + self.lo
+    }
+
+    #[inline]
+    fn add(self, other: Self) -> Self {
+        let sum = self.hi + other.hi;
+        let bp = sum - self.hi;
+        let error = (self.hi - (sum - bp)) + (other.hi - bp) + self.lo + other.lo;
+        let hi = sum + error;
+        Self {
+            hi,
+            lo: error - (hi - sum),
+        }
+    }
+
+    #[inline]
+    fn sub(self, other: Self) -> Self {
+        self.add(Self {
+            hi: -other.hi,
+            lo: -other.lo,
+        })
+    }
+
+    #[inline]
+    fn mul(self, other: Self) -> Self {
+        let product = self.hi * other.hi;
+        let error = self.hi.mul_add(other.hi, -product) + self.hi * other.lo + self.lo * other.hi;
+        let hi = product + error;
+        Self {
+            hi,
+            lo: error - (hi - product),
+        }
+    }
+
+    #[inline]
+    fn div(self, other: Self) -> Self {
+        let q0 = self.hi / other.hi;
+        let remainder = self.sub(other.mul(Self::from(q0)));
+        Self::from(q0).add(Self::from(remainder.hi / other.hi))
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+struct CDd {
+    re: Dd,
+    im: Dd,
+}
+
+impl CDd {
+    #[inline]
+    fn from(value: C) -> Self {
+        Self {
+            re: Dd::from(value.re),
+            im: Dd::from(value.im),
+        }
+    }
+
+    #[inline]
+    fn add(self, other: Self) -> Self {
+        Self {
+            re: self.re.add(other.re),
+            im: self.im.add(other.im),
+        }
+    }
+
+    #[inline]
+    fn sub(self, other: Self) -> Self {
+        Self {
+            re: self.re.sub(other.re),
+            im: self.im.sub(other.im),
+        }
+    }
+
+    #[inline]
+    fn mul(self, other: Self) -> Self {
+        Self {
+            re: self.re.mul(other.re).sub(self.im.mul(other.im)),
+            im: self.re.mul(other.im).add(self.im.mul(other.re)),
+        }
+    }
+}
+
 /// Try the two exact factor orientations.  Swapping the factors transposes the
 /// realizing orthogonal frame.
 #[allow(clippy::too_many_arguments)]
@@ -39,13 +161,73 @@ pub(super) fn solve(
     include_walls: bool,
     include_dense: bool,
 ) -> Option<(Mat4, f64)> {
+    solve_with(
+        prefix,
+        gate,
+        target_specs,
+        dc,
+        lam,
+        targets,
+        gate_is_pair22,
+        prefix_is_pair22,
+        target_is_pair22,
+        include_walls,
+        include_dense,
+        |o, residual| Some((o, residual)),
+    )
+}
+
+/// Enumerate the Pair22 algebraic fibre with the caller's final certificate
+/// inside the loop.  This is required at clustered targets: a small
+/// coefficient residual is only a candidate gate and must not terminate the
+/// finite enumeration when its direct root certificate fails.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn solve_with<R>(
+    prefix: &[C; 4],
+    gate: &[C; 4],
+    target_specs: &[[C; 4]; 2],
+    dc: &Mat4,
+    lam: &Mat4,
+    targets: &[[C; 4]; 2],
+    gate_is_pair22: bool,
+    prefix_is_pair22: bool,
+    target_is_pair22: [bool; 2],
+    include_walls: bool,
+    include_dense: bool,
+    mut finalize: impl FnMut(Mat4, f64) -> Option<R>,
+) -> Option<R> {
+    if gate_is_pair22 && prefix_is_pair22 {
+        let mut accept = |mut o: Mat4, branch: usize| {
+            let metrics = frame_metrics(&o)?;
+            if !metrics.within(2e-10) {
+                return None;
+            }
+            if metrics.determinant < 0.0 {
+                for row in 0..4 {
+                    o[(row, 0)] = -o[(row, 0)];
+                }
+            }
+            let residual = compound_residual(dc, lam, &o, &targets[branch]);
+            // Quantized repeated targets can place the stable coefficient
+            // proxy just outside ACCEPT while remaining inside the direct
+            // root contract. The caller's final certificate decides this
+            // bounded two-block candidate.
+            (residual <= 1e-8).then(|| finalize(o, residual)).flatten()
+        };
+        if let Some(hit) = solve_double_pair22(prefix, gate, target_specs, &mut accept) {
+            return Some(hit);
+        }
+    }
     for (branch, target_spec) in target_specs.iter().enumerate() {
         let expected_det = prefix.iter().product::<C>() * gate.iter().product::<C>();
         if (expected_det - target_spec.iter().product::<C>()).norm() > 1e-8 {
             continue;
         }
         if gate_is_pair22 {
-            let mut accept = |o: Mat4| certify(o, dc, lam, &targets[branch]);
+            let mut accept = |o: Mat4| {
+                certify(o, dc, lam, &targets[branch])
+                    .and_then(|(o, residual)| finalize(o, residual))
+            };
             if let Some(hit) = solve_oriented(
                 gate,
                 prefix,
@@ -58,7 +240,10 @@ pub(super) fn solve(
             }
         }
         if prefix_is_pair22 {
-            let mut accept = |o: Mat4| certify(o.transpose(), dc, lam, &targets[branch]);
+            let mut accept = |o: Mat4| {
+                certify(o.transpose(), dc, lam, &targets[branch])
+                    .and_then(|(o, residual)| finalize(o, residual))
+            };
             if let Some(hit) = solve_oriented(
                 prefix,
                 gate,
@@ -83,6 +268,7 @@ pub(super) fn solve(
                 let x = oriented_matrix(gate, &inverse_target, &v);
                 let s = super::recover_frame(&x, &inverse_prefix_diagonal);
                 certify(s.transpose(), dc, lam, &targets[branch])
+                    .and_then(|(o, residual)| finalize(o, residual))
             };
             if let Some(hit) = solve_oriented(
                 &inverse_target,
@@ -102,6 +288,7 @@ pub(super) fn solve(
                 let x = oriented_matrix(prefix, &inverse_target, &v);
                 let s = super::recover_frame(&x, &inverse_gate_diagonal);
                 certify(s, dc, lam, &targets[branch])
+                    .and_then(|(o, residual)| finalize(o, residual))
             };
             if let Some(hit) = solve_oriented(
                 &inverse_target,
@@ -112,6 +299,219 @@ pub(super) fn solve(
                 &mut accept,
             ) {
                 return Some(hit);
+            }
+        }
+    }
+    None
+}
+
+/// CS decomposition for 2+2 against 2+2.  The product splits into two
+/// independent rank-two multiplicative-Horn problems.  All ambiguity is the
+/// finite matching of the two repeated input eigenspaces and the three
+/// partitions of four target roots into two unordered pairs.
+fn solve_double_pair22<R>(
+    prefix: &[C; 4],
+    gate: &[C; 4],
+    targets: &[[C; 4]; 2],
+    accept: &mut impl FnMut(Mat4, usize) -> Option<R>,
+) -> Option<R> {
+    let (_, _, prefix_first, prefix_second) = pair22_groups(prefix)?;
+    let (_, _, gate_first, gate_second) = pair22_groups(gate)?;
+    solve_two_block(
+        prefix,
+        gate,
+        targets,
+        prefix_first,
+        prefix_second,
+        gate_first,
+        gate_second,
+        accept,
+    )
+}
+
+fn near_pair_groups(values: &[C; 4]) -> Option<([usize; 2], [usize; 2])> {
+    const PARTITIONS: [([usize; 2], [usize; 2]); 3] =
+        [([0, 1], [2, 3]), ([0, 2], [1, 3]), ([0, 3], [1, 2])];
+    PARTITIONS
+        .into_iter()
+        .map(|groups| {
+            let gap = (values[groups.0[0]] - values[groups.0[1]])
+                .norm()
+                .max((values[groups.1[0]] - values[groups.1[1]]).norm());
+            (gap, groups)
+        })
+        .filter(|(gap, _)| *gap <= 2e-5)
+        .min_by(|left, right| left.0.total_cmp(&right.0))
+        .map(|(_, groups)| groups)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn solve_near_double_with<R>(
+    prefix: &[C; 4],
+    gate: &[C; 4],
+    target_specs: &[[C; 4]; 2],
+    dc: &Mat4,
+    lam: &Mat4,
+    targets: &[[C; 4]; 2],
+    mut finalize: impl FnMut(Mat4, f64) -> Option<R>,
+) -> Option<R> {
+    let (prefix_first, prefix_second) = near_pair_groups(prefix)?;
+    let (gate_first, gate_second) = near_pair_groups(gate)?;
+    let mut accept = |mut o: Mat4, branch: usize| {
+        let metrics = frame_metrics(&o)?;
+        if !metrics.within(2e-10) {
+            return None;
+        }
+        if metrics.determinant < 0.0 {
+            for row in 0..4 {
+                o[(row, 0)] = -o[(row, 0)];
+            }
+        }
+        let residual = compound_residual(dc, lam, &o, &targets[branch]);
+        (residual <= 1e-8).then(|| finalize(o, residual)).flatten()
+    };
+    solve_two_block(
+        prefix,
+        gate,
+        target_specs,
+        prefix_first,
+        prefix_second,
+        gate_first,
+        gate_second,
+        &mut accept,
+    )
+}
+
+/// Enumerate every two-by-two block decomposition of two arbitrary spectra.
+/// This is the complete finite two-Givens support chart: three row partitions,
+/// three column partitions, and the finite target pairings handled by
+/// `solve_two_block`.  No multiplicity assumption is used.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn solve_block22_with<R>(
+    prefix: &[C; 4],
+    gate: &[C; 4],
+    target_specs: &[[C; 4]; 2],
+    dc: &Mat4,
+    lam: &Mat4,
+    targets: &[[C; 4]; 2],
+    mut finalize: impl FnMut(Mat4, f64) -> Option<R>,
+) -> Option<R> {
+    const PARTITIONS: [[[usize; 2]; 2]; 3] = [[[0, 1], [2, 3]], [[0, 2], [1, 3]], [[0, 3], [1, 2]]];
+    let mut accept = |o: Mat4, branch: usize| {
+        if !frame_metrics(&o).is_some_and(|metrics| metrics.within(2e-10)) {
+            return None;
+        }
+        let residual = compound_residual(dc, lam, &o, &targets[branch]);
+        finalize(o, residual)
+    };
+    for row_partition in PARTITIONS {
+        let row_first = [row_partition[0][0], row_partition[1][0]];
+        let row_second = [row_partition[0][1], row_partition[1][1]];
+        for column_partition in PARTITIONS {
+            let column_first = [column_partition[0][0], column_partition[1][0]];
+            let column_second = [column_partition[0][1], column_partition[1][1]];
+            if let Some(hit) = solve_two_block(
+                prefix,
+                gate,
+                target_specs,
+                row_first,
+                row_second,
+                column_first,
+                column_second,
+                &mut accept,
+            ) {
+                return Some(hit);
+            }
+        }
+    }
+    None
+}
+
+#[allow(clippy::too_many_arguments)]
+fn solve_two_block<R>(
+    prefix: &[C; 4],
+    gate: &[C; 4],
+    targets: &[[C; 4]; 2],
+    prefix_first: [usize; 2],
+    prefix_second: [usize; 2],
+    gate_first: [usize; 2],
+    gate_second: [usize; 2],
+    accept: &mut impl FnMut(Mat4, usize) -> Option<R>,
+) -> Option<R> {
+    const TARGET_MASKS: [u8; 3] = [0b0011, 0b0101, 0b1001];
+    for (branch, target) in targets.iter().enumerate() {
+        for row_swap in [false, true] {
+            let row_second = if row_swap {
+                [prefix_second[1], prefix_second[0]]
+            } else {
+                prefix_second
+            };
+            for column_swap in [false, true] {
+                let column_second = if column_swap {
+                    [gate_second[1], gate_second[0]]
+                } else {
+                    gate_second
+                };
+                for mask in TARGET_MASKS {
+                    for target_swap in [false, true] {
+                        let selected: Vec<usize> =
+                            (0..4).filter(|index| mask & (1 << index) != 0).collect();
+                        let complement: Vec<usize> =
+                            (0..4).filter(|index| mask & (1 << index) == 0).collect();
+                        let target_pairs = if target_swap {
+                            [[complement[0], complement[1]], [selected[0], selected[1]]]
+                        } else {
+                            [[selected[0], selected[1]], [complement[0], complement[1]]]
+                        };
+                        let mut o = Mat4::zeros();
+                        let mut valid = true;
+                        for block in 0..2 {
+                            let rows = [prefix_first[block], row_second[block]];
+                            let columns = [gate_first[block], column_second[block]];
+                            let values = [
+                                target[target_pairs[block][0]],
+                                target[target_pairs[block][1]],
+                            ];
+                            let determinant = prefix[rows[0]]
+                                * prefix[rows[1]]
+                                * gate[columns[0]]
+                                * gate[columns[1]];
+                            if (determinant - values[0] * values[1]).norm() > 1e-8 {
+                                valid = false;
+                                break;
+                            }
+                            let cross = prefix[rows[0]] * gate[columns[1]]
+                                + prefix[rows[1]] * gate[columns[0]];
+                            let denominator = (prefix[rows[0]] - prefix[rows[1]])
+                                * (gate[columns[0]] - gate[columns[1]]);
+                            if denominator.norm() < 1e-14 {
+                                valid = false;
+                                break;
+                            }
+                            let x = (values[0] + values[1] - cross) / denominator;
+                            if x.im.abs() > 2e-7 || !(-2e-8..=1.0 + 2e-8).contains(&x.re) {
+                                valid = false;
+                                break;
+                            }
+                            let cosine = x.re.clamp(0.0, 1.0).sqrt();
+                            let sine = (1.0 - x.re.clamp(0.0, 1.0)).sqrt();
+                            o[(rows[0], columns[0])] = C::new(cosine, 0.0);
+                            o[(rows[0], columns[1])] = C::new(-sine, 0.0);
+                            o[(rows[1], columns[0])] = C::new(sine, 0.0);
+                            o[(rows[1], columns[1])] = C::new(cosine, 0.0);
+                        }
+                        if valid {
+                            if o.determinant().re < 0.0 {
+                                for row in 0..4 {
+                                    o[(row, 0)] = -o[(row, 0)];
+                                }
+                            }
+                            if let Some(hit) = accept(o, branch) {
+                                return Some(hit);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -178,22 +578,30 @@ fn solve_oriented<R>(
     accept: &mut impl FnMut(Mat4) -> Option<R>,
 ) -> Option<R> {
     let (anchor, peel, anchor_positions, peel_positions) = pair22_groups(repeated)?;
-    let rho = peel - anchor;
-    let delta: [C; 4] = std::array::from_fn(|i| anchor * other[i]);
+    let rho = CDd::from(peel).sub(CDd::from(anchor));
+    let delta: [CDd; 4] = std::array::from_fn(|i| CDd::from(anchor).mul(CDd::from(other[i])));
     let chi_delta = polynomial_from_roots(&delta);
-    let chi_target = polynomial_from_roots(target);
+    let target_dd = target.map(CDd::from);
+    let chi_target = polynomial_from_roots(&target_dd);
 
-    let mut columns = [[C::new(0.0, 0.0); 4]; 6];
+    let mut columns = [[CDd::default(); 4]; 6];
     for (edge, &(i, j)) in PAIRS.iter().enumerate() {
         let left = polynomial_excluding(&delta, i, usize::MAX);
         let right = polynomial_excluding(&delta, j, usize::MAX);
         let pair = polynomial_excluding(&delta, i, j);
         for degree in 0..4 {
-            columns[edge][degree] = -rho * (other[i] * left[degree] + other[j] * right[degree])
-                + rho * rho * other[i] * other[j] * pair[degree];
+            let linear = CDd::from(other[i])
+                .mul(left[degree])
+                .add(CDd::from(other[j]).mul(right[degree]));
+            let quadratic = rho
+                .mul(rho)
+                .mul(CDd::from(other[i]))
+                .mul(CDd::from(other[j]))
+                .mul(pair[degree]);
+            columns[edge][degree] = quadratic.sub(rho.mul(linear));
         }
     }
-    let rhs: [C; 4] = std::array::from_fn(|degree| chi_target[degree] - chi_delta[degree]);
+    let rhs: [CDd; 4] = std::array::from_fn(|degree| chi_target[degree].sub(chi_delta[degree]));
     let forms = affine_solution(&columns, &rhs)?;
     let products = complementary_products(&forms);
     let heron = heron_quartic(&products);
@@ -302,7 +710,7 @@ fn solve_oriented<R>(
         quadratic_discriminant(&coefficients)
     } else {
         let quartic: [Vec<f64>; 5] = std::array::from_fn(|degree| coefficients[degree].clone());
-        super::one_plus_three::quartic_discriminant_poly(&quartic)?
+        quartic_discriminant_poly(&quartic)?
     };
     let selector_scale = selector.iter().fold(0.0f64, |m, value| m.max(value.abs()));
     if selector_scale == 0.0 || !selector_scale.is_finite() {
@@ -361,31 +769,31 @@ fn solve_oriented<R>(
     None
 }
 
-fn polynomial_from_roots(roots: &[C; 4]) -> [C; 5] {
-    let mut result = [C::new(0.0, 0.0); 5];
-    result[0] = C::new(1.0, 0.0);
+fn polynomial_from_roots(roots: &[CDd; 4]) -> [CDd; 5] {
+    let mut result = [CDd::default(); 5];
+    result[0] = CDd::from(C::new(1.0, 0.0));
     let mut degree = 0usize;
     for &root in roots {
         for k in (0..=degree).rev() {
-            result[k + 1] += result[k];
-            result[k] *= -root;
+            result[k + 1] = result[k + 1].add(result[k]);
+            result[k] = result[k].mul(CDd::default().sub(root));
         }
         degree += 1;
     }
     result
 }
 
-fn polynomial_excluding(roots: &[C; 4], skip0: usize, skip1: usize) -> [C; 4] {
-    let mut result = [C::new(0.0, 0.0); 4];
-    result[0] = C::new(1.0, 0.0);
+fn polynomial_excluding(roots: &[CDd; 4], skip0: usize, skip1: usize) -> [CDd; 4] {
+    let mut result = [CDd::default(); 4];
+    result[0] = CDd::from(C::new(1.0, 0.0));
     let mut degree = 0usize;
     for (index, &root) in roots.iter().enumerate() {
         if index == skip0 || index == skip1 {
             continue;
         }
         for k in (0..=degree).rev() {
-            result[k + 1] += result[k];
-            result[k] *= -root;
+            result[k + 1] = result[k + 1].add(result[k]);
+            result[k] = result[k].mul(CDd::default().sub(root));
         }
         degree += 1;
     }
@@ -396,8 +804,8 @@ fn polynomial_excluding(roots: &[C; 4], skip0: usize, skip1: usize) -> [C; 4] {
 /// equations.  The returned coordinates are actual free Pluecker squares, so
 /// `u=0` and `v=0` are genuine coordinate walls rather than arbitrary kernel
 /// coordinates.
-fn affine_solution(columns: &[[C; 4]; 6], rhs: &[C; 4]) -> Option<[Affine; 6]> {
-    let mut original = [[0.0f64; 7]; 9];
+fn affine_solution(columns: &[[CDd; 4]; 6], rhs: &[CDd; 4]) -> Option<Forms> {
+    let mut original = [[Dd::default(); 7]; 9];
     for degree in 0..4 {
         for edge in 0..6 {
             original[2 * degree][edge] = columns[edge][degree].re;
@@ -407,29 +815,31 @@ fn affine_solution(columns: &[[C; 4]; 6], rhs: &[C; 4]) -> Option<[Affine; 6]> {
         original[2 * degree + 1][6] = rhs[degree].im;
     }
     for edge in 0..6 {
-        original[8][edge] = 1.0;
+        original[8][edge] = Dd::from(1.0);
     }
-    original[8][6] = 1.0;
+    original[8][6] = Dd::from(1.0);
 
     let mut matrix = original;
     let global_scale = original
         .iter()
         .flatten()
-        .fold(0.0f64, |m, value| m.max(value.abs()))
+        .fold(0.0f64, |m, value| m.max(value.value().abs()))
         .max(1e-300);
     for row in &mut matrix {
-        let scale = row[..6].iter().fold(0.0f64, |m, value| m.max(value.abs()));
+        let scale = row[..6]
+            .iter()
+            .fold(0.0f64, |m, value| m.max(value.value().abs()));
         // Self-inversiveness makes some real/imaginary coefficient rows
         // identically zero.  Do not normalize their floating remnants into
         // fake independent equations.
         if scale <= 2e-12 * global_scale {
-            if row[6].abs() > 2e-10 * global_scale {
+            if row[6].value().abs() > 2e-10 * global_scale {
                 return None;
             }
-            *row = [0.0; 7];
+            *row = [Dd::default(); 7];
         } else {
             for value in row {
-                *value /= scale;
+                *value = value.div(Dd::from(scale));
             }
         }
     }
@@ -439,8 +849,8 @@ fn affine_solution(columns: &[[C; 4]; 6], rhs: &[C; 4]) -> Option<[Affine; 6]> {
         let mut pivot = (rank, rank, 0.0f64);
         for row in rank..9 {
             for column in rank..6 {
-                if matrix[row][column].abs() > pivot.2 {
-                    pivot = (row, column, matrix[row][column].abs());
+                if matrix[row][column].value().abs() > pivot.2 {
+                    pivot = (row, column, matrix[row][column].value().abs());
                 }
             }
         }
@@ -454,7 +864,7 @@ fn affine_solution(columns: &[[C; 4]; 6], rhs: &[C; 4]) -> Option<[Affine; 6]> {
         permutation.swap(rank, pivot.1);
         let value = matrix[rank][rank];
         for column in rank..7 {
-            matrix[rank][column] /= value;
+            matrix[rank][column] = matrix[rank][column].div(value);
         }
         for row in 0..9 {
             if row == rank {
@@ -462,7 +872,7 @@ fn affine_solution(columns: &[[C; 4]; 6], rhs: &[C; 4]) -> Option<[Affine; 6]> {
             }
             let multiplier = matrix[row][rank];
             for column in rank..7 {
-                matrix[row][column] -= multiplier * matrix[rank][column];
+                matrix[row][column] = matrix[row][column].sub(multiplier.mul(matrix[rank][column]));
             }
         }
         rank += 1;
@@ -473,36 +883,39 @@ fn affine_solution(columns: &[[C; 4]; 6], rhs: &[C; 4]) -> Option<[Affine; 6]> {
     for row in rank..9 {
         let coefficient = matrix[row][..6]
             .iter()
-            .fold(0.0f64, |m, value| m.max(value.abs()));
-        if coefficient <= 2e-9 && matrix[row][6].abs() > 2e-8 {
+            .fold(0.0f64, |m, value| m.max(value.value().abs()));
+        if coefficient <= 2e-9 && matrix[row][6].value().abs() > 2e-8 {
             return None;
         }
     }
 
-    let mut y = [[0.0f64; 3]; 6];
-    y[4][1] = 1.0;
-    y[5][2] = 1.0;
+    let mut y = [[Dd::default(); 3]; 6];
+    y[4][1] = Dd::from(1.0);
+    y[5][2] = Dd::from(1.0);
     for row in 0..4 {
         y[row][0] = matrix[row][6];
-        y[row][1] = -matrix[row][4];
-        y[row][2] = -matrix[row][5];
+        y[row][1] = Dd::default().sub(matrix[row][4]);
+        y[row][2] = Dd::default().sub(matrix[row][5]);
     }
-    let mut forms = [[0.0f64; 3]; 6];
+    let mut precise = [[Dd::default(); 3]; 6];
     for slot in 0..6 {
-        forms[permutation[slot]] = y[slot];
+        precise[permutation[slot]] = y[slot];
     }
+    let forms = precise.map(|form| form.map(Dd::value));
 
     // Reject an ill-conditioned nominal rank-four solve before it can pollute
     // the Heron coefficients.  The old exact-confluence path remains next.
     for coordinate in 0..3 {
         for row in &original {
             let lhs = (0..6)
-                .map(|edge| row[edge] * forms[edge][coordinate])
-                .sum::<f64>();
-            let expected = if coordinate == 0 { row[6] } else { 0.0 };
+                .fold(Dd::default(), |sum, edge| {
+                    sum.add(row[edge].mul(Dd::from(forms[edge][coordinate])))
+                })
+                .value();
+            let expected = if coordinate == 0 { row[6].value() } else { 0.0 };
             let scale = row[..6]
                 .iter()
-                .fold(row[6].abs(), |m, value| m.max(value.abs()))
+                .fold(row[6].value().abs(), |m, value| m.max(value.value().abs()))
                 .max(1e-300);
             if scale <= 2e-12 * global_scale {
                 continue;
@@ -512,7 +925,10 @@ fn affine_solution(columns: &[[C; 4]; 6], rhs: &[C; 4]) -> Option<[Affine; 6]> {
             }
         }
     }
-    Some(forms)
+    Some(Forms {
+        values: forms,
+        precise,
+    })
 }
 
 fn affine_product(left: Affine, right: Affine) -> Bi2 {
@@ -548,7 +964,7 @@ fn add_scaled(out: &mut Bi4, value: &Bi4, scale: f64) {
     }
 }
 
-fn complementary_products(forms: &[Affine; 6]) -> [Bi2; 3] {
+fn complementary_products(forms: &Forms) -> [Bi2; 3] {
     [
         affine_product(forms[0], forms[5]),
         affine_product(forms[1], forms[4]),
@@ -630,7 +1046,7 @@ fn intersect_halfspace(lo: &mut f64, hi: &mut f64, a: f64, b: f64) -> bool {
     *lo <= *hi + 2e-12
 }
 
-fn line_feasible_interval(forms: &[Affine; 6], u: [f64; 2], v: [f64; 2]) -> Option<(f64, f64)> {
+fn line_feasible_interval(forms: &Forms, u: [f64; 2], v: [f64; 2]) -> Option<(f64, f64)> {
     let (mut lo, mut hi) = (0.0f64, 1.0f64);
     for form in forms {
         let a = form[0] + form[1] * u[0] + form[2] * v[0];
@@ -644,7 +1060,7 @@ fn line_feasible_interval(forms: &[Affine; 6], u: [f64; 2], v: [f64; 2]) -> Opti
     Some((lo.clamp(0.0, 1.0), hi.clamp(0.0, 1.0)))
 }
 
-fn feasible_v_interval(forms: &[Affine; 6], u: f64) -> Option<(f64, f64)> {
+fn feasible_v_interval(forms: &Forms, u: f64) -> Option<(f64, f64)> {
     line_feasible_interval(forms, [u, 0.0], [0.0, 1.0])
 }
 
@@ -652,7 +1068,7 @@ fn feasible_v_interval(forms: &[Affine; 6], u: f64) -> Option<(f64, f64)> {
 /// Pluecker-square polygon is a witness.  Enumerating its affine boundary
 /// intersections is a finite exact selection rule, not an optimization loop.
 fn try_polygon_point<R>(
-    forms: &[Affine; 6],
+    forms: &Forms,
     anchor_positions: [usize; 2],
     peel_positions: [usize; 2],
     accept: &mut impl FnMut(Mat4) -> Option<R>,
@@ -728,7 +1144,7 @@ fn quadratic_discriminant(coefficients: &[Vec<f64>]) -> Vec<f64> {
 fn try_vertical_content<R>(
     coefficients: &[Vec<f64>],
     curve_scale: f64,
-    forms: &[Affine; 6],
+    forms: &Forms,
     anchor_positions: [usize; 2],
     peel_positions: [usize; 2],
     accept: &mut impl FnMut(Mat4) -> Option<R>,
@@ -800,6 +1216,25 @@ fn evaluate_polynomial(polynomial: &[f64], value: f64) -> f64 {
         .fold(0.0, |result, coefficient| result * value + coefficient)
 }
 
+/// One compensated residual correction of a companion root. This is a fixed
+/// algebraic postconditioner, not a convergence loop: the companion solve
+/// selects the root and this restores the defining polynomial at that root.
+fn correct_polynomial_root(polynomial: &[f64], value: f64) -> f64 {
+    let x = Dd::from(value);
+    let mut function = Dd::default();
+    let mut derivative = Dd::default();
+    for &coefficient in polynomial.iter().rev() {
+        derivative = derivative.mul(x).add(function);
+        function = function.mul(x).add(Dd::from(coefficient));
+    }
+    let slope = derivative.value();
+    if slope.abs() > 64.0 * f64::EPSILON && slope.is_finite() {
+        value - function.div(derivative).value()
+    } else {
+        value
+    }
+}
+
 fn real_unit_roots(polynomial: &[f64]) -> Vec<f64> {
     let scale = polynomial
         .iter()
@@ -834,7 +1269,7 @@ fn real_unit_roots(polynomial: &[f64]) -> Vec<f64> {
     let mut roots: Vec<f64> = candidates
         .into_iter()
         .filter(|root| root.im.abs() <= 2e-6 && (-1e-8..=1.0 + 1e-8).contains(&root.re))
-        .map(|root| root.re.clamp(0.0, 1.0))
+        .map(|root| correct_polynomial_root(polynomial, root.re).clamp(0.0, 1.0))
         .collect();
     roots.sort_by(f64::total_cmp);
     roots.dedup_by(|left, right| (*left - *right).abs() <= 1e-9);
@@ -842,13 +1277,54 @@ fn real_unit_roots(polynomial: &[f64]) -> Vec<f64> {
 }
 
 fn try_candidate<R>(
-    forms: &[Affine; 6],
+    forms: &Forms,
     u: f64,
     v: f64,
     anchor_positions: [usize; 2],
     peel_positions: [usize; 2],
     accept: &mut impl FnMut(Mat4) -> Option<R>,
 ) -> Option<R> {
+    // Restore the exact Pluecker equation from the extended-precision affine
+    // plane. The companion/fibre polynomial is formed in f64 for speed; one
+    // fixed residual correction removes that formation error without any
+    // convergence loop or search.
+    let v = {
+        let xv: [Dd; 6] = std::array::from_fn(|index| {
+            forms.precise[index][0]
+                .add(forms.precise[index][1].mul(Dd::from(u)))
+                .add(forms.precise[index][2].mul(Dd::from(v)))
+        });
+        let dv: [Dd; 6] = std::array::from_fn(|index| forms.precise[index][2]);
+        let products = [xv[0].mul(xv[5]), xv[1].mul(xv[4]), xv[2].mul(xv[3])];
+        let derivatives = [
+            dv[0].mul(xv[5]).add(xv[0].mul(dv[5])),
+            dv[1].mul(xv[4]).add(xv[1].mul(dv[4])),
+            dv[2].mul(xv[3]).add(xv[2].mul(dv[3])),
+        ];
+        let mut heron = Dd::default();
+        let mut derivative = Dd::default();
+        for i in 0..3 {
+            heron = heron.sub(products[i].mul(products[i]));
+            derivative = derivative.sub(Dd::from(2.0).mul(products[i]).mul(derivatives[i]));
+            for j in i + 1..3 {
+                heron = heron.add(Dd::from(2.0).mul(products[i]).mul(products[j]));
+                derivative = derivative.add(
+                    Dd::from(2.0).mul(
+                        derivatives[i]
+                            .mul(products[j])
+                            .add(products[i].mul(derivatives[j])),
+                    ),
+                );
+            }
+        }
+        if derivative.value().abs() > 64.0 * f64::EPSILON {
+            // Fold targets give a double Pluecker root. The multiplicity-two
+            // residual correction is the exact local factor correction.
+            v - 2.0 * heron.div(derivative).value()
+        } else {
+            v
+        }
+    };
     if !u.is_finite()
         || !v.is_finite()
         || !(-1e-7..=1.0 + 1e-7).contains(&u)
@@ -856,7 +1332,12 @@ fn try_candidate<R>(
     {
         return None;
     }
-    let mut x = forms.map(|form| form[0] + form[1] * u + form[2] * v);
+    let mut x: [f64; 6] = std::array::from_fn(|index| {
+        forms.precise[index][0]
+            .add(forms.precise[index][1].mul(Dd::from(u)))
+            .add(forms.precise[index][2].mul(Dd::from(v)))
+            .value()
+    });
     if x.iter()
         .any(|value| !value.is_finite() || *value < -2e-7 || *value > 1.0 + 2e-7)
     {
@@ -1030,4 +1511,83 @@ mod tests {
             .expect("regular Pair22 witness");
         assert!(residual < 1e-9);
     }
+}
+
+// Shared quartic-discriminant machinery, inherited from the retired
+// 1+3 dense selector (this module is its sole remaining consumer).
+type Poly = Vec<f64>;
+
+fn poly_mul(left: &[f64], right: &[f64]) -> Poly {
+    let mut product = vec![0.0; left.len() + right.len() - 1];
+    for (i, &a) in left.iter().enumerate() {
+        for (j, &b) in right.iter().enumerate() {
+            product[i + j] += a * b;
+        }
+    }
+    product
+}
+
+fn poly_term(out: &mut Poly, coefficient: f64, factors: &[&Poly]) {
+    let product = factors
+        .iter()
+        .fold(vec![1.0], |value, factor| poly_mul(&value, factor));
+    if out.len() < product.len() {
+        out.resize(product.len(), 0.0);
+    }
+    for (slot, value) in out.iter_mut().zip(product) {
+        *slot += coefficient * value;
+    }
+}
+
+/// Discriminant of `a*v^4+b*v^3+c*v^2+d*v+e`, coefficientwise in the
+/// remaining Birkhoff coordinate.  For a total-degree-four plane curve the
+/// result has degree at most twelve.
+fn quartic_discriminant_poly(f: &[Poly; 5]) -> Option<Poly> {
+    let (e, d, c_, b, a) = (&f[0], &f[1], &f[2], &f[3], &f[4]);
+    let (a2, a3) = (poly_mul(a, a), poly_mul(&poly_mul(a, a), a));
+    let (b2, b3, b4) = {
+        let b2 = poly_mul(b, b);
+        let b3 = poly_mul(&b2, b);
+        let b4 = poly_mul(&b2, &b2);
+        (b2, b3, b4)
+    };
+    let (c2, c3, c4) = {
+        let c2 = poly_mul(c_, c_);
+        let c3 = poly_mul(&c2, c_);
+        let c4 = poly_mul(&c2, &c2);
+        (c2, c3, c4)
+    };
+    let (d2, d3, d4) = {
+        let d2 = poly_mul(d, d);
+        let d3 = poly_mul(&d2, d);
+        let d4 = poly_mul(&d2, &d2);
+        (d2, d3, d4)
+    };
+    let (e2, e3) = {
+        let e2 = poly_mul(e, e);
+        let e3 = poly_mul(&e2, e);
+        (e2, e3)
+    };
+    let mut out = Vec::new();
+    poly_term(&mut out, 256.0, &[&a3, &e3]);
+    poly_term(&mut out, -192.0, &[&a2, b, d, &e2]);
+    poly_term(&mut out, -128.0, &[&a2, &c2, &e2]);
+    poly_term(&mut out, 144.0, &[&a2, c_, &d2, e]);
+    poly_term(&mut out, -27.0, &[&a2, &d4]);
+    poly_term(&mut out, 144.0, &[a, &b2, c_, &e2]);
+    poly_term(&mut out, -6.0, &[a, &b2, &d2, e]);
+    poly_term(&mut out, -80.0, &[a, b, &c2, d, e]);
+    poly_term(&mut out, 18.0, &[a, b, c_, &d3]);
+    poly_term(&mut out, 16.0, &[a, &c4, e]);
+    poly_term(&mut out, -4.0, &[a, &c3, &d2]);
+    poly_term(&mut out, -27.0, &[&b4, &e2]);
+    poly_term(&mut out, 18.0, &[&b3, c_, d, e]);
+    poly_term(&mut out, -4.0, &[&b3, &d3]);
+    poly_term(&mut out, -4.0, &[&b2, &c3, e]);
+    poly_term(&mut out, 1.0, &[&b2, &c2, &d2]);
+    let scale = out.iter().fold(0.0f64, |maximum, x| maximum.max(x.abs()));
+    while out.len() > 1 && out.last().is_some_and(|x| x.abs() < 1e-12 * scale) {
+        out.pop();
+    }
+    (scale > 0.0 && scale.is_finite() && out.len() <= 13).then_some(out)
 }

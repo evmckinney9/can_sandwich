@@ -293,6 +293,87 @@ fn solve_radical_orientation(
     hit
 }
 
+/// The reachable-trace hull of the sandwich: m1 = tr(D_c O Lam_g O^T D_c)
+/// = a^T B g with a = diag(D_c)^2, g = diag(Lam_g), and B = O∘O doubly
+/// stochastic, so over EVERY admissible frame the trace ranges exactly over
+/// the convex hull of the 24 permutation sums sum_k a_k g_pi(k) (Birkhoff).
+/// The hull depends only on (a, g): build once, query per rho branch.
+struct TraceHull {
+    hull: [[f64; 2]; 26],
+    m: usize,
+}
+
+fn cross2(o: [f64; 2], p: [f64; 2], q: [f64; 2]) -> f64 {
+    (p[0] - o[0]) * (q[1] - o[1]) - (p[1] - o[1]) * (q[0] - o[0])
+}
+
+impl TraceHull {
+    fn new(a: &[C; 4], g: &[C; 4]) -> TraceHull {
+        let mut pts = [[0.0f64; 2]; 24];
+        let mut n = 0;
+        for i in 0..4 {
+            for j in 0..4 {
+                if j == i {
+                    continue;
+                }
+                for k in 0..4 {
+                    if k == i || k == j {
+                        continue;
+                    }
+                    let l = 6 - i - j - k;
+                    let s = a[0] * g[i] + a[1] * g[j] + a[2] * g[k] + a[3] * g[l];
+                    pts[n] = [s.re, s.im];
+                    n += 1;
+                }
+            }
+        }
+        pts.sort_unstable_by(|p, q| p.partial_cmp(q).expect("finite trace sums"));
+        // Andrew monotone chain; boundary counterclockwise.
+        let mut hull = [[0.0f64; 2]; 26];
+        let mut m = 0;
+        for &pt in &pts[..n] {
+            while m >= 2 && cross2(hull[m - 2], hull[m - 1], pt) <= 0.0 {
+                m -= 1;
+            }
+            hull[m] = pt;
+            m += 1;
+        }
+        let lower = m + 1;
+        for &pt in pts[..n - 1].iter().rev() {
+            while m >= lower && cross2(hull[m - 2], hull[m - 1], pt) <= 0.0 {
+                m -= 1;
+            }
+            hull[m] = pt;
+            m += 1;
+        }
+        m -= 1; // the closing point repeats the first
+        TraceHull { hull, m }
+    }
+
+    /// True when the trace provably lies OUTSIDE the reachable set: no
+    /// doubly stochastic B (a fortiori no frame) attains this spectrum.
+    /// Sign-exact; no tolerance.
+    fn refutes(&self, trace: C) -> bool {
+        let q = [trace.re, trace.im];
+        match self.m {
+            0 => false,
+            1 => q != self.hull[0],
+            2 => {
+                let (p0, p1) = (self.hull[0], self.hull[1]);
+                let (ex, ey) = (p1[0] - p0[0], p1[1] - p0[1]);
+                let e2 = ex * ex + ey * ey;
+                if e2 < 1e-300 {
+                    return q != p0;
+                }
+                let t = (((q[0] - p0[0]) * ex + (q[1] - p0[1]) * ey) / e2).clamp(0.0, 1.0);
+                let foot = [p0[0] + t * ex, p0[1] + t * ey];
+                (q[0] - foot[0]).hypot(q[1] - foot[1]) > 0.0
+            }
+            m => (0..m).any(|i| cross2(self.hull[i], self.hull[(i + 1) % m], q) < 0.0),
+        }
+    }
+}
+
 pub(crate) fn solve_radical(
     c_in: &[C; 4],
     g_in: &[C; 4],
@@ -303,7 +384,33 @@ pub(crate) fn solve_radical(
     strata: StratumSignature,
 ) -> Option<(Mat4, f64)> {
     let pcg: C = c_in.iter().product::<C>() * g_in.iter().product::<C>();
-    for (bi, w) in target_specs.iter().enumerate() {
+    // Demote a rho branch whose trace the Birkhoff hull REFUTES (provably no
+    // frame attains that spectrum): first-hit then skips its dead orientation
+    // sweep whenever the other branch solves.  Refutation only -- when both
+    // branches are hull-feasible the hull carries no winner information and
+    // the natural order stands (deeper-clearance ordering was measured to
+    // misroute the generic linspace band 5x at p99.9).  A permutation of the
+    // search cannot change coverage; the sign test needs no tolerance.
+    let a2: [C; 4] = std::array::from_fn(|k| dc[(k, k)] * dc[(k, k)]);
+    let lamd: [C; 4] = std::array::from_fn(|k| lam[(k, k)]);
+    let branch_order = {
+        let hull = TraceHull::new(&a2, &lamd);
+        if hull.refutes(target_specs[0].iter().sum()) && !hull.refutes(target_specs[1].iter().sum())
+        {
+            [1usize, 0]
+        } else {
+            [0, 1]
+        }
+    };
+    // The compiler boundary demands a machine-scale (< 1e-12) certificate at a
+    // repeated target.  A first-branch hit below that bar must not end the
+    // branch/orientation search -- it would mask a machine-precise candidate in
+    // the other lift (the orbit census traced every "rho-unique" Radical win to
+    // exactly this short-circuit).  Hold it as the fallback instead.
+    let boundary_exact = strata.target.iter().any(|kind| kind.is_repeated());
+    let mut held: Option<(Mat4, f64)> = None;
+    for bi in branch_order {
+        let w = &target_specs[bi];
         if (pcg - w.iter().product::<C>()).norm() > 1e-8 {
             continue; // det-inconsistent rho branch
         }
@@ -320,8 +427,7 @@ pub(crate) fn solve_radical(
         let wg: [C; 4] = std::array::from_fn(|k| w[k].conj());
         let ct: [C; 4] = std::array::from_fn(|k| c_in[k].conj());
         let gt: [C; 4] = std::array::from_fn(|k| g_in[k].conj());
-        let lamd: [C; 4] = std::array::from_fn(|k| lam[(k, k)]);
-        let dcd: [C; 4] = std::array::from_fn(|k| dc[(k, k)] * dc[(k, k)]);
+        let dcd = a2;
         let orientations = [
             RadicalOrientation {
                 gate: *g_in,
@@ -414,16 +520,28 @@ pub(crate) fn solve_radical(
                 let action_bucket = action.min(2);
                 super::funnel::bump(super::funnel::RAD + pass * 3 + action_bucket);
                 super::funnel::bump(super::funnel::RADMW + 3 * amask + action_bucket);
+                if boundary_exact && hit.1 >= 1e-12 {
+                    if held.as_ref().is_none_or(|old| hit.1 < old.1) {
+                        held = Some(hit);
+                    }
+                    break; // this lift's best is boundary-doomed; try the other lift
+                }
                 return Some(hit);
             }
         }
         if let Some(hit) = deferred_target {
             super::funnel::bump(super::funnel::RAD + 5);
             super::funnel::bump(super::funnel::RADMW + 14);
+            if boundary_exact && hit.1 >= 1e-12 {
+                if held.as_ref().is_none_or(|old| hit.1 < old.1) {
+                    held = Some(hit);
+                }
+                continue;
+            }
             return Some(hit);
         }
     }
-    None
+    held
 }
 
 /// Recover the physical frame from the symmetric sandwich matrix already
@@ -635,7 +753,40 @@ pub(crate) fn solve_confluent(
         None
     };
     super::prof::rec(9, tp);
+    let target_repeated = strata.target.iter().any(|kind| kind.is_repeated());
     if let Some((o, r)) = rad_hit {
+        // At a repeated target the compiler boundary demands a machine-scale
+        // certificate; a looser radical hit can never pass it, so it must not
+        // mask the degenerate-limit formula below.
+        if !target_repeated || r < 1e-12 {
+            return Some((o, r, super::Rung::Radical));
+        }
+    }
+    // Double confluence (a repeated inner value AND a repeated target value):
+    // a doubled target value collides two branch points of the radical
+    // machinery's curve, degenerating its pin-pair characteristics -- and the
+    // same collision forces a rank-two kernel whose vanishing interaction
+    // matrix turns the spectral conditions linear.  The resonance construction
+    // is that degenerate limit; it runs exactly on the radical decline set, so
+    // the population the curve formulas own pays nothing.
+    let target_deep = strata.target.iter().any(|kind| {
+        matches!(
+            kind,
+            super::SpectrumKind::Triple31 | super::SpectrumKind::Scalar4
+        )
+    });
+    if (strata.c.is_repeated() || strata.g.is_repeated() || target_deep) && target_repeated {
+        let tp = super::prof::start();
+        let hit = super::resonance::solve(c_in, g_in, target_specs, dc, lam, targets);
+        super::prof::rec(9, tp);
+        if let Some((o, r)) = hit {
+            if r < 1e-12 {
+                return Some((o, r, super::Rung::Radical));
+            }
+        }
+    }
+    if let Some((o, r)) = rad_hit {
+        // Preserve the pre-resonance fall-through: the boundary will judge it.
         return Some((o, r, super::Rung::Radical));
     }
     if strata.g == SpectrumKind::Pair22 || strata.c == SpectrumKind::Pair22 {

@@ -1,24 +1,21 @@
 # can_sandwich
 
-**CURRENT RULING (2026-08-14).** The live solver is non-iterative and every
-returned frame is forward-certified, but the solver is not yet a complete
+**CURRENT RULING (2026-08-20).** Every returned frame passes an SO(4) check and
+a direct rootwise certificate. The solver does not yet give a complete
 realization theorem. Exact spectral signatures own the closed vertex, edge,
 face, multiplicity, and routed `1 + 3` strata. Klein, three-Givens, and the
-finite cyclic axis orbit are certified algebraic sections used as
-accelerators; none is claimed to meet every dense physical fibre.
+finite cyclic axis orbit provide certified algebraic sections.
 
 The remaining generic theorem is action selection. After a projective right
-Spin action is fixed, realization is one degree-16 inverse followed by
+Spin action is fixed, realization uses one degree-16 inverse followed by
 rational reconstruction and normalization. A fair rational action scheduler
-terminates on the regular full-half projection stratum, but no bounded fast
-selector is proved. The consistently folded dense rational fixture in the
-test suite misses every production section and remains `Unsolved`; its known
-fixed action is solved by the degree-16 kernel.
+terminates on the regular full-half projection stratum. No bounded selector is
+proved complete.
 
-The Spin inverse and unbounded/bounded action-scheduler experiments are gated
-behind the `research-spin` Cargo feature. Default builds contain only the live
-production realization spine; enable that feature explicitly for Spin census
-commands and research benchmarks.
+Production uses a bounded 64-action Spin prefix as a fallback constructor.
+Each candidate must pass the same rootwise certificate as every other rung.
+Exhaustion does not prove that a target is unreachable. The `research-spin`
+feature adds census commands and larger scheduler experiments.
 
 The generic Spin inverse is now reduced to one kernel. Exact finite-field
 Macaulay, Singular, and Segre-pencil certificates exclude every possible
@@ -59,8 +56,37 @@ Solves the isolated subproblem only: given monodromy coords `(C, G, T)`, find th
 `u` (a real frame `O ∈ SO(4)` in the magic basis) with `weyl(Can(C)·u·Can(G)) =
 weyl(T)`, where `Can` first converts each monodromy triple to Weyl coordinates. No
 invariants/select/witness/transport -- the problem is assumed already
-split into a depth-2 subproblem. Runs the whole `feasible_linspace` triple dataset
-end-to-end and reports per-stratum coverage/residual.
+split into a depth-2 subproblem. The diagnostic driver accepts any `(N, 3, 3)`
+triple corpus and reports coverage, residuals, timing, and rung counts.
+
+## Regular validation
+
+Run the complete regular corpus suite after each realization change:
+
+```bash
+./crates/can_sandwich/bench_both.sh
+```
+
+This command validates or regenerates the versioned `feasible_stratified`
+corpus, then runs it together with `feasible_linspace` and `feasible_haar` at
+stride 1. Stratified version 5 has 13,181 atomic rows. It begins with 15 fixed
+raw-coordinate or full-matrix regressions, crosses 29 exact/near families for both sandwich
+operands at 13 scales and six structured local modes, then adds independent
+coverage of all 29 target families. Its explicit-witness targets do not depend
+on the Horn predicate or realization solver. The command also replays all
+10,935 explicit-witness targets through the public GULPS pipeline. Every atomic
+corpus row and public replay must pass, atomic solutions must use the original
+gate representatives, and each public replay must finish within five seconds.
+
+For high-risk realization changes, add fresh deterministic seeds without
+overwriting the locked regular fixture:
+
+```bash
+./crates/can_sandwich/bench_realization_stress.sh 1 7 42
+```
+
+The stress command generates each corpus in an isolated temporary directory
+and exercises every atomic and public-pipeline row.
 
 ## Master object
 `M = D_C·O·Λ·Oᵀ·D_C`, the sandwich Makhlin matrix in the magic basis: `D_C =
@@ -158,18 +184,24 @@ chosen by spectral stratum:
    rank-structured degenerate-target tier, and the mid-cascade rank-2/pair22
    emitters were deleted 2026-07-15 under the dataflow gate: zero entries on
    both complete corpora, measured (the live input-(3,1) secular stays).
-10. The research Spin tail fixes one projective action and solves the remaining
-    `(2,2,4)` intersection with a degree-16 quotient-algebra kernel. The kernel
-    is exact, but the bounded action-selection contract is open, so this tail
-    is not production coverage.
+10. The research Spin tool tests a bounded projective-action prefix. Each
+    action solves the `(2,2,4)` intersection with a degree-16 quotient-algebra
+    kernel. Production does not search this incomplete action bank.
 11. Certify the complete Gram matrix and orientation of every emitted frame,
    then forward-certify the elementary symmetric functions of the original
    `M`.
 
-There are no random starts, generic numerical optimization, or production
-search fallbacks. The locked linspace and independent continuous Haar corpora
-are empirically complete by default; corpus coverage is not a universal
-coverage theorem.
+There is no iterative realization fallback. A finite algebraic atlas decline
+returns `Unsolved`; it does not launch continuation, local correction, or an
+SO(4) multistart. The locked linspace, independent Haar, and versioned exact/
+near-stratum corpora are all regular regression tests. Corpus coverage is not
+a universal coverage theorem, and a corpus pass must not be obtained by
+optimizer-assisted witnesses.
+
+The current working tree keeps the locked corpora green: linspace is
+761,308/761,308 and Haar is 300,000/300,000. The new stratified corpus is
+12,873/13,181. Its failure keeps the standard bench red until algebraic charts
+cover the remaining rows.
 
 After canonical preparation, the shared frame certificate, deterministic
 production dispatch, and the direct decic axis selector, the 2026-08-14
@@ -223,14 +255,14 @@ The same transport also lets bounded three-Givens eliminants run from the
 other two vertices of the spectral triangle. These are cyclic boundary charts,
 not a separate realization ansatz. On `feasible_linspace`, the old
 13-cell 4-Givens sliver cover reduced to two production cells. Those cells
-remain in the constructive default and own 27 Haar rows, including all 18
+remain in the algebraic dispatch and own 27 Haar rows, including all 18
 direct three-Givens holes. The earlier search-shaped slow tail
 (`pencil`/RANK9, alternate ladder, `cl3`, `peel3`) and bench probes remain
 preserved in `src/attic/`.
 
 ## Four-Givens algebraic baseline
 
-The following numbers and analysis document the current constructive baseline
+The following numbers and analysis document the historical algebraic baseline
 that the axis-cubic/quartic reduction must replace.
 
 Complete locked-corpus result (2026-07-14 speed campaign; built with

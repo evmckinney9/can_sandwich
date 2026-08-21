@@ -1,6 +1,6 @@
-//! Minimal `.npy` reader (no dep). The linspace dataset is plain little-endian C-order
-//! arrays: `feasible_linspace.npy` = (N,3,3) f64 monodromy triples [C,G,T], and
-//! `linspace_strata.npy` = (N,) i8 stratum labels (-1 sliver .. 3 vertex).
+//! Minimal `.npy` reader (no dependency). Realization corpora are plain
+//! little-endian C-order `(N, 3, 3)` f64 arrays of monodromy triples `[C, G, T]`.
+//! Optional label arrays, such as `linspace_strata.npy`, are `(N,)` integers.
 use std::fs;
 
 /// Parse the `.npy` header, returning `(shape, data_offset)`. Asserts C-order.

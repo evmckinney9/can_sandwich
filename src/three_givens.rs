@@ -478,7 +478,7 @@ mod qz6 {
                     - h[e][e - 1] * t[e - 1][hi] / (t[e - 1][e - 1] * t[hi][hi]);
                 let me22 = (h[hi][hi] - me21 * t[e][hi]) / t[hi][hi];
                 let (mut s, mut p) = (me11 + me22, me11 * me22 - me12 * me21);
-                if its % 10 == 0 {
+                if its.is_multiple_of(10) {
                     // exceptional shift: perturb to break rare cycles
                     s = 1.5 * (h[hi][e].abs() + h[e][e - 1].abs()) / t[hi][hi].abs();
                     p = s * s * 0.25;
