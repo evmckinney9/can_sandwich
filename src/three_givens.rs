@@ -684,7 +684,8 @@ mod qz6_tests {
 
     /// Reduction-only timing split (ignored).
     #[test]
-    #[ignore]
+    #[ignore = "micro-benchmark; run with --ignored --nocapture"]
+    #[allow(clippy::print_stderr)]
     fn bench_qz6_reduction_split() {
         let mut state = 0xdeadbeefcafef00du64;
         let mut rnd = move || {
@@ -735,7 +736,8 @@ mod qz6_tests {
 
     /// Paired microbenchmark (ignored): hand QZ vs faer QZ per call.
     #[test]
-    #[ignore]
+    #[ignore = "micro-benchmark; run with --ignored --nocapture"]
+    #[allow(clippy::print_stderr)]
     fn bench_qz6_vs_faer() {
         let mut state = 0xdeadbeefcafef00du64;
         let mut rnd = move || {
@@ -775,6 +777,7 @@ mod qz6_tests {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::print_stderr)]
     use super::{cubic_product, unit_roots, ChartPolynomial};
 
     #[test]

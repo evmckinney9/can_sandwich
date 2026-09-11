@@ -161,6 +161,7 @@ pub fn edge_gate(routed: &[[C; 4]; 4], target_specs: &[[C; 4]]) -> RoutedSupport
 /// smooth residual exceeds δ⁴/4. With δ = 1e-2 that bound is 2.5e-9 > ACCEPT:
 /// skipping the pair cannot lose an acceptable frame. `target_specs` are the
 /// target EIGENVALUE sets per branch (same order as `targets`).
+#[allow(clippy::too_many_arguments)]
 pub fn solve_edge(
     d2: &[C; 4],
     lam4: &[C; 4],
@@ -242,12 +243,12 @@ fn solve_radical_orientation(
     targets: &[[C; 4]; 2],
     cap: usize,
 ) -> Option<(Mat4, f64)> {
-    let mut accept = |candidate: crate::sandwich::Solved| match orientation.reconstruction {
+    let mut accept = |candidate: crate::radical::Solved| match orientation.reconstruction {
         RadicalReconstruction::Sandwich { transpose } => {
             if let Some(frame) = candidate.frame.as_ref() {
                 let started = super::prof::start();
                 let hit = frame_to_o(frame, dc, lam, targets, &orientation.eigenvalues, transpose);
-                super::prof::rec(7, started);
+                super::prof::rec(super::prof::RADICAL_FRAME, started);
                 if hit.is_some() {
                     return hit;
                 }
@@ -282,14 +283,14 @@ fn solve_radical_orientation(
         }
     };
     let started = super::prof::start();
-    let hit = crate::sandwich::solve_oriented(
+    let hit = crate::radical::solve_oriented(
         &orientation.gate,
         &orientation.prefix,
         &orientation.output,
         cap,
         &mut accept,
     );
-    super::prof::rec(6, started);
+    super::prof::rec(super::prof::RADICAL_ORIENTED, started);
     hit
 }
 
@@ -468,11 +469,10 @@ pub(crate) fn solve_radical(
         // after vertex/edge/face decline it has no independent ownership. Thus
         // production needs only the shallow pin-pair family: six hot cells,
         // followed by the remaining odd characteristics.
-        // The unbounded second pass owns only 94 of 19033 rows (0.49%), but it
-        // is LOAD-BEARING: removing it drops coverage to 99.9264% (14 unsolved),
-        // degrades the worst residual 3.7e-11 -> 2.4e-10, and costs 4x mean
-        // latency as the fallthrough hits the interior/axis rungs. Measured
-        // 2026-08-08; do not re-try the deletion.
+        // The unbounded second pass owns only 0.49% of the rows, but removing
+        // it drops coverage (14 unsolved on the locked corpus), degrades the
+        // worst residual by 6x, and costs 4x mean latency as the fallthrough
+        // hits the interior rungs.
         const PASS_MAJOR: [(usize, usize); 8] = [
             (0, 0),
             (0, 1),
@@ -499,9 +499,6 @@ pub(crate) fn solve_radical(
             // has remaining odd characteristics.
             let active =
                 |kind: SpectrumKind| kind.is_rank_two() || (pass == 0 && kind.is_repeated());
-            let amask = (active(strata.g) as usize)
-                | ((active(strata.c) as usize) << 1)
-                | ((active(strata.target[bi]) as usize) << 2);
             let orientation = &orientations[action];
             if !active(orientation.owner) {
                 continue;
@@ -517,9 +514,6 @@ pub(crate) fn solve_radical(
                         .filter(|old| old.1 < hit.1)
                         .unwrap_or(hit);
                 }
-                let action_bucket = action.min(2);
-                super::funnel::bump(super::funnel::RAD + pass * 3 + action_bucket);
-                super::funnel::bump(super::funnel::RADMW + 3 * amask + action_bucket);
                 if boundary_exact && hit.1 >= 1e-12 {
                     if held.as_ref().is_none_or(|old| hit.1 < old.1) {
                         held = Some(hit);
@@ -530,8 +524,6 @@ pub(crate) fn solve_radical(
             }
         }
         if let Some(hit) = deferred_target {
-            super::funnel::bump(super::funnel::RAD + 5);
-            super::funnel::bump(super::funnel::RADMW + 14);
             if boundary_exact && hit.1 >= 1e-12 {
                 if held.as_ref().is_none_or(|old| hit.1 < old.1) {
                     held = Some(hit);
@@ -594,7 +586,7 @@ fn matrix_to_o(
 /// enumeration (multiplicity ties are gauge); accept on the production
 /// smooth residual.
 fn frame_to_o(
-    fr: &crate::sandwich::Frame,
+    fr: &crate::radical::Frame,
     dc: &Mat4,
     lam: &Mat4,
     targets: &[[C; 4]; 2],
@@ -711,9 +703,8 @@ fn frame_to_o(
 }
 
 /// The multiplicity recursion, split out so the CHEAP exact charts (Klein and
-/// its dual) get a look at the confluent rows first. The 2026-07-21 revert
-/// routed those rows to the interior chart SCANS, which are numerically weak
-/// and cost 525 machine-precise rows; Klein is an exact Ferrari construction
+/// its dual) get a look at the confluent rows first. Routing those rows to the
+/// interior chart scans instead costs 525 machine-precise rows; Klein
 /// behind the same FAST_ACCEPT gate, so precision is protected by construction
 /// and only the ordering changes.
 #[allow(clippy::too_many_arguments)]
@@ -728,7 +719,7 @@ pub(crate) fn solve_confluent(
 ) -> Option<(Mat4, f64, super::Rung)> {
     if strata.g == SpectrumKind::Pair22 || strata.c == SpectrumKind::Pair22 {
         let tp = super::prof::start();
-        let hit = super::pair22::solve(
+        let hit = super::two_plus_two::solve(
             c_in,
             g_in,
             target_specs,
@@ -741,7 +732,7 @@ pub(crate) fn solve_confluent(
             true,
             false,
         );
-        super::prof::rec(9, tp);
+        super::prof::rec(super::prof::RADICAL_TOTAL, tp);
         if let Some((o, r)) = hit {
             return Some((o, r, super::Rung::Pair22));
         }
@@ -752,7 +743,7 @@ pub(crate) fn solve_confluent(
     } else {
         None
     };
-    super::prof::rec(9, tp);
+    super::prof::rec(super::prof::RADICAL_TOTAL, tp);
     let target_repeated = strata.target.iter().any(|kind| kind.is_repeated());
     if let Some((o, r)) = rad_hit {
         // At a repeated target the compiler boundary demands a machine-scale
@@ -778,7 +769,7 @@ pub(crate) fn solve_confluent(
     if (strata.c.is_repeated() || strata.g.is_repeated() || target_deep) && target_repeated {
         let tp = super::prof::start();
         let hit = super::resonance::solve(c_in, g_in, target_specs, dc, lam, targets);
-        super::prof::rec(9, tp);
+        super::prof::rec(super::prof::RADICAL_TOTAL, tp);
         if let Some((o, r)) = hit {
             if r < 1e-12 {
                 return Some((o, r, super::Rung::Radical));
@@ -791,7 +782,7 @@ pub(crate) fn solve_confluent(
     }
     if strata.g == SpectrumKind::Pair22 || strata.c == SpectrumKind::Pair22 {
         let tp = super::prof::start();
-        let hit = super::pair22::solve(
+        let hit = super::two_plus_two::solve(
             c_in,
             g_in,
             target_specs,
@@ -804,14 +795,14 @@ pub(crate) fn solve_confluent(
             false,
             true,
         );
-        super::prof::rec(9, tp);
+        super::prof::rec(super::prof::RADICAL_TOTAL, tp);
         if let Some((o, r)) = hit {
             return Some((o, r, super::Rung::Pair22));
         }
     }
     if strata.target.contains(&SpectrumKind::Pair22) {
         let tp = super::prof::start();
-        let hit = super::pair22::solve(
+        let hit = super::two_plus_two::solve(
             c_in,
             g_in,
             target_specs,
@@ -824,7 +815,7 @@ pub(crate) fn solve_confluent(
             true,
             true,
         );
-        super::prof::rec(9, tp);
+        super::prof::rec(super::prof::RADICAL_TOTAL, tp);
         if let Some((o, r)) = hit {
             return Some((o, r, super::Rung::Pair22));
         }

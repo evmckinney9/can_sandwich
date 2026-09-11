@@ -4,6 +4,12 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 ROOT=$(cd ../.. && pwd)
+PYTHON="${GULPS_PYTHON:-$ROOT/.venv/bin/python}"
+
+if [[ ! -x "$PYTHON" ]]; then
+  echo "missing project Python: $PYTHON; run 'make bootstrap'" >&2
+  exit 2
+fi
 
 if [[ $# -eq 0 ]]; then
   echo "usage: $0 SEED [SEED ...]" >&2
@@ -23,15 +29,15 @@ status=0
 for seed in "$@"; do
   corpus="$tmp/feasible_stratified_seed_${seed}.npy"
   echo "== structured realization stress seed $seed =="
-  if ! "$ROOT/.venv/bin/python" "$ROOT/scripts/generate_realization_edge_corpus.py" \
+  if ! "$PYTHON" "$ROOT/scripts/generate_realization_edge_corpus.py" \
     --seed "$seed" --output "$corpus"; then
     status=1
     continue
   fi
-  if ! ./target/release/can_sandwich bench-npy "$corpus" 1; then
+  if ! ../target/release/can_sandwich bench-npy "$corpus" 1; then
     status=1
   fi
-  if ! "$ROOT/.venv/bin/python" \
+  if ! "$PYTHON" \
     "$ROOT/scripts/validate_realization_pipeline_corpus.py" \
     "${corpus%.npy}.pipeline.npz" --max-case-seconds 0.5; then
     status=1

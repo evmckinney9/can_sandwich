@@ -1,29 +1,23 @@
-# Standalone seed of the from-scratch can-sandwich solver. Its own workspace root
-# (`[workspace]`) so it touches NO existing gulps file -- current gulps stays
-# byte-identical and runnable for baselines on the same linspace triples.
+# Depth-two realization solver used by gulps-core.
 [package]
 name = "can_sandwich"
-version = "0.1.0"
-edition = "2021"
+description = "Depth-two two-qubit realization solver used by gulps-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
 
-[workspace]
+[lints]
+workspace = true
 
 [features]
 default = []
-# Fixed-action projective Spin inverse and bounded action schedulers. These are
-# theorem/research diagnostics, not part of the production realization spine.
-research-spin = []
-# Offline atlas controls. Default library builds are deterministic: process
-# environment variables cannot alter the realization candidate set.
+# Profiler counters and the corpus driver. Default builds compile them out.
 diagnostics = []
-# Kernel-frame research solver (s336): additive research port for head-to-head
-# benchmarks; no production dispatch changes.
-research-kf = []
 
 [dependencies]
 nalgebra = "0.33"
-# Companion-matrix eigenvalues for the bounded algebraic four-Givens and
-# rank-structured constructions. Root-finding (QR eigensolve), not GN.
+# Companion-matrix eigenvalues for the polynomial root primitives.
 faer = { version = "0.24", default-features = false, features = ["std"] }
 dyn-stack = "0.13"
 
@@ -31,7 +25,3 @@ dyn-stack = "0.13"
 name = "can_sandwich"
 path = "src/main.rs"
 required-features = ["diagnostics"]
-
-[profile.release]
-opt-level = 3
-lto = "thin"

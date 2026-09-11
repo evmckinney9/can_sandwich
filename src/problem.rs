@@ -22,6 +22,16 @@ pub(super) enum SpectrumKind {
     Scalar4,
 }
 
+/// Independent distance-to-stratum label. This does not alter the historical
+/// dispatch partition; it prevents near multiplicities from being advertised
+/// as exact closed-form inputs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum SpectrumProximity {
+    Exact,
+    Near,
+    Distinct,
+}
+
 impl SpectrumKind {
     #[inline]
     pub(super) fn is_repeated(self) -> bool {
@@ -62,11 +72,34 @@ pub(super) fn spectrum_kind(s: &[C; 4]) -> SpectrumKind {
     }
 }
 
+pub(super) fn spectrum_proximity(s: &[C; 4]) -> SpectrumProximity {
+    let mut minimum = f64::INFINITY;
+    for i in 0..4 {
+        for j in (i + 1)..4 {
+            minimum = minimum.min((s[i] - s[j]).norm());
+        }
+    }
+    if minimum <= 64.0 * f64::EPSILON {
+        SpectrumProximity::Exact
+    } else if minimum <= 1.0e-7 {
+        SpectrumProximity::Near
+    } else {
+        SpectrumProximity::Distinct
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) struct StratumSignature {
     pub(super) c: SpectrumKind,
     pub(super) g: SpectrumKind,
     pub(super) target: [SpectrumKind; 2],
+    pub(super) c_proximity: SpectrumProximity,
+    pub(super) g_proximity: SpectrumProximity,
+    pub(super) target_proximity: [SpectrumProximity; 2],
+    /// A repeated value in the routed product table `c_i g_j`, even when both
+    /// input spectra themselves are simple.  This is a separate confluence
+    /// mechanism from input/target spectral multiplicity.
+    pub(super) routed_collision: bool,
 }
 
 impl StratumSignature {
@@ -75,6 +108,10 @@ impl StratumSignature {
             c: spectrum_kind(c),
             g: spectrum_kind(g),
             target: std::array::from_fn(|branch| spectrum_kind(&target[branch])),
+            c_proximity: spectrum_proximity(c),
+            g_proximity: spectrum_proximity(g),
+            target_proximity: std::array::from_fn(|branch| spectrum_proximity(&target[branch])),
+            routed_collision: routed_product_collision(c, g),
         }
     }
 
@@ -84,6 +121,23 @@ impl StratumSignature {
             || self.g.is_repeated()
             || self.target.iter().any(|kind| kind.is_repeated())
     }
+
+}
+
+/// Detect exact routed-product collisions without collapsing near collisions
+/// into a repeated spectrum.  Such collisions are the natural next branch for
+/// simple/simple inputs: `c_i g_j = c_k g_l` can lower the rank of the
+/// characteristic map even though `c` and `g` are individually distinct.
+fn routed_product_collision(c: &[C; 4], g: &[C; 4]) -> bool {
+    let products: [C; 16] = std::array::from_fn(|n| c[n / 4] * g[n % 4]);
+    for i in 0..products.len() {
+        for j in (i + 1)..products.len() {
+            if (products[i] - products[j]).norm_sqr() <= 16.0 * f64::EPSILON {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Canonical spectral form of one depth-two sandwich.
@@ -95,7 +149,6 @@ impl StratumSignature {
 pub(super) struct PreparedSandwich {
     pub(super) left_phases: [f64; 4],
     pub(super) right_phases: [f64; 4],
-    pub(super) target_phases: [[f64; 4]; 2],
     pub(super) left: [C; 4],
     pub(super) right: [C; 4],
     pub(super) target_roots: [[C; 4]; 2],
@@ -142,7 +195,6 @@ impl PreparedSandwich {
         Self {
             left_phases,
             right_phases,
-            target_phases,
             left,
             right,
             target_roots,
@@ -209,4 +261,58 @@ pub(super) fn orient_so4(mut frame: Mat4) -> Mat4 {
         }
     }
     frame
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{routed_product_collision, spectrum_proximity, C, SpectrumProximity};
+
+    #[test]
+    fn detects_collision_with_simple_inputs() {
+        let c = [
+            C::new(1.0, 0.0),
+            C::new(0.0, 1.0),
+            C::new(-1.0, 0.0),
+            C::new(0.0, -1.0),
+        ];
+        let g = c;
+        assert!(routed_product_collision(&c, &g));
+    }
+
+    #[test]
+    fn does_not_collapse_near_collision() {
+        let c = [
+            C::new(1.0, 0.0),
+            C::new(0.0, 1.0),
+            C::new(-1.0, 0.0),
+            C::new(0.0, -1.0),
+        ];
+        let g = [
+            C::from_polar(1.0, 0.13),
+            C::from_polar(1.0, 1.71),
+            C::from_polar(1.0, 3.29),
+            C::from_polar(1.0, 4.91),
+        ];
+        assert!(!routed_product_collision(&c, &g));
+    }
+
+    #[test]
+    fn separates_exact_near_and_distinct_spectra() {
+        let exact = [C::new(1.0, 0.0); 4];
+        assert_eq!(spectrum_proximity(&exact), SpectrumProximity::Exact);
+        let near = [
+            C::from_polar(1.0, 0.0),
+            C::from_polar(1.0, 1.0e-8),
+            C::from_polar(1.0, 2.0),
+            C::from_polar(1.0, 4.0),
+        ];
+        assert_eq!(spectrum_proximity(&near), SpectrumProximity::Near);
+        let distinct = [
+            C::from_polar(1.0, 0.0),
+            C::from_polar(1.0, 0.2),
+            C::from_polar(1.0, 2.0),
+            C::from_polar(1.0, 4.0),
+        ];
+        assert_eq!(spectrum_proximity(&distinct), SpectrumProximity::Distinct);
+    }
 }

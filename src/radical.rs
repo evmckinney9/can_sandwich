@@ -304,8 +304,8 @@ fn residues_v(
 /// (where the free pair degenerates to a double), and THREE mirror pairs
 /// carried by a CUBIC in the Joukowski variable beta = m + pp/m:
 /// deflate the trivial roots, split off (m^2 - pp), and the remaining
-/// self-inversive sextic V satisfies V/m^3 = v0(beta^3 - 3 pp beta)
-/// + v1(beta^2 - 2 pp) + v2 beta + v3. All radicals-grade: synthetic
+/// self-inversive sextic V satisfies
+/// V/m^3 = v0(beta^3 - 3 pp beta) + v1(beta^2 - 2 pp) + v2 beta + v3. All radicals-grade: synthetic
 /// divisions, one cubic rootfind, one quadratic per beta -- no
 /// companion eigensolve. Every root is projected to the circle (genuine
 /// mu is unitary; the ray-reality lemma makes circle-exact candidates
@@ -365,7 +365,7 @@ fn beta_interval_variations(beta: BetaClosure, pp: C, lo: f64, hi: f64) -> Optio
     if eval(lo).abs() <= 1e-8 || eval(hi).abs() <= 1e-8 {
         return None;
     }
-    Some(crate::can_sandwich::bernstein_variations(
+    Some(crate::cascade::bernstein_variations(
         &power[..=degree],
         lo,
         hi,
@@ -723,11 +723,11 @@ impl PairGate {
     }
 }
 
-/// Reduced interval gate (s160, confluent three laws, leading (2,1,1)
+/// Reduced interval gate (confluent three laws, leading (2,1,1)
 /// case): with the cluster copy dropped, muhat = {t_surv, m, pf/m} and
 /// every rep residue is linear in x = cos(arg m - arg(pf)/2). Same
 /// margins and fall-through discipline as PairGate. The U-side clauses
-/// descend too (s160 laws 2-3): with ghat = g/R, all reduced What_rep
+/// descend too (laws 2-3): with ghat = g/R, all reduced What_rep
 /// share one phase, so U-reality is zetahat = gamma^2 * rayhat real
 /// positive, and the det-pin sum is zetahat*Shat(x) + That(x) = 1 with
 /// the ONE cluster term That = K/(alpha + beta x) rational deg-(0/1)
@@ -1181,26 +1181,18 @@ fn mirror_base(
         }
         let vi = -bd / pre_rho1_ac[k0];
         if !vi.re.is_finite() || !vi.im.is_finite() || vi.im.abs() > 1e-6 {
-            #[cfg(feature = "diagnostics")]
-            if std::env::var_os("MU_DUMP").is_some() {
-                eprintln!("GATE vimag {:e}", vi.im.abs());
-            }
-            crate::can_sandwich::prof::hit(33);
+            crate::cascade::prof::hit(crate::cascade::prof::RJ_V_IMAG);
             return None;
         }
         if vi.re < -1e-7 {
-            #[cfg(feature = "diagnostics")]
-            if std::env::var_os("MU_DUMP").is_some() {
-                eprintln!("GATE vneg {:e}", vi.re);
-            }
-            crate::can_sandwich::prof::hit(34);
+            crate::cascade::prof::hit(crate::cascade::prof::RJ_V_NEG);
             return None;
         }
         vv[k0] = vi.re.max(0.0).sqrt();
         nv += vi.re.max(0.0);
     }
     if (nv - 1.0).abs() > 1e-4 {
-        crate::can_sandwich::prof::hit(35);
+        crate::cascade::prof::hit(crate::cascade::prof::RJ_V_SUM);
         return None;
     }
 
@@ -1304,7 +1296,7 @@ fn mirror_completion(
     // pass-through is one uniform on-circle gap test -- the former
     // coefficient-Horner arms (k-fold derivative quotient, per-branch
     // zero detections) were cancellation patches for the asymmetric
-    // representation and are gone (2026-08-19 symmetric-mirror change).
+    // representation and are gone.
     let mut mup = [C::default(); 8];
     let mut nmup = 0;
     if skeleton {
@@ -1321,7 +1313,7 @@ fn mirror_completion(
                 }
             }
             if pi == usize::MAX || pd > XTOL {
-                crate::can_sandwich::prof::hit(28);
+                crate::cascade::prof::hit(crate::cascade::prof::RJ_SKEL);
                 return None; // gamma = 0 forces mu into the data multiset
             }
             phused[pi] = true;
@@ -1399,22 +1391,14 @@ fn mirror_completion(
     let sre: f64 = u2.iter().map(|z| z.re * z.re).sum();
     let simm: f64 = u2.iter().map(|z| z.im * z.im).sum();
     if simm > sre || u2.iter().any(|z| z.re < 0.0 && z.re * z.re > simm) {
-        #[cfg(feature = "diagnostics")]
-        if std::env::var_os("MU_DUMP").is_some() {
-            eprintln!("GATE ureal simm {:e} sre {:e} u2 {:?}", simm, sre, u2);
-        }
-        crate::can_sandwich::prof::hit(29);
+        crate::cascade::prof::hit(crate::cascade::prof::RJ_UREAL);
         return None;
     }
     let s2: f64 = (0..dcl.k)
         .map(|c_| u2[dcl.cluster_rep(c_)].re.max(0.0))
         .sum();
     if (s2 - 1.0).abs() >= 1e-4 {
-        #[cfg(feature = "diagnostics")]
-        if std::env::var_os("MU_DUMP").is_some() {
-            eprintln!("GATE usum {:e}", (s2 - 1.0).abs());
-        }
-        crate::can_sandwich::prof::hit(30);
+        crate::cascade::prof::hit(crate::cascade::prof::RJ_USUM);
         return None;
     }
     // canonical-gauge reconstruction: one u, one verify, no enumeration
@@ -1445,11 +1429,7 @@ fn mirror_completion(
     }
     let out = verify(c, a, &vv, &uc, rho1, rho2, w);
     if out.is_some() {
-        crate::can_sandwich::prof::hit(31);
-        #[cfg(feature = "diagnostics")]
-        if std::env::var_os("MU_DUMP").is_some() {
-            eprintln!("MU_WIN vv {:?} uc {:?}", vv, uc);
-        }
+        crate::cascade::prof::hit(crate::cascade::prof::N_ACCEPT);
     }
     out
 }
@@ -1475,42 +1455,31 @@ fn try_mu(
     pre_ac: &[C; 4],
     method: &'static str,
 ) -> Option<Solved> {
-    let Some((g2, t1, t2)) = gq else { return None };
-    crate::can_sandwich::prof::hit(26);
-    #[cfg(feature = "diagnostics")]
-    if std::env::var_os("MU_DUMP").is_some() {
-        eprintln!(
-            "MU_CAND c {:?} rho1 {:?} rho2 {:?} mu {:?} w {:?} delta {:?}",
-            c, rho1, rho2, mu, w, delta
-        );
-    }
-    let tb = crate::can_sandwich::prof::start();
+    let (g2, t1, t2) = gq?;
+    crate::cascade::prof::hit(crate::cascade::prof::N_TRY_MU);
+    let tb = crate::cascade::prof::start();
     let mb0 = mirror_base(mu, delta, dcl, pre_rho1_ac);
-    crate::can_sandwich::prof::rec(36, tb);
+    crate::cascade::prof::rec(crate::cascade::prof::SW_BASE, tb);
     let Some(mb) = mb0 else {
-        #[cfg(feature = "diagnostics")]
-        if std::env::var_os("MU_DUMP").is_some() {
-            eprintln!("MU_FATE base");
-        }
-        crate::can_sandwich::prof::hit(27);
-        crate::can_sandwich::prof::hit(match method {
-            "forced" => 45,
-            "skel" => 46,
-            _ => 47,
+        crate::cascade::prof::hit(crate::cascade::prof::RJ_BASE);
+        crate::cascade::prof::hit(match method {
+            "forced" => crate::cascade::prof::BASE_FAIL_FORCED,
+            "skel" => crate::cascade::prof::BASE_FAIL_SKEL,
+            _ => crate::cascade::prof::BASE_FAIL_PAIR,
         });
         if method == "pair" {
             let dev = (mu[2].norm_sqr() - 1.0).abs();
-            crate::can_sandwich::prof::hit(if dev < 1e-6 {
-                48
+            crate::cascade::prof::hit(if dev < 1e-6 {
+                crate::cascade::prof::DEV_LT_1EM6
             } else if dev < 1e-2 {
-                49
+                crate::cascade::prof::DEV_MID
             } else {
-                50
+                crate::cascade::prof::DEV_GT_1EM2
             });
         }
         return None;
     };
-    let tp = crate::can_sandwich::prof::start();
+    let tp = crate::cascade::prof::start();
     let mc = mirror_completion(
         &mb,
         pb,
@@ -1526,17 +1495,9 @@ fn try_mu(
         pre_ac,
         method,
     );
-    crate::can_sandwich::prof::rec(16, tp);
+    crate::cascade::prof::rec(crate::cascade::prof::SW_MIRROR, tp);
     if let Some(s) = mc {
-        #[cfg(feature = "diagnostics")]
-        if std::env::var_os("MU_DUMP").is_some() {
-            eprintln!("MU_FATE accept");
-        }
         return Some(s);
-    }
-    #[cfg(feature = "diagnostics")]
-    if std::env::var_os("MU_DUMP").is_some() {
-        eprintln!("MU_FATE completion");
     }
     if g2 == C::default() {
         return None;
@@ -1558,9 +1519,9 @@ fn verify(
     rho2: C,
     w: &[C; 4],
 ) -> Option<Solved> {
-    let tp = crate::can_sandwich::prof::start();
+    let tp = crate::cascade::prof::start();
     let r = verify_inner(c, a, vv, uc, rho1, rho2, w);
-    crate::can_sandwich::prof::rec(17, tp);
+    crate::cascade::prof::rec(crate::cascade::prof::SW_VERIFY, tp);
     r
 }
 
@@ -1889,7 +1850,7 @@ pub fn two_step<R>(
     cap: usize,
     accept: &mut impl FnMut(Solved) -> Option<R>,
 ) -> Option<R> {
-    let th = crate::can_sandwich::prof::start();
+    let th = crate::cascade::prof::start();
     let (rho1v, rho2v) = (d1 - c, d2 - c);
     if rho1v.norm() < CTOL || rho2v.norm() < CTOL {
         return None;
@@ -1965,7 +1926,7 @@ pub fn two_step<R>(
         (rho1v, rho2v, c * c * c * d1 * prod_a),
         (rho2v, rho1v, c * c * c * d2 * prod_a),
     ];
-    crate::can_sandwich::prof::rec(57, th);
+    crate::cascade::prof::rec(crate::cascade::prof::SW_HEADER, th);
     // On a (2,2) gate the two off-cluster values are equal. Exchanging the
     // two rank-one peels then leaves rho1, rho2, the determinant pin, every
     // characteristic, and the reconstructed matrix unchanged. Quotient that
@@ -1976,7 +1937,7 @@ pub fn two_step<R>(
         2
     };
     for &(rho1, rho2, pin) in &orders[..order_count] {
-        // THE SKELETON ARRANGEMENT LAW (derived 2026-07-15): with the
+        // The skeleton arrangement law: with the
         // det-pin closing the phase telescope, V_i of a 4-subset S is
         // rho-tilde_i * prod_S sin((theta_i - phi_s)/2), so admissibility
         // is FOUR PARITY conditions on S's above-node counts -- an XOR of
@@ -1987,30 +1948,12 @@ pub fn two_step<R>(
         // pre_angs/pre_masks precomputed above; only argp = pin.arg() varies per order.
         let skel_masks: Option<f64> = if all_simple { Some(pin.arg()) } else { None };
         let mut skel_target: [Option<u8>; 2] = [None, None];
-        // A-PRIORI parity target. Even-side arrangement law: the admissibility
-        // phase is D_t = pi + 2 phi_t + arg(pin)/2 - arg(rho1) - arg(ac_t),
-        // and D_t = pi - A_t with A_t the PROVEN pair-independent odd-side
-        // phase -- so one vector serves both halves of the 36+28 search, and
-        // br=1 is the complement (all four bits flipped).
-        let skel_apriori: [u8; 2] = {
-            let argp = pin.arg();
-            let mut e = 0u8;
-            for t in 0..4 {
-                let d_t = std::f64::consts::PI + 2.0 * delta[t].arg() + 0.5 * argp
-                    - rho1.arg()
-                    - a[t].arg()
-                    - pb.cis[t].arg();
-                let bit = (d_t / std::f64::consts::PI).floor().rem_euclid(2.0) as u8;
-                e |= bit << t;
-            }
-            [e, e ^ 0x0F]
-        };
         // (rho * a[k]) * pb.cis[k]: left-to-right order matches the
         // per-cluster-rep denominator computation in mirror_base /
         // mirror_completion so the result is bit-identical.
         let pre_rho1_ac: [C; 4] = std::array::from_fn(|k| rho1 * a[k] * pb.cis[k]);
         let pre_rho2_ac: [C; 4] = std::array::from_fn(|k| rho2 * a[k] * pb.cis[k]);
-        // SINGLE-STEP CELLS (2026-08-19): v = e_k exactly. The first peel is
+        // Single-step cells: v = e_k exactly. The first peel is
         // then diagonal, so mu is data-explicit with one shifted value
         // a_k (c + rho1) that must pass through to a target root -- an exact
         // data gate -- and the remainder is one n=3 rank-one update with
@@ -2019,7 +1962,7 @@ pub fn two_step<R>(
         // order. Restores the rho-lift equivariance of the cell family: the
         // two margin rows reached this cell only through the orbit
         // re-encoding (their direct encodings carry the pass-through match
-        // at 2e-16, measured 2026-08-19).
+        // at 2e-16).
         for k in 0..4 {
             let mstar = a[k] * (c + rho1);
             let (mut wm, mut best) = (usize::MAX, f64::INFINITY);
@@ -2119,23 +2062,12 @@ pub fn two_step<R>(
             // split and exchanging rho1/rho2 is one exact characteristic, but
             // both numerical orientations remain here until a certified
             // conditioning rule can select between their residue formulas.
-            // MEASURED 2026-08-09: gamma = 0 is codimension 1, so these are the
-            // NON-generic case and deferring them to the full pass "should" let
-            // the ~76% of rows answered by a pin pair skip them. A/B says NO
-            // measurable change (5.10-5.26 vs 5.12-5.25, identical rung counts).
-            // The C(nvals,4)x2 tries are CHEAP; the cost is the try_mu calls in
-            // the PIN path (66 calls / 1 accept on row 170640). Do not re-try
-            // this reorder -- attack try_mu selection instead.
-            // MEASURED 2026-08-09, do NOT delete: this skeleton/even-char sweep
-            // is entered 5157x on feasible_linspace and its "skel" try_mu wins
-            // ZERO rows, so it looks dead -- but gating it off MOVES a row
-            // (Interior 48->49, Radical 3951->3950) and is SLOWER in 3/3
-            // interleaved pairs. It owns >=1 row through another success path.
+            // gamma = 0 is codimension 1, so these are the non-generic case, yet
+            // deferring them to the full pass measures no change: the tries are
+            // cheap and the cost sits in the try_mu calls of the pin path.  Gating
+            // this sweep off moves a row between rungs and is slower, so it owns
+            // at least one row through another success path; keep it.
             if cap != usize::MAX {
-                crate::can_sandwich::funnel::bump(crate::can_sandwich::funnel::EVENCHAR);
-                crate::can_sandwich::funnel::bump(
-                    crate::can_sandwich::funnel::EVENCHAR + if all_simple { 1 } else { 2 },
-                );
                 let mut av = [C::default(); 8];
                 for (t, &(z, _)) in vals.iter().enumerate() {
                     av[t] = z;
@@ -2148,14 +2080,11 @@ pub fn two_step<R>(
                                 if (av[i] * av[j] * av[k] * av[l] - pin).norm_sqr() < 1e-12 {
                                     let mu = [av[i], av[j], av[k], av[l]];
                                     if !inherits_clusters(&mu, &delta, &dcl) {
-                                        crate::can_sandwich::prof::hit(53);
+                                        crate::cascade::prof::hit(crate::cascade::prof::INH_SKIP);
                                         continue;
                                     }
                                     let mut gate_known = false;
                                     let mut gate_ok = true;
-                                    // shadow: would the a-priori parity target REJECT this
-                                    // subset? recorded here because pv/br die with the block.
-                                    let mut apriori_reject: Option<bool> = None;
                                     if let Some(argp) = &skel_masks {
                                         let ms = [
                                             pre_masks[i],
@@ -2175,7 +2104,6 @@ pub fn two_step<R>(
                                                 as i64)
                                                 & 1)
                                                 as usize;
-                                            apriori_reject = Some(pv != skel_apriori[br]);
                                             match skel_target[br] {
                                                 Some(tgt) => {
                                                     gate_known = true;
@@ -2206,12 +2134,6 @@ pub fn two_step<R>(
                                                     }
                                                     if clean {
                                                         let calibrated = pv ^ neg;
-                                                        crate::can_sandwich::funnel::bump(
-                                                            crate::can_sandwich::funnel::APRIORI
-                                                                + usize::from(
-                                                                    calibrated != skel_apriori[br],
-                                                                ),
-                                                        );
                                                         skel_target[br] = Some(calibrated);
                                                     }
                                                 }
@@ -2219,7 +2141,7 @@ pub fn two_step<R>(
                                         }
                                     }
                                     if gate_known && !gate_ok {
-                                        crate::can_sandwich::prof::hit(43);
+                                        crate::cascade::prof::hit(crate::cascade::prof::SKEL_SKIP);
                                         continue;
                                     }
                                     if let Some(s) = try_mu(
@@ -2239,12 +2161,6 @@ pub fn two_step<R>(
                                         &pre_ac,
                                         "skel",
                                     ) {
-                                        if let Some(rej) = apriori_reject {
-                                            crate::can_sandwich::funnel::bump(
-                                                crate::can_sandwich::funnel::SKELWIN
-                                                    + usize::from(rej),
-                                            );
-                                        }
                                         if let Some(hit) = accept(s) {
                                             return Some(hit);
                                         }
@@ -2268,41 +2184,37 @@ pub fn two_step<R>(
             // rather than by construction index: an exact structural criterion
             // (mult_of is already the multiplicity), not a fit. Stable, so ties
             // keep the previous order and the shallow pass still takes 6.
-            // MEASURED 2026-08-09, do not re-try naively: ordering these pin
-            // pairs by descending multiplicity GLOBALLY cuts p99 30%
-            // (33 -> 23 us) and gains 6 machine-precise rows at neutral mean,
-            // but demotes low-multiplicity pins past the cap and costs one row
-            // 85 -> 162 us. Sorting WITHIN each pass instead preserves
-            // membership and loses the entire win (mean 5.21, p99 34.5) --
-            // proving the effect is pass MEMBERSHIP, not order. The real
-            // question is which pin is correct, not how to order guesses.
-            for (pidx, pair) in pairs[..npairs]
-                .iter()
-                .filter(|pair| {
-                    if cap == usize::MAX {
-                        pair.raw_index >= 6
-                    } else {
-                        pair.raw_index < cap
-                    }
-                })
-                .enumerate()
-            {
+            // Ordering these pin pairs by descending multiplicity globally cuts
+            // p99 by 30% but demotes low-multiplicity pins past the cap; sorting
+            // within each pass loses the entire win, so the effect is pass
+            // membership, not order.  The open question is which pin is correct.
+            for pair in pairs[..npairs].iter().filter(|pair| {
+                if cap == usize::MAX {
+                    pair.raw_index >= 6
+                } else {
+                    pair.raw_index < cap
+                }
+            }) {
                 let (t1, t2) = (pair.t1, pair.t2);
-                let tp = crate::can_sandwich::prof::start();
+                let tp = crate::cascade::prof::start();
                 let wg = strict_word.as_ref().map(|word| word.accepts(t1, t2));
-                crate::can_sandwich::prof::rec(19, tp);
+                crate::cascade::prof::rec(crate::cascade::prof::SW_WORD_GATE, tp);
                 if wg == Some(false) {
                     continue;
                 }
                 let pp = pin / (t1 * t2);
                 let arc = if all_simple {
                     let g = PairGate::new(t1, t2, pp, &delta, &pre_ac, rho1);
-                    crate::can_sandwich::prof::hit(if g.is_some() { 51 } else { 52 });
+                    crate::cascade::prof::hit(if g.is_some() {
+                        crate::cascade::prof::PAIR_GATE_SOME
+                    } else {
+                        crate::cascade::prof::PAIR_GATE_NONE
+                    });
                     g
                 } else {
                     None
                 };
-                // reduced gate (s160 confluent descent): the (2,1,1) leading
+                // reduced gate (confluent descent): the (2,1,1) leading
                 // case (one 2-cluster, one pin at the letter) and the (2,2)
                 // both-letters case (two 2-clusters, both pins at the two
                 // distinct letters; no surviving pin, two cluster terms).
@@ -2362,7 +2274,7 @@ pub fn two_step<R>(
                 };
                 if let Some(g) = &arc {
                     if g.hopeless() {
-                        crate::can_sandwich::prof::hit(37);
+                        crate::cascade::prof::hit(crate::cascade::prof::ARC_PAIR_SKIP);
                         continue;
                     }
                 }
@@ -2371,19 +2283,19 @@ pub fn two_step<R>(
                 } else {
                     (mult_of(t1), mult_of(t2))
                 };
-                let tp = crate::can_sandwich::prof::start();
+                let tp = crate::cascade::prof::start();
                 let beta1 = free_pair_beta(&p_poly, t1, t2, 1, 1, pp);
                 if beta1.is_some_and(|beta| {
                     arc.as_ref()
                         .is_some_and(|g| g.excludes_closure(beta, pp, t1, t2))
                 }) {
-                    crate::can_sandwich::prof::hit(37);
+                    crate::cascade::prof::hit(crate::cascade::prof::ARC_PAIR_SKIP);
                     continue;
                 }
                 let (r1, nr1) = beta1
                     .map(|beta| lift_beta_roots(beta, pp))
                     .unwrap_or(([C::default(); 8], 0));
-                crate::can_sandwich::prof::rec(18, tp);
+                crate::cascade::prof::rec(crate::cascade::prof::SW_PAIR_ROOTS, tp);
                 let (r2, nr2) = if m1c > 1 || m2c > 1 {
                     free_pair_roots(&p_poly, t1, t2, m1c, m2c, pp)
                 } else {
@@ -2412,24 +2324,24 @@ pub fn two_step<R>(
                         .as_ref()
                         .is_some_and(|g| g.hopeless() || g.rejects(m_free));
                     if arc_reject {
-                        crate::can_sandwich::prof::hit(38);
+                        crate::cascade::prof::hit(crate::cascade::prof::ARC_CAND_SKIP);
                         continue;
                     }
                     let mu = [t1, t2, m_free, pp / m_free];
-                    // THE INHERITANCE GATE (confluent three laws, s160): an
-                    // admissible mu on clustered data MUST carry each cluster
+                    // The inheritance gate (confluent three laws): an
+                    // admissible mu on clustered data must carry each cluster
                     // value with multiplicity s-1 (proven); candidates without
                     // the copies are theorem-dead and currently burn a full
                     // residue evaluation before the reality gate kills them.
                     let inh_reject = !all_simple && !inherits_clusters(&mu, &delta, &dcl);
                     if inh_reject {
-                        crate::can_sandwich::prof::hit(53);
+                        crate::cascade::prof::hit(crate::cascade::prof::INH_SKIP);
                         continue;
                     }
                     let red_reject =
                         !inh_reject && arc_r.as_ref().is_some_and(|g| g.rejects(m_free));
                     if red_reject {
-                        crate::can_sandwich::prof::hit(55);
+                        crate::cascade::prof::hit(crate::cascade::prof::RED_SKIP);
                         continue;
                     }
                     let m2f = mu[3]; // == pp/m_free; already computed above for mu
@@ -2481,7 +2393,7 @@ pub fn two_step<R>(
                             }
                             _ => false,
                         },
-                        // reduced U-side (s160 laws 2-3): clustered pairs whose
+                        // reduced U-side (laws 2-3): clustered pairs whose
                         // interval gate exists get the same ray dichotomy +
                         // det-pin magnitude with the cluster's rational term
                         (Some((g2v, _, _)), None) if *g2v != C::default() => arc_r
@@ -2490,7 +2402,7 @@ pub fn two_step<R>(
                         _ => false,
                     };
                     if uray_reject {
-                        crate::can_sandwich::prof::hit(40);
+                        crate::cascade::prof::hit(crate::cascade::prof::URAY_SKIP);
                         continue;
                     }
                     if let Some(s) = try_mu(
@@ -2511,9 +2423,6 @@ pub fn two_step<R>(
                         "pair",
                     ) {
                         if let Some(hit) = accept(s) {
-                            crate::can_sandwich::funnel::bump(
-                                crate::can_sandwich::funnel::PAIRIDX + pidx.min(7),
-                            );
                             return Some(hit);
                         }
                     }
@@ -2529,18 +2438,10 @@ fn rank_one(c: C, d: C, a: &[C; 4], w: &[C; 4]) -> Option<Solved> {
     let delta: [C; 4] = std::array::from_fn(|k| c * a[k]);
     let dcl = clusters4(&delta, CTOL);
     let v = residues_v(w, &delta, &dcl, rho, a);
-    #[cfg(feature = "diagnostics")]
-    if std::env::var_os("MU_DUMP").is_some() {
-        eprintln!("R1 v {:?}", v);
-    }
     let v = v?;
     let m = assemble(c, a, &[(v, rho)]);
     let spec = eig4(&m)?;
     let r = sdist(&spec, w);
-    #[cfg(feature = "diagnostics")]
-    if std::env::var_os("MU_DUMP").is_some() {
-        eprintln!("R1 r {:e}", r);
-    }
     (r <= 1e-9).then_some(Solved {
         m,
         frame: Some(Frame {
@@ -2579,9 +2480,9 @@ pub fn solve_oriented<R>(
                 .find(|&c| cls.cluster_len(c) == 1)
                 .map(|c| cls.cluster_rep(c))
                 .unwrap();
-            let tp = crate::can_sandwich::prof::start();
+            let tp = crate::cascade::prof::start();
             let r = rank_one(gate[tri_rep], gate[sng_rep], a, w);
-            crate::can_sandwich::prof::rec(14, tp);
+            crate::cascade::prof::rec(crate::cascade::prof::SW_RANK1, tp);
             r.and_then(accept)
         }
         [2, 2] | [1, 1, 2] => {
@@ -2600,9 +2501,9 @@ pub fn solve_oriented<R>(
                     }
                 }
                 let (c, d1, d2) = (gate[pair_rep], gate[sing[0]], gate[sing[1]]);
-                let tp = crate::can_sandwich::prof::start();
+                let tp = crate::cascade::prof::start();
                 let hit = two_step(c, d1, d2, a, w, cap, accept);
-                crate::can_sandwich::prof::rec(15, tp);
+                crate::cascade::prof::rec(crate::cascade::prof::SW_TWO_STEP, tp);
                 if let Some(s) = hit {
                     return Some(s);
                 }

@@ -6,21 +6,20 @@
 //! Diagnostic binaries live beside this library, but the realization engine is
 //! compiled and tested only once.
 
+// Index loops mirror the matrix formulas they implement, and negated float
+// comparisons are deliberate NaN guards.
+#![allow(clippy::needless_range_loop, clippy::neg_cmp_op_on_partial_ord)]
+
 mod cpoly;
 
+mod cascade;
+
 #[cfg(feature = "diagnostics")]
-pub mod can_sandwich;
-#[cfg(not(feature = "diagnostics"))]
-mod can_sandwich;
+pub use cascade::solve_charts_only;
+#[cfg(feature = "diagnostics")]
+pub use cascade::{init_tables, prof};
+#[cfg(feature = "diagnostics")]
+pub use cascade::{paired_edge_scope, solve_paired_edges, solve_paired_edges_forward};
+pub use cascade::{branch_signature, solve, Mat4, Rung, Solution};
 
-#[cfg(feature = "research-kf")]
-pub use can_sandwich::kernel_frame;
-#[cfg(feature = "research-spin")]
-pub use can_sandwich::{replay_spin_action, solve_spin_dyadic, solve_spin_spread};
-pub use can_sandwich::{
-    solve, solve_bounded_with_stratum, solve_with_stratum, Mat4, Rung, Solution,
-};
-
-// The confluent Schubert/radical constructor is an implementation detail used
-// by `can_sandwich::secular`; it is not part of the black-box API.
-mod sandwich;
+mod radical;

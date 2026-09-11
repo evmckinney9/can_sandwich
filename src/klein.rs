@@ -299,11 +299,11 @@ fn quartic_real_roots(q: &[f64; 5]) -> impl Iterator<Item = f64> {
     fixed.into_iter().take(n).chain(spill)
 }
 
-/// Is `z` in the convex hull of four planar points? The EXACT necessary gate:
+/// Is `z` in the convex hull of four planar points? The exact necessary gate:
 /// `e₁ = Σ C_m·x_m` with `x` in the simplex, so a chart admits a target only if
 /// `e₁ᵗ ∈ conv{C_m}`. Testing it here costs twelve 2×2 determinants and skips
 /// the cross products, the LU and the `e₂` split on the two thirds of charts
-/// that cannot possibly hold the target (s262 decline census).
+/// that cannot possibly hold the target.
 #[inline]
 fn in_hull(c: &[C; 4], z: C) -> bool {
     let cross = |o: C, a: C, b: C| (a.re - o.re) * (b.im - o.im) - (a.im - o.im) * (b.re - o.re);
@@ -478,33 +478,12 @@ pub fn solve(
     targets: &[[C; 4]; 2],
 ) -> Option<(Mat4, f64)> {
     let mut weights: Option<[[C; 6]; 6]> = None;
-    // FROBENIUS PRE-GATE: DERIVED, SOUND, AND TOO LOOSE TO PAY (2026-08-09).
-    // From the singular-value form sigma(cosΘ_c·P·cosΘ_g − sinΘ_c·Q·sinΘ_g) =
-    // |cos(φʷ_a/2)|: ‖G‖²_F = ‖APB‖² − 2<APB,N> + ‖N‖², with ‖APB‖² linear in
-    // the doubly stochastic P∘P (so between its permutation extremes) and N
-    // monomial on every Klein chart (so the cross term is bounded by |P|<=1).
-    // Unioning over the six permutations gives a row-level necessary test in
-    // ~40 flops needing no chart<->pattern map. It is CORRECT -- coverage stayed
-    // 100.0000% with rung counts bit-identical on both corpora -- but the union
-    // plus the |P|<=1 slack makes it so loose it rejects essentially nothing:
-    // interleaved A/B, 5 reps, min statistic, haar 5.79 vs 5.79 (neutral),
-    // linspace 4.39 -> 4.43 (+0.9%, pure overhead). Removed.
-    // TIGHTENING ATTEMPTED AND IT IS WRONG AS WRITTEN (2026-08-09). Using
-    // sigma(a) = pi[0]^pi[a] makes the test FIRE but it rejects charts that DO
-    // solve (haar Klein 213204 -> 212678, 526 rows pushed to Interior; coverage
-    // survives only by fall-through). A necessary condition may never do that.
-    // THE DIAGNOSIS, corrected: it is NOT sigma-vs-sigma^-1 -- both the ||N||^2
-    // and cross-term sums are symmetric in a, so those two give an IDENTICAL
-    // bound. The real error is which SO(3) is frozen. For O = L_q F the compound
-    // splits as Lambda^2 O = rho(q) rho_+(F)  (+)  rho_-(F), so the FREE factor
-    // is P = rho(q) rho_+(F) and the FROZEN one is Q = rho_-(F): the monomial
-    // pattern of N = sin(Theta_c) Q sin(Theta_g) is that of the ANTI-SELF-DUAL
-    // image of the frozen signed permutation, which the naive XOR map is not.
-    // Fix: compute rho_-(F) once per chart rep (6 of them, compile-time), take
-    // its support, and VERIFY the bound against ||G||_F^2 evaluated directly at
-    // a known solution before re-measuring. The further exact tightening is to
-    // replace |P|<=1 in the cross term with the diagonal-of-a-rotation
-    // tetrahedron (4 vertices, not 8 sign patterns), which needs N's signs.
+    // A Frobenius-norm pre-gate (from the singular-value form of the compound)
+    // is sound but too loose to pay: unioned over the six permutations it
+    // rejects essentially nothing. Tightening it by freezing the wrong SO(3)
+    // factor rejects charts that do solve; the free factor is
+    // P = rho(q) rho_+(F) and the frozen one is Q = rho_-(F), whose monomial
+    // pattern is the anti-self-dual image of the signed permutation. Not used.
     // Chart outer, branch inner: the constants C_m, the null direction, the LU of
     // the linear system, and the e₂ split are all properties of the CHART. Only
     // the right-hand side and e₂ᵗ change with the target branch.

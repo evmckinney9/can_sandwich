@@ -329,104 +329,6 @@ fn solve_double_pair22<R>(
     )
 }
 
-fn near_pair_groups(values: &[C; 4]) -> Option<([usize; 2], [usize; 2])> {
-    const PARTITIONS: [([usize; 2], [usize; 2]); 3] =
-        [([0, 1], [2, 3]), ([0, 2], [1, 3]), ([0, 3], [1, 2])];
-    PARTITIONS
-        .into_iter()
-        .map(|groups| {
-            let gap = (values[groups.0[0]] - values[groups.0[1]])
-                .norm()
-                .max((values[groups.1[0]] - values[groups.1[1]]).norm());
-            (gap, groups)
-        })
-        .filter(|(gap, _)| *gap <= 2e-5)
-        .min_by(|left, right| left.0.total_cmp(&right.0))
-        .map(|(_, groups)| groups)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn solve_near_double_with<R>(
-    prefix: &[C; 4],
-    gate: &[C; 4],
-    target_specs: &[[C; 4]; 2],
-    dc: &Mat4,
-    lam: &Mat4,
-    targets: &[[C; 4]; 2],
-    mut finalize: impl FnMut(Mat4, f64) -> Option<R>,
-) -> Option<R> {
-    let (prefix_first, prefix_second) = near_pair_groups(prefix)?;
-    let (gate_first, gate_second) = near_pair_groups(gate)?;
-    let mut accept = |mut o: Mat4, branch: usize| {
-        let metrics = frame_metrics(&o)?;
-        if !metrics.within(2e-10) {
-            return None;
-        }
-        if metrics.determinant < 0.0 {
-            for row in 0..4 {
-                o[(row, 0)] = -o[(row, 0)];
-            }
-        }
-        let residual = compound_residual(dc, lam, &o, &targets[branch]);
-        (residual <= 1e-8).then(|| finalize(o, residual)).flatten()
-    };
-    solve_two_block(
-        prefix,
-        gate,
-        target_specs,
-        prefix_first,
-        prefix_second,
-        gate_first,
-        gate_second,
-        &mut accept,
-    )
-}
-
-/// Enumerate every two-by-two block decomposition of two arbitrary spectra.
-/// This is the complete finite two-Givens support chart: three row partitions,
-/// three column partitions, and the finite target pairings handled by
-/// `solve_two_block`.  No multiplicity assumption is used.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn solve_block22_with<R>(
-    prefix: &[C; 4],
-    gate: &[C; 4],
-    target_specs: &[[C; 4]; 2],
-    dc: &Mat4,
-    lam: &Mat4,
-    targets: &[[C; 4]; 2],
-    mut finalize: impl FnMut(Mat4, f64) -> Option<R>,
-) -> Option<R> {
-    const PARTITIONS: [[[usize; 2]; 2]; 3] = [[[0, 1], [2, 3]], [[0, 2], [1, 3]], [[0, 3], [1, 2]]];
-    let mut accept = |o: Mat4, branch: usize| {
-        if !frame_metrics(&o).is_some_and(|metrics| metrics.within(2e-10)) {
-            return None;
-        }
-        let residual = compound_residual(dc, lam, &o, &targets[branch]);
-        finalize(o, residual)
-    };
-    for row_partition in PARTITIONS {
-        let row_first = [row_partition[0][0], row_partition[1][0]];
-        let row_second = [row_partition[0][1], row_partition[1][1]];
-        for column_partition in PARTITIONS {
-            let column_first = [column_partition[0][0], column_partition[1][0]];
-            let column_second = [column_partition[0][1], column_partition[1][1]];
-            if let Some(hit) = solve_two_block(
-                prefix,
-                gate,
-                target_specs,
-                row_first,
-                row_second,
-                column_first,
-                column_second,
-                &mut accept,
-            ) {
-                return Some(hit);
-            }
-        }
-    }
-    None
-}
-
 #[allow(clippy::too_many_arguments)]
 fn solve_two_block<R>(
     prefix: &[C; 4],
@@ -565,6 +467,156 @@ fn pair22_groups(values: &[C; 4]) -> Option<(C, C, [usize; 2], [usize; 2])> {
     }
     let other = values[second[0]];
     ((other - anchor).norm() > 1e-14).then_some((anchor, other, first, second))
+}
+
+/// Representation gap of a nonscalar paired input recognized by this module.
+#[cfg(feature = "diagnostics")]
+pub(super) fn paired_gap(values: &[C; 4]) -> Option<f64> {
+    let (_, _, first, second) = pair22_groups(values)?;
+    Some(
+        (values[first[0]] - values[first[1]])
+            .norm()
+            .max((values[second[0]] - values[second[1]]).norm()),
+    )
+}
+
+/// R0266's two paired roles, restricted to the existing rank-four wall
+/// implementation. Unsupported affine ranks decline; no dense selector runs.
+#[cfg(feature = "diagnostics")]
+pub(super) fn solve_paired_edges_with<R>(
+    problem: &super::PreparedSandwich,
+    backward: bool,
+    mut finalize: impl FnMut(Mat4, f64) -> Option<R>,
+) -> Option<R> {
+    let left_paired = paired_gap(&problem.left).is_some();
+    let right_paired = paired_gap(&problem.right).is_some();
+    if !left_paired && !right_paired {
+        return None;
+    }
+    // These coordinate-support frames have Pluecker zeros directly, including
+    // scalar/3+1 other factors where the affine rank-four solver declines.
+    // Keep the same support leaves in the forward-only ablation.
+    if let Some(hit) = solve_paired_support_with(problem, &mut finalize) {
+        return Some(hit);
+    }
+    // The existing two-pair CS support formula is finite and quadratic.
+    // Disable target-paired roles to keep this an input-paired diagnostic.
+    if let Some(hit) = solve_with(
+        &problem.left,
+        &problem.right,
+        &problem.target_roots,
+        &problem.dc,
+        &problem.lam,
+        &problem.targets,
+        right_paired,
+        left_paired,
+        [false; 2],
+        true,
+        false,
+        &mut finalize,
+    ) {
+        return Some(hit);
+    }
+    if !backward {
+        return None;
+    }
+    solve_paired_backward_with(problem, finalize)
+}
+
+#[cfg(feature = "diagnostics")]
+fn solve_paired_support_with<R>(
+    problem: &super::PreparedSandwich,
+    finalize: &mut impl FnMut(Mat4, f64) -> Option<R>,
+) -> Option<R> {
+    let support = super::support_strata::edge_gate(&problem.routed, &problem.target_roots);
+    if let Some(viable) = support.edge.as_ref() {
+        for permutation in *super::PERMS24 {
+            // A direct root gate remains stable for scalar/repeated spectra.
+            for (branch, roots) in problem.target_roots.iter().enumerate() {
+                if (0..4).any(|i| support.exact[i][permutation[i]] & (1 << branch) == 0) {
+                    continue;
+                }
+                let routed = std::array::from_fn::<_, 4, _>(|i| problem.routed[i][permutation[i]]);
+                let error = super::PERMS24
+                    .iter()
+                    .map(|matching| {
+                        (0..4)
+                            .map(|i| (routed[i] - roots[matching[i]]).norm())
+                            .fold(0.0f64, f64::max)
+                    })
+                    .fold(f64::INFINITY, f64::min);
+                if error < 1e-8 {
+                    let o = super::signed_perm(permutation);
+                    let residual =
+                        compound_residual(&problem.dc, &problem.lam, &o, &problem.targets[branch]);
+                    if let Some(hit) = finalize(o, residual) {
+                        return Some(hit);
+                    }
+                }
+            }
+            // A failed public certificate must allow the next permutation.
+            if let Some((o, residual)) = super::support_strata::solve_edge(
+                &problem.left,
+                &problem.right,
+                &problem.dc,
+                &problem.lam,
+                &problem.targets,
+                &problem.routed,
+                viable,
+                &[permutation],
+            ) {
+                if let Some(hit) = finalize(o, residual) {
+                    return Some(hit);
+                }
+            }
+        }
+    }
+    if let Some((o, residual)) = super::support_strata::solve_face(
+        &problem.left,
+        &problem.right,
+        &problem.dc,
+        &problem.lam,
+        &problem.target_roots,
+        &problem.targets,
+    ) {
+        return finalize(o, residual);
+    }
+    None
+}
+
+#[cfg(feature = "diagnostics")]
+fn solve_paired_backward_with<R>(
+    problem: &super::PreparedSandwich,
+    mut finalize: impl FnMut(Mat4, f64) -> Option<R>,
+) -> Option<R> {
+    for (paired, other, transpose) in [
+        (&problem.left, &problem.right, false),
+        (&problem.right, &problem.left, true),
+    ] {
+        if paired_gap(paired).is_none() {
+            continue;
+        }
+        let inverse_paired = paired.map(|value| value.conj());
+        let other_diagonal = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(other));
+        for (branch, target) in problem.target_roots.iter().enumerate() {
+            let mut accept = |v: Mat4| {
+                // solve_oriented places the paired factor on the right.
+                // Transpose its frame to obtain R in (A^-1,T;B), then
+                // recover S with A^-1/2 R T R^T A^-1/2 = S B S^T.
+                let e = oriented_matrix(&inverse_paired, target, &v.transpose());
+                let s = super::recover_frame(&e, &other_diagonal);
+                let o = if transpose { s.transpose() } else { s };
+                certify(o, &problem.dc, &problem.lam, &problem.targets[branch])
+                    .and_then(|(o, residual)| finalize(o, residual))
+            };
+            if let Some(hit) =
+                solve_oriented(&inverse_paired, target, other, true, false, &mut accept)
+            {
+                return Some(hit);
+            }
+        }
+    }
+    None
 }
 
 /// Solve with `repeated` in the gate position and `other=D^2` in the prefix
@@ -772,13 +824,11 @@ fn solve_oriented<R>(
 fn polynomial_from_roots(roots: &[CDd; 4]) -> [CDd; 5] {
     let mut result = [CDd::default(); 5];
     result[0] = CDd::from(C::new(1.0, 0.0));
-    let mut degree = 0usize;
-    for &root in roots {
+    for (degree, &root) in roots.iter().enumerate() {
         for k in (0..=degree).rev() {
             result[k + 1] = result[k + 1].add(result[k]);
             result[k] = result[k].mul(CDd::default().sub(root));
         }
-        degree += 1;
     }
     result
 }
@@ -1458,61 +1508,6 @@ fn plucker_frame(
     Some(Mat4::from_fn(|row, column| c(columns[column][row], 0.0)))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn chart_free_lift_handles_the_p12_coordinate_plane() {
-        // The former row-0 Pluecker chart rejected this exact plane.
-        let mut x = [0.0; 6];
-        x[3] = 1.0; // p_12^2 = 1
-        let frame = plucker_frame(x, [0, 1], [2, 3]).expect("coordinate plane");
-        let real = frame.map(|value| value.re);
-        let gram = real.transpose() * real;
-        let residual = (gram - nalgebra::Matrix4::identity())
-            .iter()
-            .fold(0.0f64, |maximum, value| maximum.max(value.abs()));
-        assert!(residual < 1e-13);
-        assert!((real.determinant().abs() - 1.0).abs() < 1e-13);
-
-        let image = [2usize, 3usize];
-        let recovered: [f64; 6] = std::array::from_fn(|edge| {
-            let (i, j) = PAIRS[edge];
-            let minor = real[(i, image[0])] * real[(j, image[1])]
-                - real[(j, image[0])] * real[(i, image[1])];
-            minor * minor
-        });
-        for edge in 0..6 {
-            assert!((recovered[edge] - x[edge]).abs() < 1e-13);
-        }
-    }
-
-    #[test]
-    fn planted_pair22_target_is_recovered_by_the_plane_heron_solver() {
-        let phase = |angle: f64| C::from_polar(1.0, angle);
-        let other = [phase(0.17), phase(0.61), phase(-0.43), phase(-0.35)];
-        let repeated = [phase(0.29), phase(0.29), phase(-0.29), phase(-0.29)];
-        let planted = super::super::givens(0, 1, 0.31)
-            * super::super::givens(1, 3, -0.47)
-            * super::super::givens(0, 2, 0.22);
-        let d = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(
-            &other.map(|value| value.sqrt()),
-        ));
-        let lambda = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(&repeated));
-        let target_matrix = d * planted * lambda * planted.transpose() * d;
-        let target = super::super::eig4(&target_matrix);
-        let target_esym = super::super::esym4(target);
-        let mut accept = |o: Mat4| {
-            let residual = compound_residual(&d, &lambda, &o, &target_esym);
-            (residual < 1e-9).then_some(residual)
-        };
-        let residual = solve_oriented(&repeated, &other, &target, true, true, &mut accept)
-            .expect("regular Pair22 witness");
-        assert!(residual < 1e-9);
-    }
-}
-
 // Shared quartic-discriminant machinery, inherited from the retired
 // 1+3 dense selector (this module is its sole remaining consumer).
 type Poly = Vec<f64>;
@@ -1590,4 +1585,151 @@ fn quartic_discriminant_poly(f: &[Poly; 5]) -> Option<Poly> {
         out.pop();
     }
     (scale > 0.0 && scale.is_finite() && out.len() <= 13).then_some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(feature = "diagnostics")]
+    #[test]
+    fn paired_diagnostic_scope_and_support_are_explicit() {
+        use super::super::{paired_edge_scope, solve_paired_edges, Rung};
+        let paired = [0.125, 0.125, -0.125];
+        let generic = [0.19, 0.07, -0.03];
+        assert!(paired_edge_scope(paired, generic, generic).unwrap() < 1e-14);
+        assert!(paired_edge_scope(generic, generic, generic).is_none());
+        assert!(paired_edge_scope([0.0; 3], [0.0; 3], [0.0; 3]).is_none());
+        assert_eq!(
+            solve_paired_edges(generic, generic, generic).rung,
+            Rung::Unsolved
+        );
+        let solution = solve_paired_edges(paired, paired, [0.25, 0.25, -0.25]);
+        assert_eq!(solution.rung, Rung::Pair22);
+        assert!(solution.residual < 1e-8);
+        for (left, right) in [(paired, [0.0; 3]), ([0.0; 3], paired)] {
+            let solution = solve_paired_edges(left, right, paired);
+            assert_eq!(solution.rung, Rung::Pair22);
+            assert!(solution.residual < 1e-12);
+        }
+    }
+
+    #[cfg(feature = "diagnostics")]
+    #[test]
+    fn paired_support_recovers_boundary_corpus_rows() {
+        use super::super::{solve_paired_edges, Rung};
+        let cases = [
+            (
+                [0.5, 0.0, 0.0],
+                [
+                    0.33556062825582006,
+                    0.16437603912132998,
+                    0.16437603911132997,
+                ],
+                [0.1643760391213343, 0.16437603911133436, -0.164312706488488],
+            ),
+            (
+                [0.2060568634486984, 0.19094682530673945, 0.19094682530673945],
+                [0.5, 0.0, 0.0],
+                [
+                    0.19094682530673945,
+                    0.19094682530673945,
+                    -0.08795051406217724,
+                ],
+            ),
+        ];
+        for (left, right, target) in cases {
+            let solution = solve_paired_edges(left, right, target);
+            assert_ne!(solution.rung, Rung::Unsolved);
+            assert!(solution.residual < 1e-8);
+        }
+    }
+
+    #[cfg(feature = "diagnostics")]
+    #[test]
+    fn backward_paired_transport_certifies_both_original_orientations() {
+        use super::super::{compiler_solution, eig4, esym4, givens, PreparedSandwich, Rung};
+        for swapped in [false, true] {
+            let paired = [0.125, 0.125, -0.125];
+            let generic = [0.19, 0.07, -0.03];
+            let (left, right) = if swapped {
+                (generic, paired)
+            } else {
+                (paired, generic)
+            };
+            let mut problem = PreparedSandwich::new(left, right, [0.0; 3]);
+            let planted = givens(0, 1, 0.31) * givens(1, 3, -0.47) * givens(0, 2, 0.22);
+            let master = problem.dc * planted * problem.lam * planted.transpose() * problem.dc;
+            let roots = eig4(&master);
+            problem.target_roots = [roots, roots.map(|value| -value)];
+            problem.targets = problem.target_roots.map(esym4);
+            let solution = solve_paired_backward_with(&problem, |o, residual| {
+                compiler_solution(&problem, o, Rung::Pair22, residual)
+            })
+            .expect("backward wall and original-frame certificate");
+            assert!(solution.residual < 1e-8);
+            let actual = eig4(
+                &(problem.dc * solution.o * problem.lam * solution.o.transpose() * problem.dc),
+            );
+            let error = super::super::PERMS24
+                .iter()
+                .map(|permutation| {
+                    (0..4)
+                        .map(|i| (actual[i] - roots[permutation[i]]).norm())
+                        .fold(0.0f64, f64::max)
+                })
+                .fold(f64::INFINITY, f64::min);
+            assert!(error < 1e-8, "swapped={swapped}, root error={error:e}");
+        }
+    }
+
+    #[test]
+    fn chart_free_lift_handles_the_p12_coordinate_plane() {
+        // The former row-0 Pluecker chart rejected this exact plane.
+        let mut x = [0.0; 6];
+        x[3] = 1.0; // p_12^2 = 1
+        let frame = plucker_frame(x, [0, 1], [2, 3]).expect("coordinate plane");
+        let real = frame.map(|value| value.re);
+        let gram = real.transpose() * real;
+        let residual = (gram - nalgebra::Matrix4::identity())
+            .iter()
+            .fold(0.0f64, |maximum, value| maximum.max(value.abs()));
+        assert!(residual < 1e-13);
+        assert!((real.determinant().abs() - 1.0).abs() < 1e-13);
+
+        let image = [2usize, 3usize];
+        let recovered: [f64; 6] = std::array::from_fn(|edge| {
+            let (i, j) = PAIRS[edge];
+            let minor = real[(i, image[0])] * real[(j, image[1])]
+                - real[(j, image[0])] * real[(i, image[1])];
+            minor * minor
+        });
+        for edge in 0..6 {
+            assert!((recovered[edge] - x[edge]).abs() < 1e-13);
+        }
+    }
+
+    #[test]
+    fn planted_pair22_target_is_recovered_by_the_plane_heron_solver() {
+        let phase = |angle: f64| C::from_polar(1.0, angle);
+        let other = [phase(0.17), phase(0.61), phase(-0.43), phase(-0.35)];
+        let repeated = [phase(0.29), phase(0.29), phase(-0.29), phase(-0.29)];
+        let planted = super::super::givens(0, 1, 0.31)
+            * super::super::givens(1, 3, -0.47)
+            * super::super::givens(0, 2, 0.22);
+        let d = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(
+            &other.map(|value| value.sqrt()),
+        ));
+        let lambda = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(&repeated));
+        let target_matrix = d * planted * lambda * planted.transpose() * d;
+        let target = super::super::eig4(&target_matrix);
+        let target_esym = super::super::esym4(target);
+        let mut accept = |o: Mat4| {
+            let residual = compound_residual(&d, &lambda, &o, &target_esym);
+            (residual < 1e-9).then_some(residual)
+        };
+        let residual = solve_oriented(&repeated, &other, &target, true, true, &mut accept)
+            .expect("regular Pair22 witness");
+        assert!(residual < 1e-9);
+    }
 }

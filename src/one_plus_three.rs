@@ -322,6 +322,7 @@ fn eval_poly(coefficients: &[f64], value: f64) -> f64 {
 /// 3x3 Birkhoff polytope to two affine coordinates; orthostochasticity is one
 /// Heron plane quartic. The nine Birkhoff faces were exhausted immediately
 /// above, so every remaining compact component has a coordinate extremum.
+#[allow(clippy::too_many_arguments)]
 fn dense_rank_three_frame<R>(
     a: &[C; 3],
     b: &[C; 3],
@@ -432,17 +433,7 @@ fn dense_rank_three_frame<R>(
         .filter(|root| root.im.abs() < 2e-5 && (-1e-7..=1.0 + 1e-7).contains(&root.re))
         .map(|root| root.re.clamp(0.0, 1.0))
         .collect();
-    let seeds: Vec<(f64, f64)> = approximate.iter().map(|root| (root.re, root.im)).collect();
-    let mut critical =
-        if let Some(certified) = super::arb_roots::real_roots_power_seeded(&selector, &seeds) {
-            certified
-                .into_iter()
-                .filter(|root| (-1e-7..=1.0 + 1e-7).contains(root))
-                .map(|root| root.clamp(0.0, 1.0))
-                .collect()
-        } else {
-            approximate_real
-        };
+    let mut critical = approximate_real;
     critical.sort_by(f64::total_cmp);
     critical.dedup_by(|left, right| (*left - *right).abs() < 1e-9);
     let mut cover = Vec::with_capacity(2 * critical.len() + 1);
@@ -471,21 +462,7 @@ fn dense_rank_three_frame<R>(
             .filter(|root| root.im.abs() <= 2e-5 && (-1e-7..=1.0 + 1e-7).contains(&root.re))
             .map(|root| root.re.clamp(0.0, 1.0))
             .collect();
-        let seeds_v: Vec<(f64, f64)> = approximate_v
-            .iter()
-            .map(|root| (root.re, root.im))
-            .collect();
-        let mut roots_v = if let Some(certified_v) =
-            super::arb_roots::real_roots_power_seeded(&quartic, &seeds_v)
-        {
-            certified_v
-                .into_iter()
-                .filter(|root| (-1e-7..=1.0 + 1e-7).contains(root))
-                .map(|root| root.clamp(0.0, 1.0))
-                .collect()
-        } else {
-            approximate_real_v
-        };
+        let mut roots_v = approximate_real_v;
         // If F(u,v) is identically zero, this is a vertical component of the
         // plane quartic.  Its Birkhoff slice is an interval, so its midpoint
         // is an exact algebraic section.  Floating evaluation only proposes
@@ -510,8 +487,7 @@ fn dense_rank_three_frame<R>(
             }
             let row0 = [values[0], values[1], values[2]];
             let row1 = [values[3], values[4], values[5]];
-            let Some((first, second)) = super::axis_quartic::heron_kernel_columns(row0, row1)
-            else {
+            let Some((first, second)) = heron_kernel_columns(row0, row1) else {
                 continue;
             };
             let third = [
@@ -744,4 +720,67 @@ fn quadratic_unit_roots(q: [f64; 3]) -> Vec<f64> {
         roots.pop();
     }
     roots
+}
+
+/// Recover the two signed orthonormal core columns from their squared entries.
+///
+/// Put `x_i=alpha_i*beta_i`.  On the Heron locus, choosing one nonzero pivot
+/// and its positive square root determines the other two signed products by
+/// the rank-one kernel of
+///
+/// `[[2*x_i, x_i+x_j-x_k], [x_i+x_j-x_k, 2*x_j]]`.
+///
+/// Thus no relative-sign enumeration or Gram--Schmidt projection is needed.
+/// The final two norm scalings only remove floating evaluation error; they are
+/// identities on the exact locus.
+fn heron_kernel_columns(alpha_raw: [f64; 3], beta_raw: [f64; 3]) -> Option<([f64; 3], [f64; 3])> {
+    let alpha = alpha_raw.map(|value| value.max(0.0));
+    let beta = beta_raw.map(|value| value.max(0.0));
+    let x: [f64; 3] = std::array::from_fn(|k| alpha[k] * beta[k]);
+    let pivot = (0..3).max_by(|&i, &j| x[i].total_cmp(&x[j])).unwrap_or(0);
+    let mut q = [0.0; 3];
+    if x[pivot] > 0.0 {
+        let j = (pivot + 1) % 3;
+        let k = (pivot + 2) % 3;
+        q[pivot] = x[pivot].sqrt();
+        q[j] = -(x[pivot] + x[j] - x[k]) / (2.0 * q[pivot]);
+        // Enforce the exact kernel sum in floating arithmetic.  The Heron
+        // identity then gives q[k]^2=x[k].
+        q[k] = -q[pivot] - q[j];
+    }
+
+    let mut a = [0.0; 3];
+    let mut b = [0.0; 3];
+    for k in 0..3 {
+        // Root the larger squared coordinate and recover the smaller by one
+        // division.  This is the stable four-square-root realization of the
+        // signed products q[k].
+        if alpha[k] >= beta[k] {
+            a[k] = alpha[k].sqrt();
+            if a[k] > 0.0 {
+                b[k] = q[k] / a[k];
+            } else if q[k] != 0.0 {
+                return None;
+            }
+        } else {
+            b[k] = beta[k].sqrt();
+            if b[k] > 0.0 {
+                a[k] = q[k] / b[k];
+            } else if q[k] != 0.0 {
+                return None;
+            }
+        }
+    }
+
+    let an = a.iter().map(|value| value * value).sum::<f64>().sqrt();
+    let bn = b.iter().map(|value| value * value).sum::<f64>().sqrt();
+    if !an.is_finite() || !bn.is_finite() || an < 1e-12 || bn < 1e-12 {
+        return None;
+    }
+    for k in 0..3 {
+        a[k] /= an;
+        b[k] /= bn;
+    }
+    let dot = (0..3).map(|k| a[k] * b[k]).sum::<f64>();
+    (dot.abs() <= 2e-10).then_some((a, b))
 }

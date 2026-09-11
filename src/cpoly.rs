@@ -1,6 +1,6 @@
 //! Complex univariate polynomial helpers for the identity-construction rungs.
-//! Convention: coefficients HIGHEST-DEGREE FIRST (matches np.poly / the
-//! prototypes s86-s96). Small fixed degrees (<= 16); no allocation cleverness.
+//! Convention: coefficients highest degree first (as `np.poly`). Small fixed
+//! degrees (<= 16).
 use nalgebra::Complex;
 
 pub type C = Complex<f64>;
@@ -36,8 +36,5 @@ pub fn roots(co: &[C]) -> Vec<C> {
             C::default()
         }
     });
-    match comp.eigenvalues() {
-        Ok(ev) => ev,
-        Err(_) => vec![],
-    }
+    comp.eigenvalues().unwrap_or_default()
 }
