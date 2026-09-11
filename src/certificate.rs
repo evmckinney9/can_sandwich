@@ -2,6 +2,78 @@
 //! target roots, and the sandwich master it is evaluated on.
 use super::*;
 
+/// Cheap frame contract shared by every public certificate path.
+pub(super) fn framed_solution(o: Mat4, rung: Rung, residual: f64) -> Option<Solution> {
+    if !residual.is_finite() {
+        return None;
+    }
+    let metrics = frame_metrics(&o)?;
+    if !metrics.within(FRAME_ACCEPT) {
+        return None;
+    }
+    Some(Solution {
+        o: orient_so4(o),
+        rung,
+        residual,
+    })
+}
+
+/// Shared pre-certificate for algebraic candidate frames.
+///
+/// Individual realization routes may use different equations to generate a
+/// frame, but they all need the same final local operation: reject non-real or
+/// non-orthogonal frames, normalize orientation, and evaluate the forward
+/// spectral residual.  Keeping that operation here prevents each route from
+/// quietly growing its own tolerance or orientation convention.
+pub(super) fn certify_frame_candidate(
+    frame: Mat4,
+    dc: &Mat4,
+    lam: &Mat4,
+    target: &[C; 4],
+) -> Option<(Mat4, f64)> {
+    certify_frame_candidate_with_limit(frame, dc, lam, target, ACCEPT)
+}
+
+/// Candidate pre-certificate with an explicit proxy limit.  A few bounded
+/// algebraic routes intentionally use a looser construction threshold and
+/// defer the final decision to their caller's stronger certificate.
+pub(super) fn certify_frame_candidate_with_limit(
+    mut frame: Mat4,
+    dc: &Mat4,
+    lam: &Mat4,
+    target: &[C; 4],
+    limit: f64,
+) -> Option<(Mat4, f64)> {
+    let metrics = frame_metrics(&frame)?;
+    if !metrics.within(2e-10) {
+        return None;
+    }
+    frame = orient_so4(frame);
+    let residual = compound_residual(dc, lam, &frame, target);
+    (residual <= limit).then_some((frame, residual))
+}
+
+/// The same pre-certificate for a finite set of target lifts.  The minimum is
+/// taken only after the frame contract passes; callers must not use a target
+/// coefficient proxy as a substitute for this forward check.
+pub(super) fn certify_frame_against_targets(
+    frame: Mat4,
+    dc: &Mat4,
+    lam: &Mat4,
+    targets: &[[C; 4]],
+) -> Option<(Mat4, f64)> {
+    let metrics = frame_metrics(&frame)?;
+    if !metrics.within(2e-10) {
+        return None;
+    }
+    let frame = orient_so4(frame);
+    let residual = targets
+        .iter()
+        .map(|target| compound_residual(dc, lam, &frame, target))
+        .fold(f64::INFINITY, f64::min);
+    (residual <= ACCEPT).then_some((frame, residual))
+}
+
 /// Rootwise certificate for the public compiler boundary. Symmetric-function
 /// residuals are the stable algebraic test used inside the solver, but their
 /// inverse map is ill-conditioned at repeated spectra: an `O(1e-9)` coefficient

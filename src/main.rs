@@ -167,10 +167,17 @@ fn census_npy(path: &str, stride: usize) -> bool {
         entry.0 += 1;
         entry.1 += elapsed;
         if std::env::var_os("CENSUS_LATE_ROWS").is_some() && sol.rung == Rung::Chart {
-            println!("LATE row={row_index} mean_us={:.2} {sig}", elapsed as f64 / 1e3);
+            println!(
+                "LATE row={row_index} mean_us={:.2} {sig}",
+                elapsed as f64 / 1e3
+            );
         }
     }
-    println!("dataset {path} rows {} stride {stride} sampled {} solved {solved}", triples.len(), triples.len().div_ceil(stride));
+    println!(
+        "dataset {path} rows {} stride {stride} sampled {} solved {solved}",
+        triples.len(),
+        triples.len().div_ceil(stride)
+    );
     println!("SIGNATURE_TOTALS");
     for (sig, n) in &signature_totals {
         println!("{n}\t{sig}");
@@ -178,15 +185,25 @@ fn census_npy(path: &str, stride: usize) -> bool {
     println!("SIGNATURE_X_RUNG");
     println!("columns: count<TAB>mean_us<TAB>tier<TAB>rung<TAB>signature");
     for ((sig, rung), (n, ns)) in &bins {
-        println!("{n}\t{:.2}\t{}\t{rung:?}\t{sig}", *ns as f64 / *n as f64 / 1e3, rung_tier(*rung));
+        println!(
+            "{n}\t{:.2}\t{}\t{rung:?}\t{sig}",
+            *ns as f64 / *n as f64 / 1e3,
+            rung_tier(*rung)
+        );
     }
     solved == triples.len().div_ceil(stride)
 }
 
 fn rung_tier(rung: Rung) -> &'static str {
     match rung {
-        Rung::Vertex | Rung::Edge | Rung::Face | Rung::OnePlusThree |
-        Rung::RankOne31 | Rung::Pair22 | Rung::Chart | Rung::Radical => "exact-certified-finite",
+        Rung::Vertex
+        | Rung::Edge
+        | Rung::Face
+        | Rung::OnePlusThree
+        | Rung::RankOne31
+        | Rung::Pair22
+        | Rung::Chart
+        | Rung::Radical => "exact-certified-finite",
         Rung::NearRankOne31 => "certified-near-candidate",
         // These are non-iterative and certificate-gated, but their dispatch
         // schedules are incomplete rather than universal closed-form leaves.

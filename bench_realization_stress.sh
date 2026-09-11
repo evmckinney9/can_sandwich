@@ -29,7 +29,7 @@ status=0
 for seed in "$@"; do
   corpus="$tmp/feasible_stratified_seed_${seed}.npy"
   echo "== structured realization stress seed $seed =="
-  if ! "$PYTHON" "$ROOT/scripts/generate_realization_edge_corpus.py" \
+  if ! "$PYTHON" "$ROOT/dev/research/scripts/generate_realization_edge_corpus.py" \
     --seed "$seed" --output "$corpus"; then
     status=1
     continue
@@ -38,7 +38,7 @@ for seed in "$@"; do
     status=1
   fi
   if ! "$PYTHON" \
-    "$ROOT/scripts/validate_realization_pipeline_corpus.py" \
+    "$ROOT/dev/research/scripts/validate_realization_pipeline_corpus.py" \
     "${corpus%.npy}.pipeline.npz" --max-case-seconds 0.5; then
     status=1
   fi

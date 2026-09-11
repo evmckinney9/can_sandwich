@@ -7,8 +7,8 @@
 //! after those cheaper strata and the Klein section have declined.
 
 use super::{
-    compound_residual, frame_metrics, givens, recover_frame, signed_perm, Mat4, SpectrumKind,
-    StratumSignature, ACCEPT, C, PLANES,
+    compound_residual, givens, recover_frame, signed_perm, Mat4, SpectrumKind, StratumSignature,
+    ACCEPT, C, PLANES,
 };
 
 pub(crate) const PAIR6: [(usize, usize); 6] = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];
@@ -271,15 +271,7 @@ fn solve_radical_orientation(
             } else {
                 recovered
             };
-            let metrics = frame_metrics(&o)?;
-            if !metrics.within(2e-10) {
-                return None;
-            }
-            let residual = targets
-                .iter()
-                .map(|target| compound_residual(dc, lam, &o, target))
-                .fold(f64::INFINITY, f64::min);
-            (residual <= ACCEPT).then_some((o, residual))
+            super::certify_frame_against_targets(o, dc, lam, targets)
         }
     };
     let started = super::prof::start();
@@ -566,15 +558,7 @@ fn matrix_to_o(
     let spectrum = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(eigenvalues));
     let frame = recover_frame(&symmetric, &spectrum);
     let o = if transpose { frame.transpose() } else { frame };
-    let metrics = frame_metrics(&o)?;
-    if !metrics.within(2e-10) {
-        return None;
-    }
-    let residual = targets
-        .iter()
-        .map(|target| compound_residual(dc, lam, &o, target))
-        .fold(f64::INFINITY, f64::min);
-    (residual <= ACCEPT).then_some((o, residual))
+    super::certify_frame_against_targets(o, dc, lam, targets)
 }
 
 /// Rebuild the production frame from radical-stratum ingredients. Each peel
@@ -677,12 +661,8 @@ fn frame_to_o(
                 } else {
                     Mat4::from_fn(|i, j| C::new(cols[j][i], 0.0))
                 };
-                let r = targets
-                    .iter()
-                    .map(|t| compound_residual(dc, lam, &o, t))
-                    .fold(f64::INFINITY, f64::min);
-                if r <= ACCEPT {
-                    return Some((o, r));
+                if let Some(hit) = super::certify_frame_against_targets(o, dc, lam, targets) {
+                    return Some(hit);
                 }
             }
         }

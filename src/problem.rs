@@ -121,7 +121,6 @@ impl StratumSignature {
             || self.g.is_repeated()
             || self.target.iter().any(|kind| kind.is_repeated())
     }
-
 }
 
 /// Detect exact routed-product collisions without collapsing near collisions
@@ -265,7 +264,7 @@ pub(super) fn orient_so4(mut frame: Mat4) -> Mat4 {
 
 #[cfg(test)]
 mod tests {
-    use super::{routed_product_collision, spectrum_proximity, C, SpectrumProximity};
+    use super::{routed_product_collision, spectrum_proximity, SpectrumProximity, C};
 
     #[test]
     fn detects_collision_with_simple_inputs() {

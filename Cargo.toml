@@ -16,7 +16,7 @@ default = []
 diagnostics = []
 
 [dependencies]
-nalgebra = "0.33"
+nalgebra = "0.35"
 # Companion-matrix eigenvalues for the polynomial root primitives.
 faer = { version = "0.24", default-features = false, features = ["std"] }
 dyn-stack = "0.13"

@@ -23,7 +23,7 @@
 //! Confluence is detected with the same `sqrt(machine-epsilon)` separation as
 //! the dispatch spine: algebraically coincident inputs, never near-degeneracy.
 
-use super::{compound_residual, frame_metrics, poly_roots, Mat4, ACCEPT, C};
+use super::{poly_roots, Mat4, ACCEPT, C};
 use nalgebra::{DMatrix, DVector};
 
 const COINCIDE: f64 = 1.5e-8;
@@ -831,13 +831,13 @@ pub(crate) fn solve_with<R>(
         }
         let mut hit: Option<R> = None;
         let mut verify = |o: Mat4, transpose: bool| -> bool {
-            let o = if transpose { o.transpose() } else { o };
-            if !frame_metrics(&o).is_some_and(|m| m.within(2e-10)) {
-                return false;
-            }
-            let residual = compound_residual(dc, lam, &o, &targets[bi]);
-            if hit.is_none() {
-                hit = finalize(o, residual);
+            let oriented = if transpose { o.transpose() } else { o };
+            if let Some((o, residual)) =
+                super::certify_frame_candidate(oriented, dc, lam, &targets[bi])
+            {
+                if hit.is_none() {
+                    hit = finalize(o, residual);
+                }
             }
             hit.is_some()
         };

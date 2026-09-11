@@ -16,7 +16,7 @@
 //! Every proposed frame receives both an explicit Gram check and the original
 //! forward spectral certificate.
 
-use super::{c, compound_residual, frame_metrics, poly_roots, Mat4, ACCEPT, C};
+use super::{c, poly_roots, Mat4, C};
 
 const PAIRS: [(usize, usize); 6] = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];
 type Affine = [f64; 3];
@@ -197,17 +197,9 @@ pub(super) fn solve_with<R>(
     mut finalize: impl FnMut(Mat4, f64) -> Option<R>,
 ) -> Option<R> {
     if gate_is_pair22 && prefix_is_pair22 {
-        let mut accept = |mut o: Mat4, branch: usize| {
-            let metrics = frame_metrics(&o)?;
-            if !metrics.within(2e-10) {
-                return None;
-            }
-            if metrics.determinant < 0.0 {
-                for row in 0..4 {
-                    o[(row, 0)] = -o[(row, 0)];
-                }
-            }
-            let residual = compound_residual(dc, lam, &o, &targets[branch]);
+        let mut accept = |o: Mat4, branch: usize| {
+            let (o, residual) =
+                super::certify_frame_candidate_with_limit(o, dc, lam, &targets[branch], 1e-8)?;
             // Quantized repeated targets can place the stable coefficient
             // proxy just outside ACCEPT while remaining inside the direct
             // root contract. The caller's final certificate decides this
@@ -427,18 +419,8 @@ fn oriented_matrix(other: &[C; 4], repeated: &[C; 4], o: &Mat4) -> Mat4 {
     d * o * lambda * o.transpose() * d
 }
 
-fn certify(mut o: Mat4, dc: &Mat4, lam: &Mat4, target: &[C; 4]) -> Option<(Mat4, f64)> {
-    let metrics = frame_metrics(&o)?;
-    if !metrics.within(2e-10) {
-        return None;
-    }
-    if metrics.determinant < 0.0 {
-        for row in 0..4 {
-            o[(row, 0)] = -o[(row, 0)];
-        }
-    }
-    let residual = compound_residual(dc, lam, &o, target);
-    (residual <= ACCEPT).then_some((o, residual))
+fn certify(o: Mat4, dc: &Mat4, lam: &Mat4, target: &[C; 4]) -> Option<(Mat4, f64)> {
+    super::certify_frame_candidate(o, dc, lam, target)
 }
 
 fn pair22_groups(values: &[C; 4]) -> Option<(C, C, [usize; 2], [usize; 2])> {
@@ -547,8 +529,12 @@ fn solve_paired_support_with<R>(
                     .fold(f64::INFINITY, f64::min);
                 if error < 1e-8 {
                     let o = super::signed_perm(permutation);
-                    let residual =
-                        compound_residual(&problem.dc, &problem.lam, &o, &problem.targets[branch]);
+                    let residual = super::compound_residual(
+                        &problem.dc,
+                        &problem.lam,
+                        &o,
+                        &problem.targets[branch],
+                    );
                     if let Some(hit) = finalize(o, residual) {
                         return Some(hit);
                     }
@@ -1725,7 +1711,7 @@ mod tests {
         let target = super::super::eig4(&target_matrix);
         let target_esym = super::super::esym4(target);
         let mut accept = |o: Mat4| {
-            let residual = compound_residual(&d, &lambda, &o, &target_esym);
+            let residual = super::super::compound_residual(&d, &lambda, &o, &target_esym);
             (residual < 1e-9).then_some(residual)
         };
         let residual = solve_oriented(&repeated, &other, &target, true, true, &mut accept)

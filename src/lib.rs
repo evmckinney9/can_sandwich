@@ -16,10 +16,10 @@ mod cascade;
 
 #[cfg(feature = "diagnostics")]
 pub use cascade::solve_charts_only;
+pub use cascade::{branch_signature, solve, Mat4, Rung, Solution};
 #[cfg(feature = "diagnostics")]
 pub use cascade::{init_tables, prof};
 #[cfg(feature = "diagnostics")]
 pub use cascade::{paired_edge_scope, solve_paired_edges, solve_paired_edges_forward};
-pub use cascade::{branch_signature, solve, Mat4, Rung, Solution};
 
 mod radical;

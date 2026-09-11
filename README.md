@@ -49,8 +49,9 @@ alone solves every simple-spectrum row; `Radical` is load-bearing for 56
 rows with a `3 + 1` or `2 + 1 + 1` gate, the resonance, `OnePlusThree` and
 `Interior` rungs for one to three near-degenerate rows each, and the support
 strata, `Klein` and `Interior` for latency (2x on linspace, 1.5x on Haar).
-The `2 + 2` Plücker construction is a leaf of the confluent radical
-construction, no longer a rung of its own.
+The `2 + 2` Plücker construction remains a separately attributed `Pair22`
+rung because it is reached directly by the production cascade; it shares the
+same forward certificate as the other confluent constructions.
 
 1. Support strata from the routed root mask: signed-permutation vertices,
    one-Givens edges linear in `cos 2θ`, two-Givens faces as independent

@@ -607,22 +607,6 @@ pub const ACCEPT: f64 = 1e-9;
 const FRAME_ACCEPT: f64 = 2e-10;
 
 #[inline]
-fn framed_solution(o: Mat4, rung: Rung, residual: f64) -> Option<Solution> {
-    if !residual.is_finite() {
-        return None;
-    }
-    let metrics = frame_metrics(&o)?;
-    if !metrics.within(FRAME_ACCEPT) {
-        return None;
-    }
-    Some(Solution {
-        o: orient_so4(o),
-        rung,
-        residual,
-    })
-}
-
-#[inline]
 #[cfg(test)]
 fn certified_solution(o: Mat4, rung: Rung, residual: f64) -> Option<Solution> {
     if residual > ACCEPT {
@@ -781,28 +765,56 @@ fn solve_rank_one_31(problem: &PreparedSandwich) -> Option<Solution> {
     if problem.strata.c == SpectrumKind::Triple31
         && problem.strata.c_proximity == problem::SpectrumProximity::Exact
     {
-        if let Some(hit) = solve_rank_one_side(problem, problem.left, problem.right, false, 64.0 * f64::EPSILON, Rung::RankOne31) {
+        if let Some(hit) = solve_rank_one_side(
+            problem,
+            problem.left,
+            problem.right,
+            false,
+            64.0 * f64::EPSILON,
+            Rung::RankOne31,
+        ) {
             return Some(hit);
         }
     }
     if problem.strata.g == SpectrumKind::Triple31
         && problem.strata.g_proximity == problem::SpectrumProximity::Exact
     {
-        if let Some(hit) = solve_rank_one_side(problem, problem.right, problem.left, true, 64.0 * f64::EPSILON, Rung::RankOne31) {
+        if let Some(hit) = solve_rank_one_side(
+            problem,
+            problem.right,
+            problem.left,
+            true,
+            64.0 * f64::EPSILON,
+            Rung::RankOne31,
+        ) {
             return Some(hit);
         }
     }
     if problem.strata.c == SpectrumKind::Triple31
         && problem.strata.c_proximity == problem::SpectrumProximity::Near
     {
-        if let Some(hit) = solve_rank_one_side(problem, problem.left, problem.right, false, 1.0e-7, Rung::NearRankOne31) {
+        if let Some(hit) = solve_rank_one_side(
+            problem,
+            problem.left,
+            problem.right,
+            false,
+            1.0e-7,
+            Rung::NearRankOne31,
+        ) {
             return Some(hit);
         }
     }
     if problem.strata.g == SpectrumKind::Triple31
         && problem.strata.g_proximity == problem::SpectrumProximity::Near
     {
-        if let Some(hit) = solve_rank_one_side(problem, problem.right, problem.left, true, 1.0e-7, Rung::NearRankOne31) {
+        if let Some(hit) = solve_rank_one_side(
+            problem,
+            problem.right,
+            problem.left,
+            true,
+            1.0e-7,
+            Rung::NearRankOne31,
+        ) {
             return Some(hit);
         }
     }
@@ -853,7 +865,13 @@ fn solve_rank_one_side(
 
     let mut candidate = None;
     for target in &problem.targets {
-        let p = [target[3], -target[2], target[1], -target[0], C::new(1.0, 0.0)];
+        let p = [
+            target[3],
+            -target[2],
+            target[1],
+            -target[0],
+            C::new(1.0, 0.0),
+        ];
         let mut masses = Vec::with_capacity(groups.len());
         let mut valid = true;
         for (g, (beta, indices)) in groups.iter().enumerate() {
@@ -1374,15 +1392,16 @@ mod tests {
         // g=(1/10,1/10,1/10) maps to Weyl (1/5,1/5,1/5), whose magic-basis
         // spectrum has multiplicity 3+1.  The target is the diagonal product
         // of c=(1/20,1/50,-1/100) and this g, so O=I is a known witness.
-        let problem = PreparedSandwich::new(
-            [0.05, 0.02, -0.01],
-            [0.1, 0.1, 0.1],
-            [0.15, 0.12, 0.09],
-        );
+        let problem =
+            PreparedSandwich::new([0.05, 0.02, -0.01], [0.1, 0.1, 0.1], [0.15, 0.12, 0.09]);
         assert_eq!(problem.strata.g, SpectrumKind::Triple31);
         let solution = solve([0.05, 0.02, -0.01], [0.1, 0.1, 0.1], [0.15, 0.12, 0.09]);
         assert_ne!(solution.rung, Rung::Unsolved);
-        assert!(solution.residual < 1e-12, "residual {:.3e}", solution.residual);
+        assert!(
+            solution.residual < 1e-12,
+            "residual {:.3e}",
+            solution.residual
+        );
     }
 
     #[test]
@@ -1392,11 +1411,8 @@ mod tests {
         // isolates the new selector from Weyl-coordinate inversion and tests
         // the mass inverse, Householder completion, right-side transpose, and
         // public characteristic certificate together.
-        let mut problem = PreparedSandwich::new(
-            [0.05, 0.02, -0.01],
-            [0.1, 0.1, 0.1],
-            [0.0, 0.0, 0.0],
-        );
+        let mut problem =
+            PreparedSandwich::new([0.05, 0.02, -0.01], [0.1, 0.1, 0.1], [0.0, 0.0, 0.0]);
         assert_eq!(problem.strata.g, SpectrumKind::Triple31);
         let mut planted = Mat4::identity();
         let theta = 0.37f64;
@@ -1412,16 +1428,17 @@ mod tests {
         problem.targets = [coefficients, coefficients];
         let solution = solve_rank_one_31(&problem).expect("rank-one 3+1 selector");
         assert_eq!(solution.rung, Rung::RankOne31);
-        assert!(solution.residual < 1e-10, "residual {:.3e}", solution.residual);
+        assert!(
+            solution.residual < 1e-10,
+            "residual {:.3e}",
+            solution.residual
+        );
     }
 
     #[test]
     fn rank_one_selector_recovers_a_nontrivial_left_triple31_frame() {
-        let mut problem = PreparedSandwich::new(
-            [0.1, 0.1, 0.1],
-            [0.05, 0.02, -0.01],
-            [0.0, 0.0, 0.0],
-        );
+        let mut problem =
+            PreparedSandwich::new([0.1, 0.1, 0.1], [0.05, 0.02, -0.01], [0.0, 0.0, 0.0]);
         assert_eq!(problem.strata.c, SpectrumKind::Triple31);
         let mut planted = Mat4::identity();
         let theta = 0.29f64;
@@ -1437,9 +1454,12 @@ mod tests {
         problem.targets = [coefficients, coefficients];
         let solution = solve_rank_one_31(&problem).expect("rank-one 3+1 selector");
         assert_eq!(solution.rung, Rung::RankOne31);
-        assert!(solution.residual < 1e-10, "residual {:.3e}", solution.residual);
+        assert!(
+            solution.residual < 1e-10,
+            "residual {:.3e}",
+            solution.residual
+        );
     }
-
 
     #[test]
     fn exact_dense_rational_counterexample_requires_complete_fallback() {

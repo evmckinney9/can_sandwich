@@ -17,7 +17,7 @@ for required in feasible_linspace.npy feasible_haar.npy; do
     exit 2
   fi
 done
-if ! "$PYTHON" "$ROOT/scripts/generate_realization_edge_corpus.py" \
+if ! "$PYTHON" "$ROOT/dev/research/scripts/generate_realization_edge_corpus.py" \
   --output "$SEG/feasible_stratified.npy" --check-existing; then
   echo "locked stratified corpus is missing, stale, or corrupt: $SEG" >&2
   echo "materialize the registered fixture; do not overwrite it by regeneration" >&2
@@ -45,7 +45,7 @@ run_atomic_corpus "stratified exact/near Weyl strata" "$SEG/feasible_stratified.
 run_atomic_corpus "linspace" "$SEG/feasible_linspace.npy"
 run_atomic_corpus "haar" "$SEG/feasible_haar.npy"
 echo "== public realization pipeline =="
-if ! "$PYTHON" "$ROOT/scripts/validate_realization_pipeline_corpus.py" \
+if ! "$PYTHON" "$ROOT/dev/research/scripts/validate_realization_pipeline_corpus.py" \
   "$SEG/feasible_stratified.pipeline.npz" --max-case-seconds 0.5; then
   status=1
 fi
