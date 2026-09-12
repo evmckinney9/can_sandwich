@@ -831,7 +831,7 @@ pub(crate) fn solve_with<R>(
         }
         let mut hit: Option<R> = None;
         let mut verify = |o: Mat4, transpose: bool| -> bool {
-            let oriented = if transpose { o.transpose() } else { o };
+            let oriented = super::apply_transpose(o, transpose);
             if let Some((o, residual)) =
                 super::certify_frame_candidate(oriented, dc, lam, &targets[bi])
             {

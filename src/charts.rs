@@ -375,6 +375,66 @@ fn reconstruct_from_role1(d1: &[C; 4], d2: &[C; 4], lam_t: &[C; 4], v: &Real4) -
     }
     Some(or)
 }
+
+/// Map a frame reconstructed in one of the three spectral roles back to the
+/// production role.  Both the chart fast path and the exact leaf path use the
+/// same role transport; keeping it here prevents their transpose conventions
+/// from drifting apart.
+fn reconstruct_role(
+    role: usize,
+    d1: &[C; 4],
+    d2: &[C; 4],
+    target: &[C; 4],
+    frame: &Real4,
+) -> Option<Real4> {
+    match role {
+        0 => Some(*frame),
+        1 => reconstruct_from_role1(d1, d2, target, frame),
+        _ => reconstruct_from_role1(d2, d1, target, frame).map(|x| x.transpose()),
+    }
+}
+
+/// Shared chart candidate gate.  All chart/leaf constructors produce a real
+/// matrix that is only approximately orthogonal; normalize it once, apply the
+/// same coefficient pre-gate, and then use the production rootwise certificate.
+fn check_chart_candidate(
+    problem: &super::PreparedSandwich,
+    frame: Real4,
+) -> Option<super::Solution> {
+    if !finite(&frame) {
+        return None;
+    }
+    let dev = ((0..4).map(|k| frame[(0, k)] * frame[(1, k)]).sum::<f64>())
+        .abs()
+        .max(((0..4).map(|k| frame[(2, k)] * frame[(3, k)]).sum::<f64>()).abs())
+        .max(((0..4).map(|k| frame[(0, k)] * frame[(0, k)]).sum::<f64>() - 1.0).abs());
+    let mut frame = if dev > 1e-13 { polar(&frame) } else { frame };
+    if frame.determinant() < 0.0 {
+        frame.row_mut(0).neg_mut();
+    }
+    let (f1, f2) = char_e1e2(&problem.left, &problem.right, &frame);
+    let taus = [
+        e1e2_of_spectrum(&problem.target_roots[0]),
+        e1e2_of_spectrum(&problem.target_roots[1]),
+    ];
+    let residual = taus
+        .iter()
+        .map(|t| (f1 - C::new(t[0], t[1])).norm() + (f2 - C::new(t[2], 0.0)).norm())
+        .fold(f64::INFINITY, f64::min);
+    (residual < 1e-5)
+        .then(|| {
+            certified(
+                problem,
+                &problem.left,
+                &problem.right,
+                &problem.target_roots,
+                &frame,
+                residual,
+            )
+        })
+        .flatten()
+}
+
 /// Vertices of the convex hull of four unit-circle points, in angular order.
 fn hull_of(l: &[C; 4]) -> Vec<(f64, f64)> {
     let ang: [f64; 4] = std::array::from_fn(|k| l[k].im.atan2(l[k].re));
@@ -1203,34 +1263,6 @@ fn solve_charts_gated(
     if !allow_clustered && gap(&lam).min(gap(&mu)).min(gap(&lifts[0])) < 1e-4 {
         return None;
     }
-    // certification is always against the TRUE problem spectra
-    let (tlam, tmu) = (problem.left, problem.right);
-    let tlifts = problem.target_roots;
-    let taus = [e1e2_of_spectrum(&tlifts[0]), e1e2_of_spectrum(&tlifts[1])];
-    // candidate gate: the fast coefficient residual on either lift, then the production certificate
-    let check = |o: Real4| -> Option<super::Solution> {
-        if !finite(&o) {
-            return None;
-        }
-        let dev = ((0..4).map(|k| o[(0, k)] * o[(1, k)]).sum::<f64>())
-            .abs()
-            .max(((0..4).map(|k| o[(2, k)] * o[(3, k)]).sum::<f64>()).abs())
-            .max(((0..4).map(|k| o[(0, k)] * o[(0, k)]).sum::<f64>() - 1.0).abs());
-        let mut o = if dev > 1e-13 { polar(&o) } else { o };
-        if o.determinant() < 0.0 {
-            o.row_mut(0).neg_mut();
-        }
-        let (f1, f2) = char_e1e2(&tlam, &tmu, &o);
-        let r = taus
-            .iter()
-            .map(|t| (f1 - C::new(t[0], t[1])).norm() + (f2 - C::new(t[2], 0.0)).norm())
-            .fold(f64::INFINITY, f64::min);
-        if r < 1e-5 {
-            certified(problem, &tlam, &tmu, &tlifts, &o, r)
-        } else {
-            None
-        }
-    };
     let conj4 = |d: &[C; 4]| -> [C; 4] { std::array::from_fn(|q| d[q].conj()) };
     let role_data = |role: usize, lift: usize| -> ([C; 4], [C; 4], [f64; 3], [C; 4]) {
         let lam_t = lifts[lift];
@@ -1296,11 +1328,7 @@ fn solve_charts_gated(
     let map_back = |role: usize, lift: usize, swap: u8, oc: Real4| -> Option<Real4> {
         let lam_t = lifts[lift];
         let oc = if swap == 0 { oc } else { oc.transpose() };
-        match role {
-            0 => Some(oc),
-            1 => reconstruct_from_role1(&lam, &mu, &lam_t, &oc),
-            _ => reconstruct_from_role1(&mu, &lam, &lam_t, &oc).map(|x| x.transpose()),
-        }
+        reconstruct_role(role, &lam, &mu, &lam_t, &oc)
     };
     let try_chart = |role: usize,
                      lift: usize,
@@ -1322,7 +1350,9 @@ fn solve_charts_gated(
         let mut hit = None;
         ch.frames(tp, &mut |oc| {
             let oc = pm.map_or(oc, |p| p * oc);
-            match map_back(role, lift, swap, oc).and_then(&check) {
+            match map_back(role, lift, swap, oc)
+                .and_then(|frame| check_chart_candidate(problem, frame))
+            {
                 Some(h) => {
                     hit = Some(h);
                     true
@@ -1359,7 +1389,9 @@ fn solve_charts_gated(
         exact_select(&disc, t0, t1, 32, |tp| {
             ch.frames(tp, &mut |oc| {
                 let oc = pm.map_or(oc, |p| p * oc);
-                match map_back(role, lift, swap, oc).and_then(&check) {
+                match map_back(role, lift, swap, oc)
+                    .and_then(|frame| check_chart_candidate(problem, frame))
+                {
                     Some(h) => {
                         found = Some(h);
                         true
@@ -1595,7 +1627,9 @@ fn solve_charts_gated(
                 let mut hit = None;
                 ch.frames(tp, &mut |oc| {
                     let oc = pm.map_or(oc, |p| p * oc);
-                    match map_back(0, lift, swap, oc).and_then(&check) {
+                    match map_back(0, lift, swap, oc)
+                        .and_then(|frame| check_chart_candidate(problem, frame))
+                    {
                         Some(h) => {
                             hit = Some(h);
                             true
@@ -1739,7 +1773,9 @@ fn solve_charts_gated(
                     let mut hit = None;
                     ch.frames(tp, &mut |oc| {
                         let oc = pm.map_or(oc, |p| p * oc);
-                        match map_back(0, lift, 0, oc).and_then(&check) {
+                        match map_back(0, lift, 0, oc)
+                            .and_then(|frame| check_chart_candidate(problem, frame))
+                        {
                             Some(h) => {
                                 hit = Some(h);
                                 true
@@ -3117,33 +3153,9 @@ pub(crate) fn solve_full(problem: &super::PreparedSandwich) -> Option<super::Sol
             .fold(f64::INFINITY, f64::min)
     };
     let clustered = gap(&lam).min(gap(&mu)).min(gap(&lifts[0])) < 1e-4;
-    let taus = [e1e2_of_spectrum(&lifts[0]), e1e2_of_spectrum(&lifts[1])];
-    let check = |o: Real4| -> Option<super::Solution> {
-        if !finite(&o) {
-            return None;
-        }
-        let dev = ((0..4).map(|k| o[(0, k)] * o[(1, k)]).sum::<f64>())
-            .abs()
-            .max(((0..4).map(|k| o[(2, k)] * o[(3, k)]).sum::<f64>()).abs())
-            .max(((0..4).map(|k| o[(0, k)] * o[(0, k)]).sum::<f64>() - 1.0).abs());
-        let mut o = if dev > 1e-13 { polar(&o) } else { o };
-        if o.determinant() < 0.0 {
-            o.row_mut(0).neg_mut();
-        }
-        let (f1, f2) = char_e1e2(&lam, &mu, &o);
-        let r = taus
-            .iter()
-            .map(|t| (f1 - C::new(t[0], t[1])).norm() + (f2 - C::new(t[2], 0.0)).norm())
-            .fold(f64::INFINITY, f64::min);
-        if r < 1e-5 {
-            certified(problem, &lam, &mu, &lifts, &o, r)
-        } else {
-            None
-        }
-    };
     let allequal = |l: &[C; 4]| (1..4).all(|k| (l[k] - l[0]).norm() < 1e-9);
     if allequal(&lam) || allequal(&mu) {
-        if let Some(h) = check(Real4::identity()) {
+        if let Some(h) = check_chart_candidate(problem, Real4::identity()) {
             return Some(h);
         }
     }
@@ -3155,7 +3167,7 @@ pub(crate) fn solve_full(problem: &super::PreparedSandwich) -> Option<super::Sol
             let mut hit: Option<super::Solution> = None;
             {
                 let mut t = |o: Real4| -> bool {
-                    match check(o) {
+                    match check_chart_candidate(problem, o) {
                         Some(h) => {
                             hit = Some(h);
                             true
@@ -3185,13 +3197,9 @@ pub(crate) fn solve_full(problem: &super::PreparedSandwich) -> Option<super::Sol
                     _ => (lam_t, conj4(&lamc), muc),
                 };
                 for o in leaf_31(&d1, &d2, &lt) {
-                    let ob = match role {
-                        0 => Some(o),
-                        1 => reconstruct_from_role1(&lamc, &muc, &lam_t, &o),
-                        _ => reconstruct_from_role1(&muc, &lamc, &lam_t, &o).map(|x| x.transpose()),
-                    };
+                    let ob = reconstruct_role(role, &lamc, &muc, &lam_t, &o);
                     if let Some(ob) = ob {
-                        if let Some(h) = check(ob) {
+                        if let Some(h) = check_chart_candidate(problem, ob) {
                             return Some(h);
                         }
                     }

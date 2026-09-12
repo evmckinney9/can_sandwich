@@ -3,14 +3,14 @@
 //! degrees (<= 16).
 use nalgebra::Complex;
 
-pub type C = Complex<f64>;
+pub(crate) type C = Complex<f64>;
 
 /// All complex roots via the companion matrix (faer eigenvalues).
 /// Leading near-zero coefficients are trimmed relative to the max magnitude,
 /// and the polynomial is normalized (scale-invariant) for conditioning: the
 /// edge polynomials carry factors like P²w_d²zB² that otherwise degrade the
 /// companion eigensolve (cost: a missed production row, 104160).
-pub fn roots(co: &[C]) -> Vec<C> {
+pub(crate) fn roots(co: &[C]) -> Vec<C> {
     let maxc = co.iter().map(|c| c.norm()).fold(0.0f64, f64::max);
     if maxc == 0.0 {
         return vec![];

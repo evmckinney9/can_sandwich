@@ -14,25 +14,25 @@
 //! signs by the ray/involution structure, one forward verify.
 use nalgebra::{Complex, Matrix4};
 
-pub type C = Complex<f64>;
-pub type Mat4 = Matrix4<C>;
+pub(crate) type C = Complex<f64>;
+pub(crate) type Mat4 = Matrix4<C>;
 
-pub const CTOL: f64 = 2e-3;
-pub const XTOL: f64 = 1e-9;
+pub(crate) const CTOL: f64 = 2e-3;
+pub(crate) const XTOL: f64 = 1e-9;
 
 /// Frame ingredients of a radical-stratum solution: `m = assemble(c, a,
 /// &peels)`, so the realizing orthogonal frame has the peel vectors as
 /// columns (gate values `c + rho`) completed orthonormally on the
 /// c-eigenspace. `None` for the certified pass-through, whose `m` is
 /// already a production frame.
-pub struct Frame {
-    pub c: C,
-    pub peels: Vec<([f64; 4], C)>,
+pub(crate) struct Frame {
+    pub(crate) c: C,
+    pub(crate) peels: Vec<([f64; 4], C)>,
 }
 
-pub struct Solved {
-    pub m: Mat4,
-    pub frame: Option<Frame>,
+pub(crate) struct Solved {
+    pub(crate) m: Mat4,
+    pub(crate) frame: Option<Frame>,
 }
 
 /// Stack-allocated partition of exactly 4 indices into non-empty clusters.
@@ -99,7 +99,7 @@ fn inherits_clusters(mu: &[C; 4], delta: &[C; 4], dcl: &Clusters4) -> bool {
     })
 }
 
-pub fn sdist(x: &[C; 4], y: &[C; 4]) -> f64 {
+pub(crate) fn sdist(x: &[C; 4], y: &[C; 4]) -> f64 {
     fn heap(k: usize, idx: &mut [usize; 4], x: &[C; 4], y: &[C; 4], best: &mut f64) {
         if k == 1 {
             let d = (0..4)
@@ -533,7 +533,7 @@ fn lift_beta_roots(beta: BetaClosure, pp: C) -> ([C; 8], usize) {
 }
 
 #[inline]
-pub fn free_pair_roots(
+pub(crate) fn free_pair_roots(
     p_poly: &[C],
     t1: C,
     t2: C,
@@ -1841,7 +1841,7 @@ fn odd_characteristic_pairs(vals: &[(C, usize)], slots: &[C]) -> ([PinPair; 40],
 /// therefore certifies that the characteristic cell has no positive real
 /// placement. Coincident data letters remain outside the theorem's domain and
 /// return `None`, so the gate never excludes them.
-pub fn two_step<R>(
+pub(crate) fn two_step<R>(
     c: C,
     d1: C,
     d2: C,
@@ -2451,7 +2451,7 @@ fn rank_one(c: C, d: C, a: &[C; 4], w: &[C; 4]) -> Option<Solved> {
     })
 }
 
-pub fn solve_oriented<R>(
+pub(crate) fn solve_oriented<R>(
     gate: &[C; 4],
     a: &[C; 4],
     w: &[C; 4],

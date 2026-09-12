@@ -11,7 +11,7 @@ use super::{
     ACCEPT, C, PLANES,
 };
 
-pub(crate) const PAIR6: [(usize, usize); 6] = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];
+const PAIR6: [(usize, usize); 6] = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];
 
 fn complement(i: usize, j: usize) -> (usize, usize) {
     let mut o = (0..4).filter(|&k| k != i && k != j);
@@ -23,7 +23,7 @@ fn complement(i: usize, j: usize) -> (usize, usize) {
 /// trace affine in `cos2θ`. Partition the 4 target eigenvalues into the two block pairs by the θ-free
 /// det, then solve each block's `cos2θ` LINEARLY -- two independent edge solves. Closed-form, no eig,
 /// machine-precise; well-conditioned exactly where the deg-6 chart degrades (the near-face tail).
-pub fn solve_face(
+pub(super) fn solve_face(
     d2: &[C; 4],
     lam4: &[C; 4],
     dc: &Mat4,
@@ -113,12 +113,12 @@ pub fn solve_face(
 /// `4 * residual >= DELTA^4`.  The chosen delta therefore excludes only
 /// candidates whose residual is already larger than `ACCEPT`.  A vertex is a
 /// special edge and necessarily passes the same gate.
-pub struct RoutedSupport {
-    pub edge: Option<[[u8; 4]; 4]>,
-    pub exact: [[u8; 4]; 4],
+pub(super) struct RoutedSupport {
+    pub(super) edge: Option<[[u8; 4]; 4]>,
+    pub(super) exact: [[u8; 4]; 4],
 }
 
-pub fn edge_gate(routed: &[[C; 4]; 4], target_specs: &[[C; 4]]) -> RoutedSupport {
+pub(super) fn edge_gate(routed: &[[C; 4]; 4], target_specs: &[[C; 4]]) -> RoutedSupport {
     const DELTA_SQ: f64 = 1e-4;
     let mut viable = [[0u8; 4]; 4];
     let mut exact = [[0u8; 4]; 4];
@@ -162,7 +162,7 @@ pub fn edge_gate(routed: &[[C; 4]; 4], target_specs: &[[C; 4]]) -> RoutedSupport
 /// skipping the pair cannot lose an acceptable frame. `target_specs` are the
 /// target EIGENVALUE sets per branch (same order as `targets`).
 #[allow(clippy::too_many_arguments)]
-pub fn solve_edge(
+pub(super) fn solve_edge(
     d2: &[C; 4],
     lam4: &[C; 4],
     dc: &Mat4,
@@ -266,11 +266,7 @@ fn solve_radical_orientation(
             let spectrum =
                 Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(&orientation.eigenvalues));
             let recovered = recover_frame(&candidate.m, &spectrum);
-            let o = if transpose {
-                recovered.transpose()
-            } else {
-                recovered
-            };
+            let o = super::apply_transpose(recovered, transpose);
             super::certify_frame_against_targets(o, dc, lam, targets)
         }
     };
@@ -557,7 +553,7 @@ fn matrix_to_o(
     let symmetric = inverse * m * inverse;
     let spectrum = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(eigenvalues));
     let frame = recover_frame(&symmetric, &spectrum);
-    let o = if transpose { frame.transpose() } else { frame };
+    let o = super::apply_transpose(frame, transpose);
     super::certify_frame_against_targets(o, dc, lam, targets)
 }
 
@@ -656,11 +652,8 @@ fn frame_to_o(
                 }
             }
             if nfree != usize::MAX {
-                let o = if transpose {
-                    Mat4::from_fn(|i, j| C::new(cols[i][j], 0.0))
-                } else {
-                    Mat4::from_fn(|i, j| C::new(cols[j][i], 0.0))
-                };
+                let raw = Mat4::from_fn(|i, j| C::new(cols[j][i], 0.0));
+                let o = super::apply_transpose(raw, transpose);
                 if let Some(hit) = super::certify_frame_against_targets(o, dc, lam, targets) {
                     return Some(hit);
                 }

@@ -1,10 +1,8 @@
 //! Canonical input and output contracts for one depth-two sandwich.
 //!
-//! Every realization formula must consume [`PreparedSandwich`].  Every fast
-//! residual that assumes a real orthogonal frame must first use
-//! [`frame_metrics`].  Keeping these contracts separate from the chart atlas
-//! prevents individual rungs from inventing their own Weyl lift, target
-//! branch, or notion of an acceptable frame.
+//! Every realization formula must consume [`PreparedSandwich`].  Weyl lifts,
+//! target branches, and frame certificates are owned by the corresponding
+//! certificate module rather than being reimplemented by individual rungs.
 
 use super::{eigphases, esym4, rho_weyl, weyl_from_monodromy, Mat4, C};
 
@@ -204,62 +202,6 @@ impl PreparedSandwich {
             strata,
         }
     }
-}
-
-/// Numerical certificate required before treating a matrix as a real frame.
-///
-/// `compound_residual` intentionally reads only real entries and is sound only
-/// after this certificate bounds the discarded imaginary part and the complete
-/// Gram defect.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct FrameMetrics {
-    pub determinant: f64,
-    pub gram: f64,
-    pub imaginary: f64,
-}
-
-impl FrameMetrics {
-    /// Whether the candidate is a real orthogonal frame to the requested
-    /// absolute tolerance.  The determinant magnitude is part of the same
-    /// contract; callers may repair its sign only after this test passes.
-    #[inline]
-    pub(super) fn within(self, tolerance: f64) -> bool {
-        self.gram <= tolerance
-            && self.imaginary <= tolerance
-            && (self.determinant.abs() - 1.0).abs() <= tolerance
-    }
-}
-
-#[inline]
-pub(super) fn frame_metrics(frame: &Mat4) -> Option<FrameMetrics> {
-    let real = frame.map(|value| value.re);
-    let determinant = real.determinant();
-    let gram = (real.transpose() * real - nalgebra::Matrix4::identity())
-        .iter()
-        .fold(0.0f64, |maximum, value| maximum.max(value.abs()));
-    let imaginary = frame
-        .iter()
-        .fold(0.0f64, |maximum, value| maximum.max(value.im.abs()));
-    (determinant.is_finite() && gram.is_finite() && imaginary.is_finite()).then_some(FrameMetrics {
-        determinant,
-        gram,
-        imaginary,
-    })
-}
-
-/// Normalize an accepted real orthogonal frame to `SO(4)`.
-///
-/// Right-multiplying by a diagonal sign leaves `O Lambda O^T` unchanged because
-/// `Lambda` is diagonal, so this repairs orientation without changing the
-/// spectral certificate.
-#[inline]
-pub(super) fn orient_so4(mut frame: Mat4) -> Mat4 {
-    if frame.determinant().re < 0.0 {
-        for row in 0..4 {
-            frame[(row, 0)] = -frame[(row, 0)];
-        }
-    }
-    frame
 }
 
 #[cfg(test)]

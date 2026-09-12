@@ -20,7 +20,7 @@ pub(crate) const CORNERS: [[f64; 3]; 8] = [
 /// At a corner every Givens is 0 (`x=cos²θ=1`) or π/2 (`x=0` → a signed swap), so `O` is a
 /// signed perm and `M` is DIAGONAL: the corner spectrum is `{a²_j·λ_{c(j)}}` with `c` the
 /// composed permutation -- pure scalar, no matmul (same trick as the vertex rung).
-pub fn chart_coeffs(
+pub(super) fn chart_coeffs(
     eb: &[f64; 4],
     ep: &[f64; 4],
     planes: [(usize, usize); 3],
@@ -742,7 +742,11 @@ pub(crate) fn recover_frame(u1: &Mat4, lam: &Mat4) -> Mat4 {
 /// tries per row) and the vertex gate re-verifies the full reduced distance via
 /// `perm_vertex_residual` before accepting, so dropping the per-permutation e2
 /// term halves the ranking cost without changing any accept decision.
-pub fn rank_perms_pre(a2: &[C; 4], lam: &[C; 4], targets: &[[C; 4]]) -> [([usize; 4], f64); 24] {
+pub(super) fn rank_perms_pre(
+    a2: &[C; 4],
+    lam: &[C; 4],
+    targets: &[[C; 4]],
+) -> [([usize; 4], f64); 24] {
     // only 16 distinct products a2[j]*lam[k] exist across the 24 perms
     let prod: [[C; 4]; 4] = std::array::from_fn(|j| std::array::from_fn(|k| a2[j] * lam[k]));
     let mut out: [([usize; 4], f64); 24] = std::array::from_fn(|i| {

@@ -591,7 +591,7 @@ fn solve_paired_backward_with<R>(
                 // recover S with A^-1/2 R T R^T A^-1/2 = S B S^T.
                 let e = oriented_matrix(&inverse_paired, target, &v.transpose());
                 let s = super::recover_frame(&e, &other_diagonal);
-                let o = if transpose { s.transpose() } else { s };
+                let o = super::apply_transpose(s, transpose);
                 certify(o, &problem.dc, &problem.lam, &problem.targets[branch])
                     .and_then(|(o, residual)| finalize(o, residual))
             };

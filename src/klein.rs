@@ -325,7 +325,7 @@ fn in_hull(c: &[C; 4], z: C) -> bool {
 /// one 4×4 real-symmetric eigendecomposition return the columns, matched to
 /// the known spectrum rather than searched for. Column signs are free because
 /// `O·diag(g)·Oᵀ` is invariant under them.
-pub fn takagi_real(y: &Mat4, g: &[C; 4]) -> Option<nalgebra::Matrix4<f64>> {
+pub(super) fn takagi_real(y: &Mat4, g: &[C; 4]) -> Option<nalgebra::Matrix4<f64>> {
     let a = nalgebra::Matrix4::<f64>::from_fn(|i, j| y[(i, j)].re);
     let b = nalgebra::Matrix4::<f64>::from_fn(|i, j| y[(i, j)].im);
     for &t in &[0.0f64, 1.0, -1.0, 0.5, 2.0, -0.37] {
@@ -471,7 +471,7 @@ impl Line {
 
 /// Try every Klein chart in both target branches. Returns the certified frame
 /// and its residual against the ORIGINAL sandwich.
-pub fn solve(
+pub(super) fn solve(
     a2: &[C; 4],
     g2v: &[C; 4],
     products: &[[C; 4]; 4],

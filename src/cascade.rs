@@ -9,7 +9,7 @@
 //! (traces, no eig -- polynomial, does not floor at degeneracy).
 use nalgebra::{Complex, Matrix4};
 
-pub type C = Complex<f64>;
+type C = Complex<f64>;
 
 #[path = "certificate.rs"]
 mod certificate;
@@ -34,14 +34,17 @@ mod three_givens;
 #[path = "two_plus_two.rs"]
 mod two_plus_two;
 use certificate::*;
-pub(crate) use interior::*;
+// Keep the interior algebra available to sibling rungs through this module,
+// but do not re-export its entire implementation surface within the crate.
+pub(crate) use interior::bernstein_variations;
+use interior::*;
 pub type Mat4 = Matrix4<C>;
 /// One accepted interior chart: frame, residual, row permutation, plane word.
 type InteriorHit = (Mat4, f64, [usize; 4], [(usize, usize); 3]);
 
 #[cfg(test)]
 use problem::spectrum_kind;
-use problem::{frame_metrics, orient_so4, PreparedSandwich, SpectrumKind, StratumSignature};
+use problem::{PreparedSandwich, SpectrumKind, StratumSignature};
 
 /// PROF=1 instrumentation: per-stage aggregate ns/calls across a corpus run.
 /// Compiled out unless the `diagnostics` feature is enabled.
@@ -235,20 +238,20 @@ fn c(re: f64, im: f64) -> C {
 /// by `canonical_is_diagonal_in_magic_basis`). The old matrix-product route cost
 /// ~3us per solve() in prelude matmuls for a matrix that is diagonal by
 /// construction.
-pub fn dphase(w: [f64; 3]) -> Mat4 {
+pub(super) fn dphase(w: [f64; 3]) -> Mat4 {
     let ph = eigphases(w);
     let d: [C; 4] = std::array::from_fn(|k| C::from_polar(1.0, ph[k]));
     Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(&d))
 }
 
 /// Monodromy triple -> Weyl coords (gulps convention `[m₀+m₁, m₀+m₂, m₁+m₂]`).
-pub fn weyl_from_monodromy(m: [f64; 3]) -> [f64; 3] {
+pub(super) fn weyl_from_monodromy(m: [f64; 3]) -> [f64; 3] {
     [m[0] + m[1], m[0] + m[2], m[1] + m[2]]
 }
 
 /// Rho-reflected Weyl coords `[1−c₁, c₂, −c₃]`: same Makhlin invariants, different
 /// eigenvalue set -- a target can match in either orientation, so rungs try both.
-pub fn rho_weyl(w: [f64; 3]) -> [f64; 3] {
+pub(super) fn rho_weyl(w: [f64; 3]) -> [f64; 3] {
     [1.0 - w[0], w[1], -w[2]]
 }
 
@@ -258,7 +261,7 @@ pub fn rho_weyl(w: [f64; 3]) -> [f64; 3] {
 #[inline]
 /// The 4 magic-basis eigenphases of `Can(w)` in closed form (no matrix): the diagonal
 /// of `mb(Can(w))`, i.e. `D_C = diag(exp(i·eigphases))`. Same order as `dphase`.
-pub fn eigphases(w: [f64; 3]) -> [f64; 4] {
+pub(super) fn eigphases(w: [f64; 3]) -> [f64; 4] {
     use std::f64::consts::PI;
     let h = PI / 2.0;
     [
@@ -271,7 +274,7 @@ pub fn eigphases(w: [f64; 3]) -> [f64; 4] {
 
 /// Elementary symmetric functions `e₁..e₄` of four scalars (the diagonal-spectrum
 /// fast path: `symfn` without forming any matrix).
-pub fn esym4(s: [C; 4]) -> [C; 4] {
+pub(super) fn esym4(s: [C; 4]) -> [C; 4] {
     let e1 = compensated_sum(s);
     let e2 = compensated_sum([
         s[0] * s[1],
@@ -307,7 +310,7 @@ pub(super) fn compensated_sum<const N: usize>(terms: [C; N]) -> C {
 /// One signed permutation frame `P ∈ SO(4)`: the permutation matrix `P_{i,p_i}=1`
 /// with row 0 negated when needed to force `det = +1`. The sign squares away in the
 /// spectrum (`PΛPᵀ` diagonal = `Λ` permuted), so it matters only for the emitted frame.
-pub fn signed_perm(p: [usize; 4]) -> Mat4 {
+pub(super) fn signed_perm(p: [usize; 4]) -> Mat4 {
     let mut m = Mat4::zeros();
     for (i, &pi) in p.iter().enumerate() {
         m[(i, pi)] = c(1.0, 0.0);
@@ -327,7 +330,7 @@ pub fn signed_perm(p: [usize; 4]) -> Mat4 {
 
 /// Givens rotation in plane `(i,j)` by `θ`: identity except `g[i,i]=g[j,j]=cosθ`,
 /// `g[i,j]=−sinθ`, `g[j,i]=sinθ` (s66 convention).
-pub fn givens(i: usize, j: usize, theta: f64) -> Mat4 {
+pub(super) fn givens(i: usize, j: usize, theta: f64) -> Mat4 {
     let (ct, st) = (theta.cos(), theta.sin());
     let mut g = Mat4::identity();
     g[(i, i)] = c(ct, 0.0);
@@ -338,10 +341,10 @@ pub fn givens(i: usize, j: usize, theta: f64) -> Mat4 {
 }
 
 /// The 6 Givens planes (= the 6 transpositions / permutohedron edge directions).
-pub const PLANES: [(usize, usize); 6] = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];
+pub(super) const PLANES: [(usize, usize); 6] = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];
 
 /// The 24 permutations of `(0,1,2,3)`, computed once (hot-path: no per-call alloc).
-pub static PERMS24: std::sync::LazyLock<[[usize; 4]; 24]> = std::sync::LazyLock::new(|| {
+pub(super) static PERMS24: std::sync::LazyLock<[[usize; 4]; 24]> = std::sync::LazyLock::new(|| {
     let mut v = Vec::with_capacity(24);
     let mut a = [0usize, 1, 2, 3];
     heap(&mut a, 4, &mut v);
@@ -364,7 +367,7 @@ fn heap(a: &mut [usize; 4], k: usize, out: &mut Vec<[usize; 4]>) {
 /// traces -- no eigendecomposition, so it does not floor at spectrum degeneracy.
 /// Production uses the matrix-free `compound_residual`; this is the test-side
 /// reference implementation.
-pub fn symfn(a: &Mat4) -> [C; 4] {
+pub(super) fn symfn(a: &Mat4) -> [C; 4] {
     let a2 = a * a;
     let a3 = a2 * a;
     let (p1, p2, p3, p4) = (a.trace(), a2.trace(), a3.trace(), (a3 * a).trace());
@@ -377,14 +380,14 @@ pub fn symfn(a: &Mat4) -> [C; 4] {
 
 /// The sandwich Makhlin matrix `M = D_C·O·Λ·Oᵀ·D_C` for a real frame `O` (passed as
 /// `Mat4` with zero imaginary part). `dc = mb(Can(C))`, `lam = mb(Can(G))²`.
-pub fn mmat(dc: &Mat4, lam: &Mat4, o: &Mat4) -> Mat4 {
+pub(super) fn mmat(dc: &Mat4, lam: &Mat4, o: &Mat4) -> Mat4 {
     dc * o * lam * o.transpose() * dc
 }
 
 #[cfg(test)]
 /// Smooth (non-flooring) residual: `‖symfn(M(O)) − symfn(target)‖∞`. The reach
 /// certificate; near degeneracy this is the metric, not weyl coords.
-pub fn smooth_residual(dc: &Mat4, lam: &Mat4, o: &Mat4, target: &[C; 4]) -> f64 {
+pub(super) fn smooth_residual(dc: &Mat4, lam: &Mat4, o: &Mat4, target: &[C; 4]) -> f64 {
     let got = symfn(&mmat(dc, lam, o));
     (0..4)
         .map(|i| (got[i] - target[i]).norm())
@@ -395,7 +398,7 @@ pub fn smooth_residual(dc: &Mat4, lam: &Mat4, o: &Mat4, target: &[C; 4]) -> f64 
 /// `s = √e₄(target)`, evaluated without forming `M` or any matrix power (16 + 36
 /// scalar terms instead of 7 matrix products). Equal to `smooth_residual` in
 /// exact arithmetic; the numerical discrepancy is about 1e-14.
-pub fn compound_residual(dc: &Mat4, lam: &Mat4, o: &Mat4, target: &[C; 4]) -> f64 {
+pub(super) fn compound_residual(dc: &Mat4, lam: &Mat4, o: &Mat4, target: &[C; 4]) -> f64 {
     // a_i = dc_{ii}^2 (complex), lv_j = lam_{jj} (complex), O real (zero imag entries).
     let a: [C; 4] = std::array::from_fn(|i| {
         let d = dc[(i, i)];
@@ -440,7 +443,7 @@ pub fn compound_residual(dc: &Mat4, lam: &Mat4, o: &Mat4, target: &[C; 4]) -> f6
 /// 3-Givens chart frame `O = G(planes₂,θ_z)·G(planes₁,θ_y)·G(planes₀,θ_x)·P`, with
 /// `θ(v)=arccos(√v)`, `v=cos²θ ∈ [0,1]` (s13 chart). `e₁,e₂,e₃` of `M` are trilinear
 /// in `(x,y,z)` here -- the structure the deg-6 companion eigensolve exploits.
-pub fn chart_o(xyz: [f64; 3], planes: [(usize, usize); 3], perm: [usize; 4]) -> Mat4 {
+pub(super) fn chart_o(xyz: [f64; 3], planes: [(usize, usize); 3], perm: [usize; 4]) -> Mat4 {
     let mut o = signed_perm(perm);
     for (k, &(i, j)) in planes.iter().enumerate() {
         let theta = xyz[k].clamp(0.0, 1.0).sqrt().acos();
@@ -452,7 +455,7 @@ pub fn chart_o(xyz: [f64; 3], planes: [(usize, usize); 3], perm: [usize; 4]) -> 
 /// Direct-sqrt chart frame: `cos θ = √v`, `sin θ = √(1−v)` for `θ = arccos(√v)`,
 /// three square roots per coordinate instead of three transcendentals. Equal to
 /// `chart_o` in exact arithmetic.
-pub fn chart_o_sqrt(xyz: [f64; 3], planes: [(usize, usize); 3], perm: [usize; 4]) -> Mat4 {
+pub(super) fn chart_o_sqrt(xyz: [f64; 3], planes: [(usize, usize); 3], perm: [usize; 4]) -> Mat4 {
     let mut o = signed_perm(perm);
     for (k, &(i, j)) in planes.iter().enumerate() {
         let v = xyz[k].clamp(0.0, 1.0);
@@ -472,7 +475,7 @@ pub fn chart_o_sqrt(xyz: [f64; 3], planes: [(usize, usize); 3], perm: [usize; 4]
 /// (faer). Used by bounded algebraic constructions outside the hot
 /// three-Givens atlas. `coeffs` are low-to-high; trailing near-zero leading
 /// terms are trimmed.
-pub fn poly_roots(coeffs: &[f64]) -> Vec<C> {
+pub(super) fn poly_roots(coeffs: &[f64]) -> Vec<C> {
     // Trim leading coeffs that are tiny RELATIVE to the largest -- a near-zero lead (e.g. the sin2
     // closure factor 1−γ² → 0 at γ=±1) would otherwise make the companion entries blow up.
     let scale = coeffs
@@ -510,7 +513,7 @@ pub fn poly_roots(coeffs: &[f64]) -> Vec<C> {
 /// Eigenvalues of a 4×4 (faer). Test-only: the solver gets the target spectrum in closed
 /// form (`exp(2i·eigphases)`) and matches via `symfn`.
 #[cfg(test)]
-pub fn eig4(m: &Mat4) -> [C; 4] {
+pub(super) fn eig4(m: &Mat4) -> [C; 4] {
     let fm = faer::Mat::<C>::from_fn(4, 4, |i, j| m[(i, j)]);
     let ev = fm.eigenvalues().expect("eig4");
     std::array::from_fn(|i| ev[i])
@@ -519,7 +522,7 @@ pub fn eig4(m: &Mat4) -> [C; 4] {
 /// Evaluate a trilinear form (coeffs in monomial order) at `(x,y,z)`. Test-only: the solver
 /// uses `ev_ml` (the multilinear+Y chart); this is the roundtrip harness's reference form.
 #[cfg(test)]
-pub fn ev_trilinear(co: &[C; 8], x: f64, y: f64, z: f64) -> C {
+pub(super) fn ev_trilinear(co: &[C; 8], x: f64, y: f64, z: f64) -> C {
     let m = [1.0, x, y, z, x * y, x * z, y * z, x * y * z];
     (0..8).map(|k| co[k] * m[k]).sum()
 }
@@ -598,7 +601,7 @@ pub struct Solution {
 
 /// Accept threshold on the smooth residual. A true reach is ~1e-13; this is loose
 /// enough to absorb FP while rejecting non-reaches (whose residual is O(0.1+)).
-pub const ACCEPT: f64 = 1e-9;
+pub(super) const ACCEPT: f64 = 1e-9;
 
 /// Public-frame tolerance.  This is deliberately tighter than the spectral
 /// acceptance threshold: the fast compound residual is valid only for a real
@@ -636,7 +639,7 @@ pub(crate) const FAST_ACCEPT: f64 = 1e-11;
 /// perms so the right chart is hit first (fast early-exit), but truncating it drops the right
 /// perm region-dependently and costs coverage for ~no perf gain (perf is eig-bound, not
 /// perm-bound) -- so we keep all 24, ranked.
-pub const CAND_K: usize = 24;
+pub(super) const CAND_K: usize = 24;
 
 /// Force every lazily built table (perm list, interior quotient). One-time
 /// setup work; call before timing loops so a corpus max measures the solver,

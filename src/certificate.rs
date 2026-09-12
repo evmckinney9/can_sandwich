@@ -2,6 +2,51 @@
 //! target roots, and the sandwich master it is evaluated on.
 use super::*;
 
+/// Numerical certificate required before treating a matrix as a real frame.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct FrameMetrics {
+    pub determinant: f64,
+    pub gram: f64,
+    pub imaginary: f64,
+}
+
+impl FrameMetrics {
+    #[inline]
+    pub(super) fn within(self, tolerance: f64) -> bool {
+        self.gram <= tolerance
+            && self.imaginary <= tolerance
+            && (self.determinant.abs() - 1.0).abs() <= tolerance
+    }
+}
+
+#[inline]
+pub(super) fn frame_metrics(frame: &Mat4) -> Option<FrameMetrics> {
+    let real = frame.map(|value| value.re);
+    let determinant = real.determinant();
+    let gram = (real.transpose() * real - nalgebra::Matrix4::identity())
+        .iter()
+        .fold(0.0f64, |maximum, value| maximum.max(value.abs()));
+    let imaginary = frame
+        .iter()
+        .fold(0.0f64, |maximum, value| maximum.max(value.im.abs()));
+    (determinant.is_finite() && gram.is_finite() && imaginary.is_finite()).then_some(FrameMetrics {
+        determinant,
+        gram,
+        imaginary,
+    })
+}
+
+/// Normalize an accepted real orthogonal frame to `SO(4)`.
+#[inline]
+pub(super) fn orient_so4(mut frame: Mat4) -> Mat4 {
+    if frame.determinant().re < 0.0 {
+        for row in 0..4 {
+            frame[(row, 0)] = -frame[(row, 0)];
+        }
+    }
+    frame
+}
+
 /// Cheap frame contract shared by every public certificate path.
 pub(super) fn framed_solution(o: Mat4, rung: Rung, residual: f64) -> Option<Solution> {
     if !residual.is_finite() {
@@ -16,6 +61,15 @@ pub(super) fn framed_solution(o: Mat4, rung: Rung, residual: f64) -> Option<Solu
         rung,
         residual,
     })
+}
+
+#[inline]
+pub(super) fn apply_transpose(frame: Mat4, transpose: bool) -> Mat4 {
+    if transpose {
+        frame.transpose()
+    } else {
+        frame
+    }
 }
 
 /// Shared pre-certificate for algebraic candidate frames.
