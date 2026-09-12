@@ -16,7 +16,12 @@ mod cascade;
 
 #[cfg(feature = "diagnostics")]
 pub use cascade::solve_charts_only;
-pub use cascade::{branch_signature, solve, Mat4, Rung, Solution};
+pub use cascade::{
+    branch_signature, endpoint_gauge_residual, endpoint_right_gauge, factor_through_berkeley,
+    factorized_gate_collapse_residual, factorized_waypoint_mass_residual, solve,
+    ordered_chart_solutions, solve_factorized_waypoint, solve_factorized_waypoint_direct, Mat4,
+    Rung, Solution,
+};
 #[cfg(feature = "diagnostics")]
 pub use cascade::{init_tables, prof};
 #[cfg(feature = "diagnostics")]

@@ -8,6 +8,7 @@
 //! multiplicative-Horn image); we match it by its symmetric functions `e₁..e₄`
 //! (traces, no eig -- polynomial, does not floor at degeneracy).
 use nalgebra::{Complex, Matrix4};
+use std::f64::consts::PI;
 
 type C = Complex<f64>;
 
@@ -39,6 +40,7 @@ use certificate::*;
 pub(crate) use interior::bernstein_variations;
 use interior::*;
 pub type Mat4 = Matrix4<C>;
+
 /// One accepted interior chart: frame, residual, row permutation, plane word.
 type InteriorHit = (Mat4, f64, [usize; 4], [(usize, usize); 3]);
 
@@ -231,7 +233,6 @@ fn c(re: f64, im: f64) -> C {
     Complex::new(re, im)
 }
 
-#[cfg(test)]
 /// The diagonal phase matrix `D = mb(Can(w))` (canonical gates are diagonal in the
 /// magic basis). Built directly as `diag(exp(i*eigphases(w)))` -- the recorded
 /// closed form of that diagonal (`eigphases` doc; asserted against `mb(canonical)`
@@ -242,6 +243,66 @@ pub(super) fn dphase(w: [f64; 3]) -> Mat4 {
     let ph = eigphases(w);
     let d: [C; 4] = std::array::from_fn(|k| C::from_polar(1.0, ph[k]));
     Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(&d))
+}
+
+/// Return the canonical right endpoint frame of a certified child.
+/// This is the exact frame needed to insert the local layer between two
+/// adjacent entanglers in a factorization chain.
+pub fn endpoint_right_gauge(
+    c: [f64; 3],
+    g: [f64; 3],
+    t: [f64; 3],
+    frame: &Mat4,
+) -> Option<Mat4> {
+    let problem = PreparedSandwich::new(c, g, t);
+    certificate::canonical_right_endpoint_gauge(&problem, frame)
+        .or_else(|| certificate::endpoint_factorization(&problem, frame).map(|(_, r)| r))
+}
+
+pub fn endpoint_gauge_residual(
+    c: [f64; 3],
+    g: [f64; 3],
+    t: [f64; 3],
+    frame: &Mat4,
+) -> f64 {
+    let problem = PreparedSandwich::new(c, g, t);
+    certificate::endpoint_factorization_residual(&problem, frame)
+}
+
+/// Check whether two certified child endpoint gauges collapse a three-factor
+/// entangler word to the requested gate class.  If the child identities are
+/// `D_C O₁ D_X = L₁ D_M R₁`, etc., the forced interstitial locals are
+/// `V₁=R₁ᵀ`, `V₂=R₂ᵀ`; no optimization remains.  The residual compares the
+/// spectrum of `(D_X V₁ D_Y V₂ D_Z)(...)ᵀ` with the canonical spectrum of G.
+pub fn factorized_gate_collapse_residual(
+    g: [f64; 3],
+    x: [f64; 3],
+    y: [f64; 3],
+    z: [f64; 3],
+    r1: &Mat4,
+    middle_frame: &Mat4,
+    r2: &Mat4,
+    final_frame: &Mat4,
+) -> f64 {
+    let word = dphase(x)
+        * r1.transpose()
+        * *middle_frame
+        * dphase(y)
+        * r2.transpose()
+        * *final_frame
+        * dphase(z);
+    let actual = symfn(&(word * word.transpose()));
+    let problem = PreparedSandwich::new([0.0; 3], g, [0.0; 3]);
+    (0..2)
+        .map(|branch| {
+            let want = esym4(problem.target_roots[branch]);
+            actual
+                .iter()
+                .zip(want.iter())
+                .map(|(a, b)| (*a - *b).norm())
+                .fold(0.0, f64::max)
+        })
+        .fold(f64::INFINITY, f64::min)
 }
 
 /// Monodromy triple -> Weyl coords (gulps convention `[m₀+m₁, m₀+m₂, m₁+m₂]`).
@@ -262,7 +323,6 @@ pub(super) fn rho_weyl(w: [f64; 3]) -> [f64; 3] {
 /// The 4 magic-basis eigenphases of `Can(w)` in closed form (no matrix): the diagonal
 /// of `mb(Can(w))`, i.e. `D_C = diag(exp(i·eigphases))`. Same order as `dphase`.
 pub(super) fn eigphases(w: [f64; 3]) -> [f64; 4] {
-    use std::f64::consts::PI;
     let h = PI / 2.0;
     [
         h * (w[0] - w[1] + w[2]),
@@ -471,6 +531,53 @@ pub(super) fn chart_o_sqrt(xyz: [f64; 3], planes: [(usize, usize); 3], perm: [us
     o
 }
 
+/// Berkeley (2+2) CS masses of an orthogonal frame.  These are the squared
+/// singular-value invariants of the leading 2x2 block; unlike a frame gauge,
+/// they survive the left/right O(2)xO(2) actions.
+pub(super) fn cs_masses(o: &Mat4) -> (f64, f64) {
+    let a00 = o[(0, 0)].re;
+    let a01 = o[(0, 1)].re;
+    let a10 = o[(1, 0)].re;
+    let a11 = o[(1, 1)].re;
+    let s = a00 * a00 + a01 * a01 + a10 * a10 + a11 * a11;
+    let det = a00 * a11 - a01 * a10;
+    (s, det * det)
+}
+
+/// Multilinear coefficient table for the lifted CS masses on an atlas word.
+/// Coefficients are indexed by the 3-bit corner `(x=1,y=1,z=1)` mask.  The
+/// table is an exact algebraic representation of the corner interpolant; the
+/// atlas test below certifies that it equals the completed-frame masses.
+#[allow(dead_code)]
+pub(super) fn cs_mass_coeffs(planes: [(usize, usize); 3], perm: [usize; 4]) -> [[f64; 8]; 2] {
+    let mut coeffs = [[0.0; 8]; 2];
+    for mask in 0..8 {
+        let q = [
+            if mask & 1 != 0 { 1.0 } else { 0.0 },
+            if mask & 2 != 0 { 1.0 } else { 0.0 },
+            if mask & 4 != 0 { 1.0 } else { 0.0 },
+        ];
+        let (s, d) = cs_masses(&chart_o(q, planes, perm));
+        coeffs[0][mask] = s;
+        coeffs[1][mask] = d;
+    }
+    coeffs
+}
+
+#[inline]
+#[allow(dead_code)]
+fn eval_multilinear(coeffs: &[f64; 8], p: [f64; 3]) -> f64 {
+    (0..8)
+        .map(|mask| {
+            let weight = (0..3).fold(1.0, |acc, k| {
+                let bit = (mask >> k) & 1;
+                acc * if bit == 1 { p[k] } else { 1.0 - p[k] }
+            });
+            weight * coeffs[mask]
+        })
+        .sum()
+}
+
 /// All complex roots of a real polynomial via companion-matrix eigenvalues
 /// (faer). Used by bounded algebraic constructions outside the hot
 /// three-Givens atlas. `coeffs` are low-to-high; trailing near-zero leading
@@ -587,6 +694,7 @@ pub fn branch_signature(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> String {
     )
 }
 
+#[derive(Clone)]
 pub struct Solution {
     pub o: Mat4,
     /// Which gate-lifted representative certified, 0 for the shipped
@@ -653,6 +761,152 @@ pub fn init_tables() {
 
 pub fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solution {
     solve_inner(c, g, t)
+}
+
+/// Enumerate the finite ordered interior chart witnesses.  A generic child
+/// realization has a continuous fiber; these are distinct closed-form
+/// transversal witnesses exposed by the atlas, rather than repeated calls to
+/// the first-hit production selector.
+pub fn ordered_chart_solutions(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Vec<Solution> {
+    let problem = PreparedSandwich::new(c, g, t);
+    let mut out = Vec::new();
+    let mut vertices = [None; 256];
+    for &order in &interior::BOUNDARY_HEAD {
+        let Some((o, residual, _, _)) = interior::solve_interior_cover(
+            &problem.left,
+            &problem.right,
+            &problem.target_roots,
+            &problem.dc,
+            &problem.lam,
+            &problem.targets,
+            &[order],
+            &mut vertices,
+        ) else { continue; };
+        let Some(solution) = certificate::compiler_solution(&problem, o, Rung::Interior, residual)
+        else { continue; };
+        if out.iter().all(|old: &Solution| {
+            (old.o - solution.o).iter().map(|z| z.norm()).fold(0.0, f64::max) > 1e-8
+        }) {
+            out.push(solution);
+        }
+    }
+    if out.is_empty() {
+        let solution = solve_inner(c, g, t);
+        if solution.rung != Rung::Unsolved { out.push(solution); }
+    }
+    out
+}
+
+/// Factor a target canonical gate through the fixed Berkeley entangler:
+/// `B * V * B ~ target`, where the returned frame is the local middle gate
+/// `V` in the magic basis.  Since both outer factors are 2+2, this dispatches
+/// directly to the Pair22/Heron selector rather than the generic tail.
+pub fn factor_through_berkeley(target: [f64; 3]) -> Option<Mat4> {
+    // Berkeley canonical coordinates are (1/2,1/4,0); convert through the
+    // package's monodromy convention c=(m0+m1,m0+m2,m1+m2).
+    const B: [f64; 3] = [0.375, 0.125, -0.125];
+    let solution = solve(B, B, target);
+    (solution.rung != Rung::Unsolved).then_some(solution.o)
+}
+
+/// Evaluate one proposed waypoint for the virtual factorization
+/// `G = B V B`. The caller supplies `M` (for example from a reachable-polytope
+/// intersection); this routine realizes both B-children and applies the exact
+/// endpoint-Grassmannian compatibility test. A small residual means the two
+/// child certificates can be stitched with the fixed middle local `V`.
+pub fn solve_factorized_waypoint(
+    c: [f64; 3],
+    g: [f64; 3],
+    t: [f64; 3],
+    waypoint: [f64; 3],
+) -> Option<(Solution, Solution, Mat4, f64)> {
+    const B: [f64; 3] = [0.375, 0.125, -0.125];
+    let middle = factor_through_berkeley(g)?;
+    let first = solve(c, B, waypoint);
+    let second = solve(waypoint, B, t);
+    if matches!(first.rung, Rung::Unsolved) || matches!(second.rung, Rung::Unsolved) {
+        return None;
+    }
+    let first_problem = PreparedSandwich::new(c, B, waypoint);
+    let endpoint = certificate::canonical_right_endpoint_gauge(&first_problem, &first.o)?;
+    let expected = endpoint * middle;
+    let mut residual = f64::INFINITY;
+    for mask in 0..16 {
+        let signs = [0, 1, 2, 3].map(|i| if (mask >> i) & 1 == 0 { 1.0 } else { -1.0 });
+        if signs.iter().product::<f64>() < 0.0 {
+            continue;
+        }
+        let s = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(
+            &signs.map(|x| C::new(x, 0.0)),
+        ));
+        residual = residual.min(certificate::endpoint_plane_residual(
+            &(s * expected),
+            &second.o,
+        ));
+    }
+    if !residual.is_finite() {
+        return None;
+    }
+    Some((first, second, middle, residual))
+}
+
+/// Diagnostic only: compare the two CS masses of the relative endpoint frame
+/// against the Berkeley middle frame.  This is a necessary B-double-coset
+/// check, not a generic waypoint certificate (the left stabilizer of a generic
+/// waypoint is K_M, not K_B).
+pub fn factorized_waypoint_mass_residual(
+    c: [f64; 3],
+    g: [f64; 3],
+    t: [f64; 3],
+    waypoint: [f64; 3],
+) -> Option<(f64, f64)> {
+    let (first, second, middle, _) = solve_factorized_waypoint(c, g, t, waypoint)?;
+    let first_problem = PreparedSandwich::new(c, [0.375, 0.125, -0.125], waypoint);
+    let endpoint = certificate::canonical_right_endpoint_gauge(&first_problem, &first.o)?;
+    let relative = endpoint.transpose() * second.o;
+    let (s, d) = cs_masses(&relative);
+    let (sm, dm) = cs_masses(&middle);
+    Some(((s - sm).abs(), (d - dm).abs()))
+}
+
+/// Collapse a compatible factorized waypoint to a direct certified frame for
+/// the original gate. Endpoint gauges are rephased onto the canonical target
+/// diagonal before the fixed Berkeley middle frame is applied.
+pub fn solve_factorized_waypoint_direct(
+    c: [f64; 3],
+    g: [f64; 3],
+    t: [f64; 3],
+    waypoint: [f64; 3],
+) -> Option<Solution> {
+    let (first, _second, middle, compatibility) = solve_factorized_waypoint(c, g, t, waypoint)?;
+    if compatibility > ACCEPT {
+        return None;
+    }
+    const B: [f64; 3] = [0.375, 0.125, -0.125];
+    let factor_problem = PreparedSandwich::new(B, B, g);
+    let problem = PreparedSandwich::new(c, g, t);
+    for branch in 0..2 {
+        let Some((left, _right)) =
+            certificate::endpoint_factorization_branch(&factor_problem, &middle, branch)
+        else {
+            continue;
+        };
+        let left = if branch == 0 {
+            left
+        } else {
+            let (sp, _) = certificate::rho_transport_for_collapse();
+            left * sp
+        };
+        let candidate = first.o * left;
+        for candidate in [candidate] {
+            if let Some(solution) =
+                certificate::compiler_solution(&problem, candidate, Rung::Chart, compatibility)
+            {
+                return Some(solution);
+            }
+        }
+    }
+    None
 }
 
 /// The chart tier alone: `PreparedSandwich` then `charts::solve_full`, with no
@@ -1381,6 +1635,147 @@ mod tests {
     }
 
     #[test]
+    fn berkeley_factorization_routes_generic_targets_through_pair22() {
+        let targets = [
+            [0.25, 0.25, -0.25],
+            [0.31, 0.17, -0.09],
+            [0.22, 0.08, 0.03],
+            [0.41, 0.19, -0.12],
+        ];
+        for target in targets {
+            let middle = factor_through_berkeley(target)
+                .expect("B-V-B factorization should have a Pair22 witness");
+            let problem =
+                PreparedSandwich::new([0.375, 0.125, -0.125], [0.375, 0.125, -0.125], target);
+            let residual =
+                compound_residual(&problem.dc, &problem.lam, &middle, &problem.targets[0]).min(
+                    compound_residual(&problem.dc, &problem.lam, &middle, &problem.targets[1]),
+                );
+            assert!(residual < 1e-8, "target={target:?}, residual={residual:e}");
+        }
+    }
+
+    #[test]
+    fn berkeley_factorization_grid_has_no_generic_pair22_holes() {
+        // Valid Weyl points sampled in the interior and near all three walls,
+        // converted to the package's monodromy coordinates.
+        let weyl_points = [
+            [0.10, 0.07, 0.02],
+            [0.20, 0.13, 0.04],
+            [0.31, 0.17, 0.09],
+            [0.42, 0.21, 0.08],
+            [0.49, 0.24, 0.01],
+            [0.26, 0.26, 0.12],
+            [0.38, 0.30, 0.18],
+            [0.50, 0.25, 0.20],
+        ];
+        for c in weyl_points {
+            let target = [
+                0.5 * (c[0] + c[1] - c[2]),
+                0.5 * (c[0] + c[2] - c[1]),
+                0.5 * (c[1] + c[2] - c[0]),
+            ];
+            let middle = factor_through_berkeley(target)
+                .expect("interior Weyl target should factor through Berkeley B");
+            let problem =
+                PreparedSandwich::new([0.375, 0.125, -0.125], [0.375, 0.125, -0.125], target);
+            let residual = problem
+                .targets
+                .iter()
+                .map(|tau| compound_residual(&problem.dc, &problem.lam, &middle, tau))
+                .fold(f64::INFINITY, f64::min);
+            assert!(residual < 1e-8, "weyl={c:?}, residual={residual:e}");
+        }
+    }
+
+    #[test]
+    fn right_endpoint_gauge_reconstructs_an_orthogonal_frame() {
+        let c = [0.5, 0.25, -0.25];
+        let b = [0.375, 0.125, -0.125];
+        let m = [0.25, 0.25, -0.25];
+        let solution = solve(c, b, m);
+        let problem = PreparedSandwich::new(c, b, m);
+        let gauge = certificate::right_endpoint_gauge(&problem, &solution.o)
+            .expect("certified child must expose its endpoint gauge");
+        let real = gauge.map(|z| z.re);
+        assert!((real.transpose() * real - nalgebra::Matrix4::<f64>::identity()).norm() < 1e-8);
+        assert!((real.determinant().abs() - 1.0).abs() < 1e-8);
+    }
+
+    #[test]
+    fn factorized_middle_constraint_is_exact_after_endpoint_gauge() {
+        let c = [0.5, 0.25, -0.25];
+        let b = [0.375, 0.125, -0.125];
+        let m = [0.25, 0.25, -0.25];
+        let first = PreparedSandwich::new(c, b, m);
+        let first_solution = solve(c, b, m);
+        let endpoint = certificate::canonical_right_endpoint_gauge(&first, &first_solution.o)
+            .expect("first child must expose endpoint gauge");
+        let middle = Mat4::identity();
+        let second_frame = endpoint * middle;
+        let residual = certificate::factorized_middle_residual(
+            &first,
+            &first_solution.o,
+            &second_frame,
+            &middle,
+        )
+        .expect("gauge extraction must succeed");
+        assert!(residual < 1e-8, "residual={residual:e}");
+        let plane_residual = certificate::factorized_middle_plane_residual(
+            &first,
+            &first_solution.o,
+            &second_frame,
+            &middle,
+        )
+        .expect("gauge extraction must succeed");
+        assert!(plane_residual < 1e-8, "plane residual={plane_residual:e}");
+    }
+
+    #[test]
+    fn factorized_waypoint_api_evaluates_a_proposed_point() {
+        let b = [0.375, 0.125, -0.125];
+        let candidate = solve_factorized_waypoint(b, b, b, b)
+            .expect("the B-B-B waypoint is inside the Pair22 child domains");
+        assert!(candidate.3.is_finite());
+        let middle = factor_through_berkeley(b).unwrap();
+        let fp = PreparedSandwich::new(b, b, b);
+        let (left, right) = certificate::endpoint_factorization(&fp, &middle).unwrap();
+        let db = dphase(weyl_from_monodromy(b));
+        let h = db * middle * db;
+        let factor_error = (h - left * db * right)
+            .iter()
+            .map(|z| z.norm())
+            .fold(0.0, f64::max);
+        assert!(factor_error < 1e-8);
+
+        let first_problem = PreparedSandwich::new(b, b, b);
+        let endpoint = certificate::canonical_right_endpoint_gauge(&first_problem, &candidate.0.o)
+            .expect("canonical endpoint gauge");
+        let second_frame = endpoint * middle;
+        let virtual_master = mmat(&db, &(db * db), &second_frame);
+        let direct_master = mmat(&db, &(db * db), &(candidate.0.o * left));
+        let error = symfn(&virtual_master)
+            .iter()
+            .zip(symfn(&direct_master).iter())
+            .map(|(a, b)| (a - b).norm())
+            .fold(0.0, f64::max);
+        assert!(error < 1e-8, "collapse error={error:e}");
+    }
+
+    #[test]
+    fn rho_transport_identity_matches_canonical_diagonals() {
+        let w = [0.41, 0.17, 0.06];
+        let (sp, ps) = certificate::rho_transport_for_collapse();
+        let lhs = dphase(rho_weyl(w));
+        let rhs = (sp * dphase(w) * ps).map(|entry| C::new(0.0, 1.0) * entry);
+        let error = (lhs - rhs)
+            .iter()
+            .map(|entry| entry.norm())
+            .fold(0.0, f64::max);
+        assert!(error < 1e-12, "rho transport error={error:e}");
+    }
+
+    #[test]
     fn scalar_left_factor_is_exact_edge() {
         let g = [0.17, 0.04, -0.09];
         let hit = solve([0.0, 0.0, 0.0], g, g);
@@ -2041,6 +2436,100 @@ mod tests {
         assert!(
             worst < 1e-12,
             "compound_residual mismatch: worst={worst:.3e}"
+        );
+    }
+
+    #[test]
+    fn chart_lifted_masses_are_affine_on_two_givens() {
+        // Shared planes: G01(x)G12(y) has s=1+y and d=y exactly.
+        for &(x, y) in &[(0.13, 0.27), (0.41, 0.82), (0.93, 0.06)] {
+            let o = chart_o([x, y, 1.0], [(0, 1), (1, 2), (2, 3)], [0, 1, 2, 3]);
+            let (s, d) = cs_masses(&o);
+            assert!((s - (1.0 + y)).abs() < 2e-12, "s={s}, y={y}");
+            assert!((d - y).abs() < 2e-12, "d={d}, y={y}");
+        }
+
+        // Disjoint planes: the first rotation is entirely inside the leading
+        // block, so that block remains orthogonal; hence s=2 and d=1.
+        for &(x, y) in &[(0.13, 0.27), (0.41, 0.82), (0.93, 0.06)] {
+            let o = chart_o([x, y, 1.0], [(0, 1), (2, 3), (1, 2)], [0, 1, 2, 3]);
+            let (s, d) = cs_masses(&o);
+            assert!((s - 2.0).abs() < 2e-12, "s={s}, x={x}");
+            assert!((d - 1.0).abs() < 2e-12, "d={d}, s={s}, x={x}");
+        }
+    }
+
+    #[test]
+    fn chart_lifted_masses_are_trilinear_on_three_givens() {
+        // The production three-Givens chart uses squared cosines.  Test the
+        // stronger statement needed by the selector: s and d are recovered by
+        // multilinear interpolation from the eight chart corners, with no
+        // residual square-root dependence.
+        let planes = [(0, 1), (1, 2), (2, 3)];
+        let interp = |which: usize, p: [f64; 3]| -> f64 {
+            let mut out = 0.0;
+            for mask in 0..8 {
+                let q = [
+                    if mask & 1 != 0 { 1.0 } else { 0.0 },
+                    if mask & 2 != 0 { 1.0 } else { 0.0 },
+                    if mask & 4 != 0 { 1.0 } else { 0.0 },
+                ];
+                let w = (0..3).fold(1.0, |acc, k| {
+                    acc * if q[k] == 1.0 { p[k] } else { 1.0 - p[k] }
+                });
+                let o = chart_o(q, planes, [0, 1, 2, 3]);
+                let v = cs_masses(&o);
+                out += w * if which == 0 { v.0 } else { v.1 };
+            }
+            out
+        };
+        for p in [[0.17, 0.43, 0.79], [0.61, 0.22, 0.36], [0.93, 0.08, 0.54]] {
+            let o = chart_o(p, planes, [0, 1, 2, 3]);
+            let (s, d) = cs_masses(&o);
+            assert!(
+                (s - interp(0, p)).abs() < 2e-11,
+                "s={s}, fit={}",
+                interp(0, p)
+            );
+            assert!(
+                (d - interp(1, p)).abs() < 2e-11,
+                "d={d}, fit={}",
+                interp(1, p)
+            );
+        }
+    }
+
+    #[test]
+    fn lifted_masses_are_multilinear_on_entire_interior_atlas() {
+        // Exhaust the actual 16 plane words and 24 SO(4) permutations used by
+        // the exact interior solver.  Corner interpolation is an exact test
+        // for a multilinear polynomial in x=cos²(theta), not a numerical fit.
+        let points = [[0.173, 0.431, 0.792], [0.614, 0.227, 0.361]];
+        let mut worst = 0.0;
+        let mut worst_label = ([0usize; 4], [(0usize, 0usize); 3]);
+        for &planes in INTERIOR_PLANES.iter() {
+            for &perm in PERMS24.iter() {
+                let coeffs = cs_mass_coeffs(planes, perm);
+                for p in points {
+                    let o = chart_o(p, planes, perm);
+                    let actual = cs_masses(&o);
+                    let fit = [
+                        eval_multilinear(&coeffs[0], p),
+                        eval_multilinear(&coeffs[1], p),
+                    ];
+                    let err = (actual.0 - fit[0]).abs().max((actual.1 - fit[1]).abs());
+                    if err > worst {
+                        worst = err;
+                        worst_label = (perm, planes);
+                    }
+                }
+            }
+        }
+        assert!(
+            worst < 3e-10,
+            "non-multilinear lifted mass: err={worst:.3e}, perm={:?}, planes={:?}",
+            worst_label.0,
+            worst_label.1
         );
     }
 }

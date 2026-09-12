@@ -23,6 +23,57 @@ type Affine = [f64; 3];
 type Bi2 = [[f64; 3]; 3];
 type Bi4 = [[f64; 5]; 5];
 
+/// Signed Pluecker coordinates of the oriented 2-plane spanned by the first
+/// two columns of an SO(4) frame. These are the native coordinates for the
+/// special case in which BOTH endpoint stabilizers are B-type.
+pub(crate) fn frame_pluecker(o: &Mat4) -> [f64; 6] {
+    const PAIRS: [(usize, usize); 6] = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];
+    PAIRS.map(|(i, j)| (o[(i, 0)] * o[(j, 1)] - o[(j, 0)] * o[(i, 1)]).re)
+}
+
+#[inline]
+fn pluecker_star(p: [f64; 6]) -> [f64; 6] {
+    [p[5], -p[4], p[3], p[2], -p[1], p[0]]
+}
+
+/// The two continuous B-double-coset coordinates of a relative frame. This is
+/// not a generic waypoint compatibility test: it applies only when both
+/// endpoint stabilizers are B-type (or an equivalent repeated stratum).
+/// `q` is det(R_11); `r` is the complementary 2x2 minor.  For child frames
+/// `left,right`, these are computed without constructing R explicitly.
+pub(crate) fn b_relative_pluecker(left: &Mat4, right: &Mat4) -> (f64, f64) {
+    let pl = frame_pluecker(left);
+    let pr = frame_pluecker(right);
+    let q: f64 = pl.iter().zip(pr.iter()).map(|(a, b)| a * b).sum();
+    let sl = pluecker_star(pl);
+    let r: f64 = sl.iter().zip(pr.iter()).map(|(a, b)| a * b).sum();
+    (q, r)
+}
+
+/// Compatibility residual for a B-B special case. The four sign branches are
+/// quotient-equivalent; this must not be used for a generic M waypoint.
+pub(crate) fn b_compatibility_residual(left: &Mat4, right: &Mat4, middle: &Mat4) -> f64 {
+    let (q, r) = b_relative_pluecker(left, right);
+    let (qv, rv) = b_relative_pluecker(&Mat4::identity(), middle);
+    [
+        (q - qv).abs().max((r - rv).abs()),
+        (q - qv).abs().max((r + rv).abs()),
+        (q + qv).abs().max((r - rv).abs()),
+        (q + qv).abs().max((r + rv).abs()),
+    ]
+    .into_iter()
+    .fold(f64::INFINITY, f64::min)
+}
+
+/// Residual for equality of two frames modulo the B stabilizer on both sides.
+/// This is valid only on a 2+2 waypoint, where the waypoint stabilizer has the
+/// same block form as B.
+#[allow(dead_code)]
+pub(crate) fn b_frame_equivalence_residual(left: &Mat4, right: &Mat4) -> f64 {
+    let (q, r) = b_relative_pluecker(left, right);
+    ((q.abs() - 1.0).abs()).max(r.abs())
+}
+
 struct Forms {
     values: [Affine; 6],
     precise: [[Dd; 3]; 6],
@@ -1717,5 +1768,37 @@ mod tests {
         let residual = solve_oriented(&repeated, &other, &target, true, true, &mut accept)
             .expect("regular Pair22 witness");
         assert!(residual < 1e-9);
+    }
+
+    #[test]
+    fn b_pluecker_coupling_recovers_relative_middle_frame() {
+        let left = super::super::givens(0, 1, 0.31) * super::super::givens(1, 3, -0.47);
+        let middle = super::super::givens(0, 2, 0.22)
+            * super::super::givens(1, 3, -0.19)
+            * super::super::givens(0, 1, 0.41);
+        let right = left * middle;
+        let residual = b_compatibility_residual(&left, &right, &middle);
+        assert!(residual < 1e-12, "relative Pluecker residual={residual:e}");
+    }
+
+    #[test]
+    fn b_pluecker_coupling_is_invariant_under_child_gauge() {
+        let left = super::super::givens(0, 1, 0.17)
+            * super::super::givens(2, 3, -0.29)
+            * super::super::givens(1, 2, 0.43);
+        let middle = super::super::givens(0, 3, -0.23)
+            * super::super::givens(1, 2, 0.37)
+            * super::super::givens(0, 1, -0.11);
+        let right = left * middle;
+        // K_B gauges are block rotations in the 2+2 split. They change the
+        // representatives but not the two Pluecker double-coset coordinates.
+        let kl = super::super::givens(0, 1, 0.61) * super::super::givens(2, 3, -0.52);
+        let kr = super::super::givens(0, 1, -0.48) * super::super::givens(2, 3, 0.33);
+        let gauged_left = left * kl;
+        let gauged_right = right * kr;
+        let direct = b_relative_pluecker(&left, &right);
+        let gauged = b_relative_pluecker(&gauged_left, &gauged_right);
+        assert!((direct.0.abs() - gauged.0.abs()).abs() < 1e-12);
+        assert!((direct.1.abs() - gauged.1.abs()).abs() < 1e-12);
     }
 }
