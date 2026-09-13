@@ -248,23 +248,13 @@ pub(super) fn dphase(w: [f64; 3]) -> Mat4 {
 /// Return the canonical right endpoint frame of a certified child.
 /// This is the exact frame needed to insert the local layer between two
 /// adjacent entanglers in a factorization chain.
-pub fn endpoint_right_gauge(
-    c: [f64; 3],
-    g: [f64; 3],
-    t: [f64; 3],
-    frame: &Mat4,
-) -> Option<Mat4> {
+pub fn endpoint_right_gauge(c: [f64; 3], g: [f64; 3], t: [f64; 3], frame: &Mat4) -> Option<Mat4> {
     let problem = PreparedSandwich::new(c, g, t);
     certificate::canonical_right_endpoint_gauge(&problem, frame)
         .or_else(|| certificate::endpoint_factorization(&problem, frame).map(|(_, r)| r))
 }
 
-pub fn endpoint_gauge_residual(
-    c: [f64; 3],
-    g: [f64; 3],
-    t: [f64; 3],
-    frame: &Mat4,
-) -> f64 {
+pub fn endpoint_gauge_residual(c: [f64; 3], g: [f64; 3], t: [f64; 3], frame: &Mat4) -> f64 {
     let problem = PreparedSandwich::new(c, g, t);
     certificate::endpoint_factorization_residual(&problem, frame)
 }
@@ -781,18 +771,28 @@ pub fn ordered_chart_solutions(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Vec<Sol
             &problem.targets,
             &[order],
             &mut vertices,
-        ) else { continue; };
+        ) else {
+            continue;
+        };
         let Some(solution) = certificate::compiler_solution(&problem, o, Rung::Interior, residual)
-        else { continue; };
+        else {
+            continue;
+        };
         if out.iter().all(|old: &Solution| {
-            (old.o - solution.o).iter().map(|z| z.norm()).fold(0.0, f64::max) > 1e-8
+            (old.o - solution.o)
+                .iter()
+                .map(|z| z.norm())
+                .fold(0.0, f64::max)
+                > 1e-8
         }) {
             out.push(solution);
         }
     }
     if out.is_empty() {
         let solution = solve_inner(c, g, t);
-        if solution.rung != Rung::Unsolved { out.push(solution); }
+        if solution.rung != Rung::Unsolved {
+            out.push(solution);
+        }
     }
     out
 }
@@ -814,11 +814,7 @@ pub fn factor_through_berkeley(target: [f64; 3]) -> Option<Mat4> {
 /// factors are diagonal in the magic basis, the same local frame that realizes
 /// `C · U · B ~ M` realizes `C · U · G ~ T`.  This is the recursive waypoint
 /// reduction with the waypoint eliminated analytically.
-pub fn solve_via_fixed_berkeley(
-    c: [f64; 3],
-    g: [f64; 3],
-    t: [f64; 3],
-) -> Option<Solution> {
+pub fn solve_via_fixed_berkeley(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<Solution> {
     const B: [f64; 3] = [0.375, 0.125, -0.125];
     solve_via_fixed_factor(c, g, t, B)
 }
@@ -845,7 +841,9 @@ pub fn solve_via_fixed_factor(
         (-residual[0] + residual[1] + residual[2]) * 0.5,
     ];
     let child = solve(c, h, middle);
-    if child.rung == Rung::Unsolved { return None; }
+    if child.rung == Rung::Unsolved {
+        return None;
+    }
     let problem = PreparedSandwich::new(c, g, t);
     certificate::compiler_solution(&problem, child.o, child.rung, child.residual)
 }
@@ -853,7 +851,13 @@ pub fn solve_via_fixed_factor(
 /// Re-certify an externally selected frame against the original sandwich.
 /// This is intentionally strict: a frame found in a transformed factor chart
 /// is useful only if it survives the caller's representatives.
-pub fn certify_frame(c: [f64; 3], g: [f64; 3], t: [f64; 3], o: Mat4, rung: Rung) -> Option<Solution> {
+pub fn certify_frame(
+    c: [f64; 3],
+    g: [f64; 3],
+    t: [f64; 3],
+    o: Mat4,
+    rung: Rung,
+) -> Option<Solution> {
     let problem = PreparedSandwich::new(c, g, t);
     certificate::compiler_solution(&problem, o, rung, ACCEPT)
 }
@@ -881,45 +885,78 @@ pub fn solve_factorized_waypoint(
     // not glue, try the finite ordered chart transversal before declaring the
     // waypoint impossible.  This keeps the outer waypoint search unchanged
     // while making orientation selection explicit and deterministic.
-    if candidates.first().map_or(true, |(a,b)| a.rung == Rung::Unsolved || b.rung == Rung::Unsolved) {
+    if candidates.first().map_or(true, |(a, b)| {
+        a.rung == Rung::Unsolved || b.rung == Rung::Unsolved
+    }) {
         let fs = ordered_chart_solutions(c, B, waypoint);
         let ss = ordered_chart_solutions(waypoint, B, t);
-        for a in fs { for b in &ss { candidates.push((a.clone(), b.clone())); } }
+        for a in fs {
+            for b in &ss {
+                candidates.push((a.clone(), b.clone()));
+            }
+        }
     }
     let mut best = None;
     for (first, second) in candidates {
         let first_problem = PreparedSandwich::new(c, B, waypoint);
-        let Some(endpoint) = certificate::canonical_right_endpoint_gauge(&first_problem, &first.o) else { continue };
+        let Some(endpoint) = certificate::canonical_right_endpoint_gauge(&first_problem, &first.o)
+        else {
+            continue;
+        };
         let expected = endpoint * middle;
         let mut residual = f64::INFINITY;
         for mask in 0..16 {
             let signs = [0, 1, 2, 3].map(|i| if (mask >> i) & 1 == 0 { 1.0 } else { -1.0 });
-            if signs.iter().product::<f64>() < 0.0 { continue; }
-            let s = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(&signs.map(|x| C::new(x, 0.0))));
-            residual = residual.min(certificate::endpoint_plane_residual(&(s * expected), &second.o));
+            if signs.iter().product::<f64>() < 0.0 {
+                continue;
+            }
+            let s = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(
+                &signs.map(|x| C::new(x, 0.0)),
+            ));
+            residual = residual.min(certificate::endpoint_plane_residual(
+                &(s * expected),
+                &second.o,
+            ));
         }
-        if best.as_ref().map_or(true, |(_,_,_,r)| residual < *r) { best = Some((first, second, middle, residual)); }
-        if residual <= ACCEPT { break; }
+        if best.as_ref().map_or(true, |(_, _, _, r)| residual < *r) {
+            best = Some((first, second, middle, residual));
+        }
+        if residual <= ACCEPT {
+            break;
+        }
     }
     if best.as_ref().map_or(true, |(_, _, _, r)| *r > ACCEPT) {
         let fs = ordered_chart_solutions(c, B, waypoint);
         let ss = ordered_chart_solutions(waypoint, B, t);
         for first in fs {
             let first_problem = PreparedSandwich::new(c, B, waypoint);
-            let Some(endpoint) = certificate::canonical_right_endpoint_gauge(&first_problem, &first.o) else { continue };
+            let Some(endpoint) =
+                certificate::canonical_right_endpoint_gauge(&first_problem, &first.o)
+            else {
+                continue;
+            };
             let expected = endpoint * middle;
             for second in &ss {
                 let mut residual = f64::INFINITY;
                 for mask in 0..16 {
                     let signs = [0, 1, 2, 3].map(|i| if (mask >> i) & 1 == 0 { 1.0 } else { -1.0 });
-                    if signs.iter().product::<f64>() < 0.0 { continue; }
-                    let s = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(&signs.map(|x| C::new(x, 0.0))));
-                    residual = residual.min(certificate::endpoint_plane_residual(&(s * expected), &second.o));
+                    if signs.iter().product::<f64>() < 0.0 {
+                        continue;
+                    }
+                    let s = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(
+                        &signs.map(|x| C::new(x, 0.0)),
+                    ));
+                    residual = residual.min(certificate::endpoint_plane_residual(
+                        &(s * expected),
+                        &second.o,
+                    ));
                 }
                 if best.as_ref().map_or(true, |(_, _, _, r)| residual < *r) {
                     best = Some((first.clone(), second.clone(), middle, residual));
                 }
-                if residual <= ACCEPT { return Some((first, second.clone(), middle, residual)); }
+                if residual <= ACCEPT {
+                    return Some((first, second.clone(), middle, residual));
+                }
             }
         }
     }

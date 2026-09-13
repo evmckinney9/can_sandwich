@@ -487,38 +487,40 @@ pub(super) fn endpoint_factorization_branch(
     let master = sandwich_master(problem, o);
     let roots0 = problem.target_roots.get(branch)?;
     for permutation in *PERMS24 {
-      let roots = std::array::from_fn(|i| roots0[permutation[i]]);
-      let Some(frame) = klein::takagi_real(&master, &roots) else { continue };
-      let l = Mat4::from_fn(|i, j| C::new(frame[(i, j)], 0.0));
-      let diagonalized = l.transpose() * master * l;
-      let error = (0..4)
-        .flat_map(|i| (0..4).map(move |j| (i, j)))
-        .map(|(i, j)| {
-            let want = if i == j { roots[i] } else { C::default() };
-            (diagonalized[(i, j)] - want).norm()
-        })
-        .fold(0.0f64, f64::max);
-      if error < 1e-8 {
-        let db = Mat4::from_fn(|i, j| {
-            if i == j {
-                problem.lam[(i, i)].sqrt()
-            } else {
-                C::default()
-            }
-        });
-        let dm = Mat4::from_fn(|i, j| {
-            if i == j {
-                roots[i].sqrt()
-            } else {
-                C::default()
-            }
-        });
-        let u = problem.dc * *o * db;
-        let right = dm
-            .try_inverse()
-            .map(|inverse| inverse * l.transpose() * u)?;
-        return Some((l, right));
-      }
+        let roots = std::array::from_fn(|i| roots0[permutation[i]]);
+        let Some(frame) = klein::takagi_real(&master, &roots) else {
+            continue;
+        };
+        let l = Mat4::from_fn(|i, j| C::new(frame[(i, j)], 0.0));
+        let diagonalized = l.transpose() * master * l;
+        let error = (0..4)
+            .flat_map(|i| (0..4).map(move |j| (i, j)))
+            .map(|(i, j)| {
+                let want = if i == j { roots[i] } else { C::default() };
+                (diagonalized[(i, j)] - want).norm()
+            })
+            .fold(0.0f64, f64::max);
+        if error < 1e-8 {
+            let db = Mat4::from_fn(|i, j| {
+                if i == j {
+                    problem.lam[(i, i)].sqrt()
+                } else {
+                    C::default()
+                }
+            });
+            let dm = Mat4::from_fn(|i, j| {
+                if i == j {
+                    roots[i].sqrt()
+                } else {
+                    C::default()
+                }
+            });
+            let u = problem.dc * *o * db;
+            let right = dm
+                .try_inverse()
+                .map(|inverse| inverse * l.transpose() * u)?;
+            return Some((l, right));
+        }
     }
     // A certified solver frame can carry coefficient-scale spectral error that
     // makes the known-root projector reject even though the symmetric master is
@@ -529,10 +531,18 @@ pub(super) fn endpoint_factorization_branch(
             if let Some(frame) = klein::takagi_real(&master, &actual) {
                 let l = Mat4::from_fn(|i, j| C::new(frame[(i, j)], 0.0));
                 let db = Mat4::from_fn(|i, j| {
-                    if i == j { problem.lam[(i, i)].sqrt() } else { C::default() }
+                    if i == j {
+                        problem.lam[(i, i)].sqrt()
+                    } else {
+                        C::default()
+                    }
                 });
                 let dm = Mat4::from_fn(|i, j| {
-                    if i == j { actual[i].sqrt() } else { C::default() }
+                    if i == j {
+                        actual[i].sqrt()
+                    } else {
+                        C::default()
+                    }
                 });
                 let u = problem.dc * *o * db;
                 if let Some(inverse) = dm.try_inverse() {
@@ -552,7 +562,9 @@ pub(super) fn endpoint_factorization_residual(problem: &PreparedSandwich, o: &Ma
         let roots0 = problem.target_roots[branch];
         for permutation in *PERMS24 {
             let roots = std::array::from_fn(|i| roots0[permutation[i]]);
-            let Some(frame) = klein::takagi_real(&master, &roots) else { continue };
+            let Some(frame) = klein::takagi_real(&master, &roots) else {
+                continue;
+            };
             let l = Mat4::from_fn(|i, j| C::new(frame[(i, j)], 0.0));
             let diagonalized = l.transpose() * master * l;
             let error = (0..4)

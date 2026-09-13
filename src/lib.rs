@@ -17,10 +17,9 @@ mod cascade;
 #[cfg(feature = "diagnostics")]
 pub use cascade::solve_charts_only;
 pub use cascade::{
-    branch_signature, endpoint_gauge_residual, endpoint_right_gauge, factor_through_berkeley,
-    factorized_gate_collapse_residual, factorized_waypoint_mass_residual, solve,
-    certify_frame,
-    ordered_chart_solutions, solve_factorized_waypoint, solve_factorized_waypoint_direct,
+    branch_signature, certify_frame, endpoint_gauge_residual, endpoint_right_gauge,
+    factor_through_berkeley, factorized_gate_collapse_residual, factorized_waypoint_mass_residual,
+    ordered_chart_solutions, solve, solve_factorized_waypoint, solve_factorized_waypoint_direct,
     solve_via_fixed_berkeley, solve_via_fixed_factor, Mat4, Rung, Solution,
 };
 #[cfg(feature = "diagnostics")]
