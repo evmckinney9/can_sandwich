@@ -809,6 +809,55 @@ pub fn factor_through_berkeley(target: [f64; 3]) -> Option<Mat4> {
     (solution.rung != Rung::Unsolved).then_some(solution.o)
 }
 
+/// Reduce a generic right entangler to the fixed Berkeley factor.  In canonical
+/// coordinates choose `G = B + R` and `M = T - R`; because all canonical
+/// factors are diagonal in the magic basis, the same local frame that realizes
+/// `C · U · B ~ M` realizes `C · U · G ~ T`.  This is the recursive waypoint
+/// reduction with the waypoint eliminated analytically.
+pub fn solve_via_fixed_berkeley(
+    c: [f64; 3],
+    g: [f64; 3],
+    t: [f64; 3],
+) -> Option<Solution> {
+    const B: [f64; 3] = [0.375, 0.125, -0.125];
+    solve_via_fixed_factor(c, g, t, B)
+}
+
+/// General fixed-factor form of the recursive reduction. `h` is a canonical
+/// monodromy triple whose realization chart is known or separately certified.
+pub fn solve_via_fixed_factor(
+    c: [f64; 3],
+    g: [f64; 3],
+    t: [f64; 3],
+    h: [f64; 3],
+) -> Option<Solution> {
+    let gw = weyl_from_monodromy(g);
+    let tw = weyl_from_monodromy(t);
+    let bw = weyl_from_monodromy(h);
+    let residual = [
+        tw[0] - gw[0] + bw[0],
+        tw[1] - gw[1] + bw[1],
+        tw[2] - gw[2] + bw[2],
+    ];
+    let middle = [
+        (residual[0] + residual[1] - residual[2]) * 0.5,
+        (residual[0] - residual[1] + residual[2]) * 0.5,
+        (-residual[0] + residual[1] + residual[2]) * 0.5,
+    ];
+    let child = solve(c, h, middle);
+    if child.rung == Rung::Unsolved { return None; }
+    let problem = PreparedSandwich::new(c, g, t);
+    certificate::compiler_solution(&problem, child.o, child.rung, child.residual)
+}
+
+/// Re-certify an externally selected frame against the original sandwich.
+/// This is intentionally strict: a frame found in a transformed factor chart
+/// is useful only if it survives the caller's representatives.
+pub fn certify_frame(c: [f64; 3], g: [f64; 3], t: [f64; 3], o: Mat4, rung: Rung) -> Option<Solution> {
+    let problem = PreparedSandwich::new(c, g, t);
+    certificate::compiler_solution(&problem, o, rung, ACCEPT)
+}
+
 /// Evaluate one proposed waypoint for the virtual factorization
 /// `G = B V B`. The caller supplies `M` (for example from a reachable-polytope
 /// intersection); this routine realizes both B-children and applies the exact
@@ -824,30 +873,57 @@ pub fn solve_factorized_waypoint(
     let middle = factor_through_berkeley(g)?;
     let first = solve(c, B, waypoint);
     let second = solve(waypoint, B, t);
-    if matches!(first.rung, Rung::Unsolved) || matches!(second.rung, Rung::Unsolved) {
-        return None;
+    let mut candidates = Vec::new();
+    if first.rung != Rung::Unsolved && second.rung != Rung::Unsolved {
+        candidates.push((first, second));
     }
-    let first_problem = PreparedSandwich::new(c, B, waypoint);
-    let endpoint = certificate::canonical_right_endpoint_gauge(&first_problem, &first.o)?;
-    let expected = endpoint * middle;
-    let mut residual = f64::INFINITY;
-    for mask in 0..16 {
-        let signs = [0, 1, 2, 3].map(|i| if (mask >> i) & 1 == 0 { 1.0 } else { -1.0 });
-        if signs.iter().product::<f64>() < 0.0 {
-            continue;
+    // The realization fiber is nontrivial.  If the production witnesses do
+    // not glue, try the finite ordered chart transversal before declaring the
+    // waypoint impossible.  This keeps the outer waypoint search unchanged
+    // while making orientation selection explicit and deterministic.
+    if candidates.first().map_or(true, |(a,b)| a.rung == Rung::Unsolved || b.rung == Rung::Unsolved) {
+        let fs = ordered_chart_solutions(c, B, waypoint);
+        let ss = ordered_chart_solutions(waypoint, B, t);
+        for a in fs { for b in &ss { candidates.push((a.clone(), b.clone())); } }
+    }
+    let mut best = None;
+    for (first, second) in candidates {
+        let first_problem = PreparedSandwich::new(c, B, waypoint);
+        let Some(endpoint) = certificate::canonical_right_endpoint_gauge(&first_problem, &first.o) else { continue };
+        let expected = endpoint * middle;
+        let mut residual = f64::INFINITY;
+        for mask in 0..16 {
+            let signs = [0, 1, 2, 3].map(|i| if (mask >> i) & 1 == 0 { 1.0 } else { -1.0 });
+            if signs.iter().product::<f64>() < 0.0 { continue; }
+            let s = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(&signs.map(|x| C::new(x, 0.0))));
+            residual = residual.min(certificate::endpoint_plane_residual(&(s * expected), &second.o));
         }
-        let s = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(
-            &signs.map(|x| C::new(x, 0.0)),
-        ));
-        residual = residual.min(certificate::endpoint_plane_residual(
-            &(s * expected),
-            &second.o,
-        ));
+        if best.as_ref().map_or(true, |(_,_,_,r)| residual < *r) { best = Some((first, second, middle, residual)); }
+        if residual <= ACCEPT { break; }
     }
-    if !residual.is_finite() {
-        return None;
+    if best.as_ref().map_or(true, |(_, _, _, r)| *r > ACCEPT) {
+        let fs = ordered_chart_solutions(c, B, waypoint);
+        let ss = ordered_chart_solutions(waypoint, B, t);
+        for first in fs {
+            let first_problem = PreparedSandwich::new(c, B, waypoint);
+            let Some(endpoint) = certificate::canonical_right_endpoint_gauge(&first_problem, &first.o) else { continue };
+            let expected = endpoint * middle;
+            for second in &ss {
+                let mut residual = f64::INFINITY;
+                for mask in 0..16 {
+                    let signs = [0, 1, 2, 3].map(|i| if (mask >> i) & 1 == 0 { 1.0 } else { -1.0 });
+                    if signs.iter().product::<f64>() < 0.0 { continue; }
+                    let s = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(&signs.map(|x| C::new(x, 0.0))));
+                    residual = residual.min(certificate::endpoint_plane_residual(&(s * expected), &second.o));
+                }
+                if best.as_ref().map_or(true, |(_, _, _, r)| residual < *r) {
+                    best = Some((first.clone(), second.clone(), middle, residual));
+                }
+                if residual <= ACCEPT { return Some((first, second.clone(), middle, residual)); }
+            }
+        }
     }
-    Some((first, second, middle, residual))
+    best
 }
 
 /// Diagnostic only: compare the two CS masses of the relative endpoint frame
@@ -879,7 +955,11 @@ pub fn solve_factorized_waypoint_direct(
     waypoint: [f64; 3],
 ) -> Option<Solution> {
     let (first, _second, middle, compatibility) = solve_factorized_waypoint(c, g, t, waypoint)?;
-    if compatibility > ACCEPT {
+    // The Plücker chart is a coordinate certificate, not the final spectral
+    // certificate.  Near a chart boundary its subtraction error is amplified
+    // by the endpoint Takagi gauge; allow a small numerical band here, while
+    // retaining the strict original compiler certificate below.
+    if compatibility > 1e-7 {
         return None;
     }
     const B: [f64; 3] = [0.375, 0.125, -0.125];
@@ -891,13 +971,18 @@ pub fn solve_factorized_waypoint_direct(
         else {
             continue;
         };
-        let left = if branch == 0 {
+        let _left = if branch == 0 {
             left
         } else {
             let (sp, _) = certificate::rho_transport_for_collapse();
             left * sp
         };
-        let candidate = first.o * left;
+        // `first.o` is already the frame multiplying the original right
+        // entangler: the endpoint equation is `O₂ = R₁ V`, so
+        // `C O₁ B V B ~ T`.  Multiplying O₁ by the factorization's left
+        // Takagi frame double-counts the virtual BVB collapse and was the
+        // reason even the planted B,B,B case failed.
+        let candidate = first.o;
         for candidate in [candidate] {
             if let Some(solution) =
                 certificate::compiler_solution(&problem, candidate, Rung::Chart, compatibility)

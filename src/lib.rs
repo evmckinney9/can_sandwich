@@ -19,8 +19,9 @@ pub use cascade::solve_charts_only;
 pub use cascade::{
     branch_signature, endpoint_gauge_residual, endpoint_right_gauge, factor_through_berkeley,
     factorized_gate_collapse_residual, factorized_waypoint_mass_residual, solve,
-    ordered_chart_solutions, solve_factorized_waypoint, solve_factorized_waypoint_direct, Mat4,
-    Rung, Solution,
+    certify_frame,
+    ordered_chart_solutions, solve_factorized_waypoint, solve_factorized_waypoint_direct,
+    solve_via_fixed_berkeley, solve_via_fixed_factor, Mat4, Rung, Solution,
 };
 #[cfg(feature = "diagnostics")]
 pub use cascade::{init_tables, prof};
