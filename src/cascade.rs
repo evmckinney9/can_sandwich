@@ -264,6 +264,7 @@ pub fn endpoint_gauge_residual(c: [f64; 3], g: [f64; 3], t: [f64; 3], frame: &Ma
 /// `D_C O₁ D_X = L₁ D_M R₁`, etc., the forced interstitial locals are
 /// `V₁=R₁ᵀ`, `V₂=R₂ᵀ`; no optimization remains.  The residual compares the
 /// spectrum of `(D_X V₁ D_Y V₂ D_Z)(...)ᵀ` with the canonical spectrum of G.
+#[allow(clippy::too_many_arguments)]
 pub fn factorized_gate_collapse_residual(
     g: [f64; 3],
     x: [f64; 3],
@@ -885,9 +886,10 @@ pub fn solve_factorized_waypoint(
     // not glue, try the finite ordered chart transversal before declaring the
     // waypoint impossible.  This keeps the outer waypoint search unchanged
     // while making orientation selection explicit and deterministic.
-    if candidates.first().map_or(true, |(a, b)| {
-        a.rung == Rung::Unsolved || b.rung == Rung::Unsolved
-    }) {
+    if candidates
+        .first()
+        .is_none_or(|(a, b)| a.rung == Rung::Unsolved || b.rung == Rung::Unsolved)
+    {
         let fs = ordered_chart_solutions(c, B, waypoint);
         let ss = ordered_chart_solutions(waypoint, B, t);
         for a in fs {
@@ -918,14 +920,14 @@ pub fn solve_factorized_waypoint(
                 &second.o,
             ));
         }
-        if best.as_ref().map_or(true, |(_, _, _, r)| residual < *r) {
+        if best.as_ref().is_none_or(|(_, _, _, r)| residual < *r) {
             best = Some((first, second, middle, residual));
         }
         if residual <= ACCEPT {
             break;
         }
     }
-    if best.as_ref().map_or(true, |(_, _, _, r)| *r > ACCEPT) {
+    if best.as_ref().is_none_or(|(_, _, _, r)| *r > ACCEPT) {
         let fs = ordered_chart_solutions(c, B, waypoint);
         let ss = ordered_chart_solutions(waypoint, B, t);
         for first in fs {
@@ -951,7 +953,7 @@ pub fn solve_factorized_waypoint(
                         &second.o,
                     ));
                 }
-                if best.as_ref().map_or(true, |(_, _, _, r)| residual < *r) {
+                if best.as_ref().is_none_or(|(_, _, _, r)| residual < *r) {
                     best = Some((first.clone(), second.clone(), middle, residual));
                 }
                 if residual <= ACCEPT {

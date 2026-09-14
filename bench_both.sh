@@ -5,7 +5,7 @@ set -uo pipefail
 cd "$(dirname "$0")"
 ROOT=$(cd ../.. && pwd)
 PYTHON="${GULPS_PYTHON:-$ROOT/.venv/bin/python}"
-SEG="${GULPS_REALIZATION_CORPUS_DIR:-$ROOT/.local/corpora/realization-v5}"
+SEG="${GULPS_REALIZATION_CORPUS_DIR:-$PWD/corpus}"
 if [[ ! -x "$PYTHON" ]]; then
   echo "missing project Python: $PYTHON; run 'make bootstrap'" >&2
   exit 2
@@ -13,11 +13,11 @@ fi
 for required in feasible_linspace.npy feasible_haar.npy; do
   if [[ ! -f "$SEG/$required" ]]; then
     echo "missing locked corpus $SEG/$required" >&2
-    echo "run 'make corpora CORPUS_SOURCE=/path/to/segments'" >&2
+    echo "the Haar and linspace corpora are not tracked; copy them into corpus/" >&2
     exit 2
   fi
 done
-if ! "$PYTHON" "$ROOT/dev/research/scripts/generate_realization_edge_corpus.py" \
+if ! "$PYTHON" scripts/generate_realization_edge_corpus.py \
   --output "$SEG/feasible_stratified.npy" --check-existing; then
   echo "locked stratified corpus is missing, stale, or corrupt: $SEG" >&2
   echo "materialize the registered fixture; do not overwrite it by regeneration" >&2
@@ -45,7 +45,7 @@ run_atomic_corpus "stratified exact/near Weyl strata" "$SEG/feasible_stratified.
 run_atomic_corpus "linspace" "$SEG/feasible_linspace.npy"
 run_atomic_corpus "haar" "$SEG/feasible_haar.npy"
 echo "== public realization pipeline =="
-if ! "$PYTHON" "$ROOT/dev/research/scripts/validate_realization_pipeline_corpus.py" \
+if ! "$PYTHON" scripts/validate_realization_pipeline_corpus.py \
   "$SEG/feasible_stratified.pipeline.npz" --max-case-seconds 0.5; then
   status=1
 fi

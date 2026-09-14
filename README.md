@@ -115,12 +115,43 @@ cargo run --release -p can_sandwich --features diagnostics -- bench-row corpus.n
 A corpus is a little-endian C-order `(N, 3, 3)` f64 array of `[C, G, T]`
 monodromy triples. `PROF=1` prints per-stage timings from the driver.
 
-`bench_both.sh` is the standard change validation: the locked stratified,
-linspace, and Haar corpora at stride 1, the public pipeline corpus, two stable
-tail rows, and the line count. Corpora live under `.local/corpora` and are
-materialized with `make corpora CORPUS_SOURCE=...`. `bench_realization_stress.sh`
-replays freshly generated structured corpora through both the atomic solver
-and the public pipeline.
+## Corpora
+
+`corpus/` holds the locked realization corpora and `scripts/` the two Python
+runners that generate and replay them.
+
+| file | rows | tracked | what it is |
+|---|---|---|---|
+| `feasible_stratified.npy` | 13,181 | yes | `[C, G, T]` triples on exact and near Weyl strata, the fixture every realization change is measured against |
+| `feasible_stratified.strata.npy` | 13,181 | yes | family and section code per row (`-1` known regression, `0` explicit witness, `1` target stratum) |
+| `feasible_stratified.pipeline.npz` | 13,181 | yes | the same triples as full two-qubit unitaries with sampled local frames, replayed through the public `GulpsDecomposer` |
+| `feasible_stratified.json` | | yes | generation parameters and the sha256 of the three artifacts |
+| `feasible_linspace.npy` | 761,308 | no | linspace corpus |
+| `feasible_haar.npy` | 300,000 | no | Haar corpus |
+
+The two untracked corpora are 76 MB; copy them into `corpus/` from the archive.
+`corpus/.gitignore` excludes them.
+
+`scripts/generate_realization_edge_corpus.py --output corpus/feasible_stratified.npy --check-existing`
+verifies the tracked fixture against the digests in the json without
+regenerating it. Without `--check-existing` it writes a fresh corpus for the
+given `--seed`; the fixture is never regenerated in place.
+
+`scripts/validate_realization_pipeline_corpus.py corpus/feasible_stratified.pipeline.npz --max-case-seconds 0.5`
+replays every row through the public pipeline and reports the failing rows,
+the slowest rows, and the worst phase-aligned matrix residual. `--corpus-row N`
+replays one row, `--max-cases N` the first N. This is the realization
+benchmark: a change to core realization or recovery is measured on it, not on
+the Python suite alone. Current baseline: rows 2876, 5338, and 10344 fail with
+"segment 1 is outside the can_sandwich atlas" (2876 is the documented residue;
+5338 and 10344 were covered by the factorized-waypoint fallback removed on
+2026-09-13).
+
+`bench_both.sh` is the standard change validation: the fixture digest check,
+the locked stratified, linspace, and Haar corpora at stride 1 through the
+solver, the pipeline replay, two stable tail rows, and the line count.
+`bench_realization_stress.sh SEED...` generates fresh structured corpora and
+replays each through both the solver and the pipeline.
 
 Current locked numbers (stride 1, WSL, 2026-09-08; timings vary between runs):
 
