@@ -24,6 +24,9 @@ cargo build --release --locked
 cargo test --locked --all-targets --all-features
 ```
 
+For benchmarks on this machine, set `RUSTFLAGS="-C target-cpu=native"`.
+Portable builds use the default target settings.
+
 GULPS includes a pinned checkout as a Git submodule. Its build compiles this
 library as a path dependency. Solver commits do not update the GULPS pin.
 Use a separate checkout for research to keep the GULPS checkout stable.
