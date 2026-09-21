@@ -73,20 +73,5 @@ cargo test -p can_sandwich --features diagnostics
 cargo clippy -p can_sandwich --features diagnostics --all-targets -- -D warnings
 ```
 
-The legacy corpus generator and public circuit replay require an installed
-`gulps` package. Set `GULPS_PYTHON` to that environment’s Python executable.
-These integration tools are optional for standalone Rust builds.
-
-`bench_both.sh` runs the legacy native corpora, public circuit replay, and
-stable tail checks. `bench_realization_stress.sh SEED...` generates fresh
-cases into a temporary directory. The generator refuses to overwrite
-existing corpus artifacts. `--check-existing` verifies the locked hashes.
-
-The latest legacy baseline passed all 761,308 linspace and 300,000 Haar
-rows, with two declines among 13,181 stratified atomic rows and eight
-failures among 10,935 public circuit rows. See [the baseline](benchmark/BASELINE.md)
-for IDs and scope. These figures are distinct from the independent submission
-benchmark, which verifies each returned frame itself.
-
 [Architecture and earlier measurements](docs/architecture.md) describe the
 production cascade and its numerical certificates.

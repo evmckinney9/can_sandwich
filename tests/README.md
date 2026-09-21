@@ -22,7 +22,3 @@ calls within a source case. `forward/` numbers follow the original nested
 C-class, G-class, local-frame iteration order. Zero- and one-gate decompositions
 made no solver call. Failed decompositions contributed calls up to and including
 the first decline. These fixtures do not depend on current GULPS planning.
-
-The generator and public pipeline replay remain optional tools that need an
-installed GULPS package when they perform host operations. Their CLI validation,
-fixture hashes, and mocked failure accounting are tested here without it.

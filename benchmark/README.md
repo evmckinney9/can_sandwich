@@ -185,9 +185,8 @@ A persistent worker serves successive cases. A request timeout kills that
 worker before the next case. Internal transport is shared across submissions
 and does not have to be implemented in the submitted file.
 
-Submit an algorithm, not a table of corpus answers. Fresh cases from
-`../scripts/generate_realization_edge_corpus.py` can be used as additional
-checks. Corpus coverage is a measured result, not a claim of coverage for
+Submit an algorithm, not a table of corpus answers.
+Corpus coverage is a measured result, not a claim of coverage for
 all feasible mathematical inputs. The runner executes submitted code as the
 current user and is not a security sandbox.
 

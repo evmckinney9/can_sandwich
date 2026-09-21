@@ -166,7 +166,6 @@ def audit(manifest_path: Path, batch_size: int) -> dict[str, Any]:
         for name in SOURCE_NAMES
     }
     directory = (manifest_path.parent / selected[SOURCE_NAMES[0]]["path"]).parent
-    generator = HERE.parent / "scripts/generate_realization_edge_corpus.py"
     return {
         "schema_version": 1,
         "provenance": {
@@ -174,8 +173,6 @@ def audit(manifest_path: Path, batch_size: int) -> dict[str, Any]:
             "audit_script_sha256": sha256(Path(__file__)),
             "source_manifest": manifest_path.name,
             "source_manifest_sha256": sha256(manifest_path),
-            "stratified_generator": "../scripts/generate_realization_edge_corpus.py",
-            "stratified_generator_sha256": sha256(generator),
         },
         "method": "NumPy binary64 unit-circle chord gaps between all six eigenvalue pairs; thresholds are empirical, not exact multiplicity certificates. No feasibility solver is called.",
         "total_original_rows": sum(value["rows"] for value in sources.values()),

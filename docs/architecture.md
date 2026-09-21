@@ -139,8 +139,7 @@ monodromy triples. `PROF=1` prints per-stage timings from the driver.
 
 ## Corpora
 
-`corpus/` holds the locked realization corpora and `scripts/` the two Python
-runners that generate and replay them.
+`corpus/` holds the locked realization corpora.
 
 | file | rows | tracked | what it is |
 |---|---|---|---|
@@ -154,26 +153,6 @@ runners that generate and replay them.
 The two untracked corpora are 76 MB; copy them into `corpus/` from the archive.
 `corpus/.gitignore` excludes them.
 
-`scripts/generate_realization_edge_corpus.py --output corpus/feasible_stratified.npy --check-existing`
-verifies the tracked fixture against the digests in the json without
-regenerating it. Without `--check-existing` it writes a fresh corpus for the
-given `--seed`; the fixture is never regenerated in place.
-
-`scripts/validate_realization_pipeline_corpus.py corpus/feasible_stratified.pipeline.npz --max-case-seconds 0.5`
-replays every row through the public pipeline and reports the failing rows,
-the slowest rows, and the worst phase-aligned matrix residual. `--corpus-row N`
-replays one row, `--max-cases N` the first N. This is the realization
-benchmark: a change to core realization or recovery is measured on it, not on
-the Python suite alone. The 2026-09-21 replay passed 10,927 of 10,935 rows.
-Four rows declined in the atlas and four failed downstream frame recovery.
-See the [current baseline](../benchmark/BASELINE.md) for case IDs and details.
-
-`bench_both.sh` is the standard change validation: the fixture digest check,
-the locked stratified, linspace, and Haar corpora at stride 1 through the
-solver, the pipeline replay, two stable tail rows, and the line count.
-`bench_realization_stress.sh SEED...` generates fresh structured corpora and
-replays each through both the solver and the pipeline.
-
 Current locked numbers (stride 1, WSL, 2026-09-08; timings vary between runs):
 
 | corpus | solved | p50 | p99 | worst |
@@ -185,10 +164,7 @@ Current locked numbers (stride 1, WSL, 2026-09-08; timings vary between runs):
 The exact `RankOne31` rung now handles the registered exact `3+1` inputs
 directly by grouped spectral-mass recovery and a Householder completion. In
 the 2026-09-10 replay it owned 1,048 stratified rows and 16,562 linspace rows.
-The two remaining stratified declines are rows 2889 and 7172, and public-pipeline row
-2876 hands the solver the same triple as stratified row 2889, so these are the two
-remaining atomic declines. The public pipeline has additional failures, listed
-in the current baseline. Each has one gate that is
+The two remaining stratified declines are rows 2889 and 7172. Each has one gate that is
 `3 + 1` up to a phase deviation of about 1e-8 (row 2889: the fourth phase of
 `G` sits 9e-9 from its repeated triple; row 7172: `C`, 3e-9), a repeated or
 conjugate pair on the other gate, and a generic target. That is the band
@@ -198,8 +174,7 @@ snapped `3 + 1` frame misses the original problem by the deviation itself,
 above the certificate, and the stabilizer-orbit closure of a snapped frame is
 refuted (registry R0212-H1); a linearized correction is excluded by the
 closed-form rule. A decline costs 110 to 160 ms, all in the chart tier's
-exhaustive pass. The pipeline surfaces the row as `CompileFailure`, and
-`make research-ready` fails on it.
+exhaustive pass.
 
 ## Known non-closed-form steps
 
