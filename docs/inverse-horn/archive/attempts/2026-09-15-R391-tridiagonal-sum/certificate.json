@@ -1,0 +1,15 @@
+{
+  "result": "PASS",
+  "A": "Matrix([[0, 1, 1, 1], [1, 0, 1, 1], [1, 1, 0, 1], [1, 1, 1, 0]])",
+  "B": "Matrix([[3, -1, -1, -1], [-1, 1, -1, -1], [-1, -1, -1, -1], [-1, -1, -1, -3]])",
+  "C": "Matrix([[3, 0, 0, 0], [0, 1, 0, 0], [0, 0, -1, 0], [0, 0, 0, -3]])",
+  "beta_polynomial": "x**4 - 16*x**2 + 8*x + 16",
+  "excluded_eigenvalue_evaluations": {
+    "4": 48,
+    "2": -16,
+    "0": 16,
+    "-2": -48
+  },
+  "permutation_support_checks": 168,
+  "scope": "Universal T4 counterexample, all 24 permutations"
+}

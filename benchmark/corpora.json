@@ -1,0 +1,9 @@
+{
+  "schema_version": 2,
+  "corpus": {
+    "path": "../corpus/feasible_all.npy",
+    "rows": 1075950,
+    "sha256": "5f1a6689a1a5347d901194555a533897f961f309bf9db61709092fc0cac24bae",
+    "provenance": "../corpus/feasible_all.json"
+  }
+}

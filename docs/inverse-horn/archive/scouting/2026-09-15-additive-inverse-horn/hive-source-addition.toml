@@ -1,0 +1,8 @@
+[[paper]]
+id = "KNUTSON-TAO-MATH-9807160"
+title = "The honeycomb model of GL_n(C) tensor products I: Proof of the saturation conjecture"
+authors = "Allen Knutson; Terence Tao"
+year = 1999
+primary_url = "https://arxiv.org/abs/math/9807160"
+relevance = "Explicit hive-honeycomb conversion and geometric explanation of the additive matrix connection."
+note = "2026-09-15 additive inverse-Horn source review checked Appendix 2 Proposition 4, introduction geometric paragraphs, and Sections 5-6 selection scope. The integer-linear map converts hives with one value fixed into honeycombs; rhombus slacks correspond to edge lengths and boundary differences to spectra. The largest-lift selection is combinatorial, not a general matrix reconstruction algorithm. No theorem promotion or multiplicative extension."

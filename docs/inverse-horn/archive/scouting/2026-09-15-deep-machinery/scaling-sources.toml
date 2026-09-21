@@ -1,0 +1,16 @@
+# Proposed updates to existing entries; root agent owns LITERATURE.toml.
+[[updates]]
+id = "FRANKS-THESIS-2019-HORN"
+primary_url = "https://sites.math.rutgers.edu/~wcf17/images/ThesisPhD_website.pdf"
+status = "primary_checked"
+checked_sections = "Chapter 4, Theorem 4.2, Remark 4.3, Algorithm 1; Section 4.5, Theorem 4.76, Remark 4.77, Theorem 4.78, Algorithm 5, Remarks 4.79-4.80"
+review = "scouting/2026-09-15-deep-machinery/scaling-review.md"
+note = "Source explicitly constructs approximate real symmetric additive witnesses. Several displayed transcription inconsistencies recorded in review. No deterministic total implementation, global compact product transfer, or novel result imported."
+
+[[updates]]
+id = "FRANKS-1801.01412"
+primary_url = "https://arxiv.org/html/1801.01412v2"
+status = "primary_checked"
+checked_sections = "Algorithm 1, Proposition 4, Theorem 21, Proposition 56, Remark 57, Section 6.2 Proposition 72"
+review = "scouting/2026-09-15-deep-machinery/scaling-review.md"
+note = "Checked constructive operator-scaling application to additive Horn, randomized approximate guarantee and stated complexity. Source pseudocode inconsistencies recorded. Does not supply atomic phase lifts or QLR-to-additive covering map."

@@ -1,0 +1,27 @@
+{
+  "status": "EXACT_CANDIDATE_LIFT_VERIFIED",
+  "principal_minors_checked": 105,
+  "rhombi_checked": 18,
+  "rhombus_slacks": [
+    "1/2",
+    "1/2",
+    "1/2",
+    "0",
+    "0",
+    "0",
+    "0",
+    "1/2",
+    "1/2",
+    "1/2",
+    "1/2",
+    "0",
+    "1/2",
+    "1/2",
+    "0",
+    "1/2",
+    "1/2",
+    "0"
+  ],
+  "all_three_internal_coordinates": "3/2",
+  "scope": "One exact hive preimage. No global surjectivity theorem or counterexample."
+}

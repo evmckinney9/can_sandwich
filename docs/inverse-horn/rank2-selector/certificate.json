@@ -1,0 +1,121 @@
+{
+ "C1_pieri_vertical_strip_all_patterns": {
+  "ok": true,
+  "patterns": 267,
+  "bad": []
+ },
+ "C2_n3_feasible_touch_all_faces": {
+  "ok": true,
+  "count": 120,
+  "N": 120
+ },
+ "C2_n3_feasible_criterion": {
+  "ok": true,
+  "count": 120,
+  "N": 120
+ },
+ "C2_n3_reconstruction_1e-8": {
+  "ok": true,
+  "count": 120,
+  "N": 120,
+  "worst_err": 3.1650029819196845e-14
+ },
+ "C3_n3_criterion_iff_hiveLP": {
+  "ok": true,
+  "feas_crit": 79,
+  "feas_nocrit": 0,
+  "infeas_crit": 0,
+  "infeas_nocrit": 41
+ },
+ "C3_n3_infeasible_has_violated_pieri": {
+  "ok": true,
+  "found": 41,
+  "needed": 41
+ },
+ "C2_n4_feasible_touch_all_faces": {
+  "ok": true,
+  "count": 120,
+  "N": 120
+ },
+ "C2_n4_feasible_criterion": {
+  "ok": true,
+  "count": 120,
+  "N": 120
+ },
+ "C2_n4_reconstruction_1e-8": {
+  "ok": true,
+  "count": 120,
+  "N": 120,
+  "worst_err": 2.783395259067789e-13
+ },
+ "C3_n4_criterion_iff_hiveLP": {
+  "ok": true,
+  "feas_crit": 96,
+  "feas_nocrit": 0,
+  "infeas_crit": 0,
+  "infeas_nocrit": 24
+ },
+ "C3_n4_infeasible_has_violated_pieri": {
+  "ok": true,
+  "found": 24,
+  "needed": 24
+ },
+ "C2_n5_feasible_touch_all_faces": {
+  "ok": true,
+  "count": 120,
+  "N": 120
+ },
+ "C2_n5_feasible_criterion": {
+  "ok": true,
+  "count": 120,
+  "N": 120
+ },
+ "C2_n5_reconstruction_1e-8": {
+  "ok": true,
+  "count": 120,
+  "N": 120,
+  "worst_err": 6.270678420960962e-14
+ },
+ "C3_n5_criterion_iff_hiveLP": {
+  "ok": true,
+  "feas_crit": 102,
+  "feas_nocrit": 0,
+  "infeas_crit": 0,
+  "infeas_nocrit": 18
+ },
+ "C3_n5_infeasible_has_violated_pieri": {
+  "ok": true,
+  "found": 18,
+  "needed": 18
+ },
+ "C2_n6_feasible_touch_all_faces": {
+  "ok": true,
+  "count": 120,
+  "N": 120
+ },
+ "C2_n6_feasible_criterion": {
+  "ok": true,
+  "count": 120,
+  "N": 120
+ },
+ "C2_n6_reconstruction_1e-8": {
+  "ok": true,
+  "count": 120,
+  "N": 120,
+  "worst_err": 2.396832732287635e-13
+ },
+ "C3_n6_criterion_iff_hiveLP": {
+  "ok": true,
+  "feas_crit": 109,
+  "feas_nocrit": 0,
+  "infeas_crit": 0,
+  "infeas_nocrit": 11
+ },
+ "C3_n6_infeasible_has_violated_pieri": {
+  "ok": true,
+  "found": 11,
+  "needed": 11
+ },
+ "result": "PASS",
+ "failures": []
+}

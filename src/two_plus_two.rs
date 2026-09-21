@@ -26,12 +26,14 @@ type Bi4 = [[f64; 5]; 5];
 /// Signed Pluecker coordinates of the oriented 2-plane spanned by the first
 /// two columns of an SO(4) frame. These are the native coordinates for the
 /// special case in which BOTH endpoint stabilizers are B-type.
+#[cfg(test)]
 pub(crate) fn frame_pluecker(o: &Mat4) -> [f64; 6] {
     const PAIRS: [(usize, usize); 6] = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];
     PAIRS.map(|(i, j)| (o[(i, 0)] * o[(j, 1)] - o[(j, 0)] * o[(i, 1)]).re)
 }
 
 #[inline]
+#[cfg(test)]
 fn pluecker_star(p: [f64; 6]) -> [f64; 6] {
     [p[5], -p[4], p[3], p[2], -p[1], p[0]]
 }
@@ -41,6 +43,7 @@ fn pluecker_star(p: [f64; 6]) -> [f64; 6] {
 /// endpoint stabilizers are B-type (or an equivalent repeated stratum).
 /// `q` is det(R_11); `r` is the complementary 2x2 minor.  For child frames
 /// `left,right`, these are computed without constructing R explicitly.
+#[cfg(test)]
 pub(crate) fn b_relative_pluecker(left: &Mat4, right: &Mat4) -> (f64, f64) {
     let pl = frame_pluecker(left);
     let pr = frame_pluecker(right);
@@ -52,6 +55,7 @@ pub(crate) fn b_relative_pluecker(left: &Mat4, right: &Mat4) -> (f64, f64) {
 
 /// Compatibility residual for a B-B special case. The four sign branches are
 /// quotient-equivalent; this must not be used for a generic M waypoint.
+#[cfg(test)]
 pub(crate) fn b_compatibility_residual(left: &Mat4, right: &Mat4, middle: &Mat4) -> f64 {
     let (q, r) = b_relative_pluecker(left, right);
     let (qv, rv) = b_relative_pluecker(&Mat4::identity(), middle);
@@ -63,15 +67,6 @@ pub(crate) fn b_compatibility_residual(left: &Mat4, right: &Mat4, middle: &Mat4)
     ]
     .into_iter()
     .fold(f64::INFINITY, f64::min)
-}
-
-/// Residual for equality of two frames modulo the B stabilizer on both sides.
-/// This is valid only on a 2+2 waypoint, where the waypoint stabilizer has the
-/// same block form as B.
-#[allow(dead_code)]
-pub(crate) fn b_frame_equivalence_residual(left: &Mat4, right: &Mat4) -> f64 {
-    let (q, r) = b_relative_pluecker(left, right);
-    ((q.abs() - 1.0).abs()).max(r.abs())
 }
 
 struct Forms {

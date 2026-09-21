@@ -1,0 +1,27 @@
+{
+  "additive_selector": {
+    "planted_cases": 1000,
+    "starts": 8,
+    "failures": 0,
+    "worst_eigenvalue_error": 6.165752353126663e-10,
+    "elapsed_seconds_approx": 81.0,
+    "structured_multiplicity_cases": 300,
+    "structured_failures": 0,
+    "structured_worst_error": 1.9e-12,
+    "structured_cases_per_family": 100
+  },
+  "restart_sweep_100_cases": {
+    "starts_1_failures": 9,
+    "starts_2_failures": 3,
+    "starts_4_failures": 1,
+    "starts_8_failures": 0
+  },
+  "reference_can_sandwich": {
+    "corpus_rows": 13181,
+    "solved": 13179,
+    "unsolved": 2,
+    "mean_microseconds_per_triple": 118.4,
+    "unsolved_rows": [2889, 7172]
+  },
+  "scope": "Measured baselines; no universal additive Horn coverage claim"
+}

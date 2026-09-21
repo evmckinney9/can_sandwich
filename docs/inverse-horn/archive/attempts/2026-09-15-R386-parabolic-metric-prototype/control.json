@@ -1,0 +1,41 @@
+{
+  "status": "converged",
+  "metric_error": 2.886801908630332e-12,
+  "nodes": 289,
+  "seconds": 0.04503254999872297,
+  "logs": [
+    {
+      "iteration": 0,
+      "residual": 0.0022586096802084785,
+      "min_eigenvalue": 0.46668468456186546,
+      "seconds": 0.004455404006876051,
+      "gmres_info": 0,
+      "gmres_steps": 6,
+      "alpha": 1.0
+    },
+    {
+      "iteration": 1,
+      "residual": 0.00011802477066492443,
+      "min_eigenvalue": 0.46668468456186546,
+      "seconds": 0.013111640000715852,
+      "gmres_info": 0,
+      "gmres_steps": 5,
+      "alpha": 1.0
+    },
+    {
+      "iteration": 2,
+      "residual": 2.2761180062591283e-07,
+      "min_eigenvalue": 0.46668468456186546,
+      "seconds": 0.01978521898854524,
+      "gmres_info": 0,
+      "gmres_steps": 5,
+      "alpha": 1.0
+    },
+    {
+      "iteration": 3,
+      "residual": 3.9228938399145713e-13,
+      "min_eigenvalue": 0.46668468456186546,
+      "seconds": 0.026025977975223213
+    }
+  ]
+}

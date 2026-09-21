@@ -1,0 +1,15 @@
+{
+  "result": "PASS",
+  "signed_trace_checks": 392,
+  "T": "Matrix([[3, 3, 0], [-2, 2, 0], [0, 0, 2]])",
+  "A": "Matrix([[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 4, 0], [0, 0, 0, -6]])",
+  "B": "Matrix([[1, -1, 0, 0], [-1, 1, 0, 0], [0, 0, -1, -5], [0, 0, -5, -1]])",
+  "Q": "Matrix([[sqrt(2)/2, sqrt(2)/2, 0, 0], [-sqrt(2)/2, sqrt(2)/2, 0, 0], [0, 0, sqrt(2)/2, sqrt(2)/2], [0, 0, -sqrt(2)/2, sqrt(2)/2]])",
+  "gamma": [
+    "-2 + 5*sqrt(2)",
+    "sqrt(2) + 2",
+    "2 - sqrt(2)",
+    "-5*sqrt(2) - 2"
+  ],
+  "scope": "Direct sign/permutation Hermitian conversion only"
+}

@@ -93,10 +93,12 @@ pub(super) struct StratumSignature {
     pub(super) target: [SpectrumKind; 2],
     pub(super) c_proximity: SpectrumProximity,
     pub(super) g_proximity: SpectrumProximity,
+    #[cfg(feature = "diagnostics")]
     pub(super) target_proximity: [SpectrumProximity; 2],
     /// A repeated value in the routed product table `c_i g_j`, even when both
     /// input spectra themselves are simple.  This is a separate confluence
     /// mechanism from input/target spectral multiplicity.
+    #[cfg(feature = "diagnostics")]
     pub(super) routed_collision: bool,
 }
 
@@ -108,7 +110,9 @@ impl StratumSignature {
             target: std::array::from_fn(|branch| spectrum_kind(&target[branch])),
             c_proximity: spectrum_proximity(c),
             g_proximity: spectrum_proximity(g),
+            #[cfg(feature = "diagnostics")]
             target_proximity: std::array::from_fn(|branch| spectrum_proximity(&target[branch])),
+            #[cfg(feature = "diagnostics")]
             routed_collision: routed_product_collision(c, g),
         }
     }
@@ -125,6 +129,7 @@ impl StratumSignature {
 /// into a repeated spectrum.  Such collisions are the natural next branch for
 /// simple/simple inputs: `c_i g_j = c_k g_l` can lower the rank of the
 /// characteristic map even though `c` and `g` are individually distinct.
+#[cfg(any(test, feature = "diagnostics"))]
 fn routed_product_collision(c: &[C; 4], g: &[C; 4]) -> bool {
     let products: [C; 16] = std::array::from_fn(|n| c[n / 4] * g[n % 4]);
     for i in 0..products.len() {

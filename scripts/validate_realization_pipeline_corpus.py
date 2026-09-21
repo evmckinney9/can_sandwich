@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 from qiskit.quantum_info import Operator
 
-from gulps import GateInvariants, GulpsDecomposer, ISA
+from gulps import LocalEquivalenceClass, GulpsDecomposer
 
 LOCAL_MODE_NAMES = (
     "identity",
@@ -56,12 +56,26 @@ def main() -> None:
         help="fail when any single public compilation exceeds this wall time",
     )
     args = parser.parse_args()
+    if args.max_cases is not None and args.max_cases <= 0:
+        parser.error("--max-cases must be positive")
+    if not np.isfinite(args.tolerance) or args.tolerance <= 0:
+        parser.error("--tolerance must be finite and positive")
+    if args.max_case_seconds is not None and (
+        not np.isfinite(args.max_case_seconds) or args.max_case_seconds <= 0
+    ):
+        parser.error("--max-case-seconds must be finite and positive")
+    if args.sample_index is not None and args.corpus_row is not None:
+        parser.error("choose either --sample-index or --corpus-row")
 
     selected_samples = None if args.sample_index is None else set(args.sample_index)
     with np.load(args.corpus) as data:
         sample_indices = data["sample_indices"]
+        if selected_samples is not None:
+            missing = selected_samples - set(map(int, sample_indices))
+            if missing:
+                parser.error(f"unknown --sample-index values: {sorted(missing)}")
         if args.corpus_row is not None:
-            selected = np.asarray(args.corpus_row, dtype=np.int64)
+            selected = np.asarray(list(dict.fromkeys(args.corpus_row)), dtype=np.int64)
             if np.any(selected < 0) or np.any(selected >= len(sample_indices)):
                 parser.error(f"--corpus-row must be in [0, {len(sample_indices)})")
         else:
@@ -72,6 +86,8 @@ def main() -> None:
             )
         if args.max_cases is not None:
             selected = selected[: args.max_cases]
+        if not len(selected):
+            parser.error("selection contains no corpus rows")
         c_weyl = data["c_weyl"][selected]
         g_weyl = data["g_weyl"][selected]
         targets = data["target_unitaries"][selected]
@@ -80,7 +96,7 @@ def main() -> None:
         local_modes = data["local_modes"][selected]
 
     failure_examples: list[str] = []
-    failure_count = 0
+    failed_rows: set[int] = set()
     failure_reasons: Counter[str] = Counter()
     failure_pairs: Counter[tuple[int, int]] = Counter()
     failure_samples: Counter[int] = Counter()
@@ -102,17 +118,17 @@ def main() -> None:
         strict=True,
     ):
         attempted += 1
-        c_gate = GateInvariants(list(c_point))
-        g_gate = GateInvariants(list(g_point))
         reason: str | None = None
         detail: str | None = None
         started = time.perf_counter()
         try:
+            c_gate = LocalEquivalenceClass(list(c_point))
+            g_gate = LocalEquivalenceClass(list(g_point))
             if c_gate == g_gate:
-                isa = ISA([g_gate], [1.0])
+                decomposer = GulpsDecomposer([g_gate], [1.0])
             else:
-                isa = ISA([g_gate, c_gate], [1.0, 1.0])
-            circuit = GulpsDecomposer(isa)(target)
+                decomposer = GulpsDecomposer([g_gate, c_gate], [1.0, 1.0])
+            circuit = decomposer.decompose(target)
             residual = _phase_aligned_residual(Operator(circuit).data, target)
             worst = max(worst, residual)
             if not np.isfinite(residual) or residual > args.tolerance:
@@ -137,7 +153,7 @@ def main() -> None:
             )
         )
         if reason is not None:
-            failure_count += 1
+            failed_rows.add(int(corpus_row))
             failure_reasons[reason] += 1
             failure_pairs[tuple(map(int, pair))] += 1
             failure_samples[int(sample)] += 1
@@ -151,7 +167,7 @@ def main() -> None:
         for seconds, row, pair, sample, local_mode in timings:
             if seconds <= args.max_case_seconds:
                 break
-            failure_count += 1
+            failed_rows.add(row)
             failure_reasons["latency"] += 1
             failure_pairs[pair] += 1
             failure_samples[sample] += 1
@@ -161,7 +177,7 @@ def main() -> None:
                     f"pipeline row {row}: latency {seconds:.3f}s exceeds "
                     f"{args.max_case_seconds:.3f}s"
                 )
-    if failure_count:
+    if failed_rows:
         detail = "\n".join(failure_examples)
         slowest = "\n".join(
             f"pipeline row {row}: {seconds:.3f}s, pair {pair}, "
@@ -176,7 +192,7 @@ def main() -> None:
             f"slowest cases:\n{slowest}"
         )
         raise AssertionError(
-            f"public realization corpus found {failure_count:,} failures in "
+            f"public realization corpus found {len(failed_rows):,} failed rows in "
             f"{attempted:,} attempted rows (first {len(failure_examples)} shown):\n"
             f"{summaries}\n{detail}"
         )

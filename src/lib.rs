@@ -1,4 +1,4 @@
-//! Exact, non-iterative depth-two two-qubit realization.
+//! Non-iterative depth-two two-qubit realization in binary64 arithmetic.
 //!
 //! The public boundary is [`solve`]: one depth-two triple in monodromy
 //! coordinates in, a forward-certified real frame out. Everything else is
@@ -7,9 +7,6 @@
 // Index loops mirror the matrix formulas they implement, and negated float
 // comparisons are deliberate NaN guards.
 #![allow(clippy::needless_range_loop, clippy::neg_cmp_op_on_partial_ord)]
-// Research routes and test-only helpers stay compiled; only `solve` and its
-// types are exported without `diagnostics`. The crate is still prototype code.
-#![cfg_attr(not(test), allow(dead_code))]
 
 mod cascade;
 mod cpoly;

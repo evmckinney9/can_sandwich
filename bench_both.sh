@@ -2,12 +2,12 @@
 # Standard change validation: stratified, linspace, and Haar at stride 1, plus LOC.
 # Run this after every realization edit.
 set -uo pipefail
-cd "$(dirname "$0")"
-ROOT=$(cd ../.. && pwd)
-PYTHON="${GULPS_PYTHON:-$ROOT/.venv/bin/python}"
+cd "$(dirname "$0")" || exit 2
+PYTHON="${GULPS_PYTHON:-python3}"
+TARGET=$(cargo metadata --no-deps --format-version 1 | "$PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])') || exit 2
 SEG="${GULPS_REALIZATION_CORPUS_DIR:-$PWD/corpus}"
-if [[ ! -x "$PYTHON" ]]; then
-  echo "missing project Python: $PYTHON; run 'make bootstrap'" >&2
+if ! command -v "$PYTHON" >/dev/null 2>&1; then
+  echo "missing Python: $PYTHON; set GULPS_PYTHON to a Python with gulps installed" >&2
   exit 2
 fi
 for required in feasible_linspace.npy feasible_haar.npy; do
@@ -26,17 +26,26 @@ fi
 cargo build --quiet --release --features diagnostics --bin can_sandwich || exit 1
 status=0
 echo "== non-iterative realization guard =="
-if [[ -e src/constructive.rs ]] || \
-   grep -R -nE "polish_recovery|perturb_recovery|constructive::|levenberg|multistart" \
-     src ../core/src/realization; then
+if [[ -e src/constructive.rs ]]; then
   echo "iterative realization code is not permitted" >&2
   status=1
+else
+  grep -R -nE "polish_recovery|perturb_recovery|constructive::|levenberg|multistart" \
+    src
+  guard_status=$?
+  if [[ $guard_status -eq 0 ]]; then
+    echo "iterative realization code is not permitted" >&2
+    status=1
+  elif [[ $guard_status -ne 1 ]]; then
+    echo "could not complete the non-iterative realization guard" >&2
+    status=1
+  fi
 fi
 run_atomic_corpus() {
   local label=$1
   local path=$2
   echo "== $label =="
-  if ! ../target/release/can_sandwich bench-npy "$path" 1 2>/dev/null \
+  if ! "$TARGET/release/can_sandwich" bench-npy "$path" 1 \
     | grep -E "OVERALL|by rung|unusable gate-lifted|latency"; then
     status=1
   fi
@@ -50,10 +59,22 @@ if ! "$PYTHON" scripts/validate_realization_pipeline_corpus.py \
   status=1
 fi
 echo "== stable tail rows (1001 repeats) =="
-../target/release/can_sandwich bench-row $SEG/feasible_linspace.npy 712010 1001 2>/dev/null
-../target/release/can_sandwich bench-row $SEG/feasible_haar.npy 22874 1001 2>/dev/null
+if ! "$TARGET/release/can_sandwich" bench-row "$SEG/feasible_linspace.npy" 712010 1001; then
+  status=1
+fi
+if ! "$TARGET/release/can_sandwich" bench-row "$SEG/feasible_haar.npy" 22874 1001; then
+  status=1
+fi
 echo "== production library LOC =="
-ls src/*.rs | grep -v main.rs | xargs wc -l | tail -1
+library_sources=()
+for path in src/*.rs; do
+  library_sources+=("$path")
+done
+if ! wc -l "${library_sources[@]}" | tail -n 1; then
+  status=1
+fi
 echo "== benchmark/diagnostic LOC =="
-wc -l src/main.rs
+if ! wc -l benchmark/diagnostics.rs; then
+  status=1
+fi
 exit "$status"

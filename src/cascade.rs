@@ -234,11 +234,9 @@ fn c(re: f64, im: f64) -> C {
 }
 
 /// The diagonal phase matrix `D = mb(Can(w))` (canonical gates are diagonal in the
-/// magic basis). Built directly as `diag(exp(i*eigphases(w)))` -- the recorded
-/// closed form of that diagonal (`eigphases` doc; asserted against `mb(canonical)`
-/// by `canonical_is_diagonal_in_magic_basis`). The old matrix-product route cost
-/// ~3us per solve() in prelude matmuls for a matrix that is diagonal by
-/// construction.
+/// magic basis). Built directly as `diag(exp(i*eigphases(w)))` in the ordering
+/// documented by [`eigphases`].
+#[cfg(any(test, feature = "diagnostics"))]
 pub(super) fn dphase(w: [f64; 3]) -> Mat4 {
     let ph = eigphases(w);
     let d: [C; 4] = std::array::from_fn(|k| C::from_polar(1.0, ph[k]));
@@ -248,12 +246,14 @@ pub(super) fn dphase(w: [f64; 3]) -> Mat4 {
 /// Return the canonical right endpoint frame of a certified child.
 /// This is the exact frame needed to insert the local layer between two
 /// adjacent entanglers in a factorization chain.
+#[cfg(feature = "diagnostics")]
 pub fn endpoint_right_gauge(c: [f64; 3], g: [f64; 3], t: [f64; 3], frame: &Mat4) -> Option<Mat4> {
     let problem = PreparedSandwich::new(c, g, t);
     certificate::canonical_right_endpoint_gauge(&problem, frame)
         .or_else(|| certificate::endpoint_factorization(&problem, frame).map(|(_, r)| r))
 }
 
+#[cfg(feature = "diagnostics")]
 pub fn endpoint_gauge_residual(c: [f64; 3], g: [f64; 3], t: [f64; 3], frame: &Mat4) -> f64 {
     let problem = PreparedSandwich::new(c, g, t);
     certificate::endpoint_factorization_residual(&problem, frame)
@@ -265,6 +265,7 @@ pub fn endpoint_gauge_residual(c: [f64; 3], g: [f64; 3], t: [f64; 3], frame: &Ma
 /// `V₁=R₁ᵀ`, `V₂=R₂ᵀ`; no optimization remains.  The residual compares the
 /// spectrum of `(D_X V₁ D_Y V₂ D_Z)(...)ᵀ` with the canonical spectrum of G.
 #[allow(clippy::too_many_arguments)]
+#[cfg(feature = "diagnostics")]
 pub fn factorized_gate_collapse_residual(
     g: [f64; 3],
     x: [f64; 3],
@@ -307,9 +308,6 @@ pub(super) fn rho_weyl(w: [f64; 3]) -> [f64; 3] {
     [1.0 - w[0], w[1], -w[2]]
 }
 
-/// Central-rho reflection in monodromy coordinates.  `solve` receives
-/// monodromy triples, so gate-orbit construction must use this conjugate of
-/// [`rho_weyl`] rather than applying the Weyl formula to the wrong chart.
 #[inline]
 /// The 4 magic-basis eigenphases of `Can(w)` in closed form (no matrix): the diagonal
 /// of `mb(Can(w))`, i.e. `D_C = diag(exp(i·eigphases))`. Same order as `dphase`.
@@ -525,6 +523,7 @@ pub(super) fn chart_o_sqrt(xyz: [f64; 3], planes: [(usize, usize); 3], perm: [us
 /// Berkeley (2+2) CS masses of an orthogonal frame.  These are the squared
 /// singular-value invariants of the leading 2x2 block; unlike a frame gauge,
 /// they survive the left/right O(2)xO(2) actions.
+#[cfg(any(test, feature = "diagnostics"))]
 pub(super) fn cs_masses(o: &Mat4) -> (f64, f64) {
     let a00 = o[(0, 0)].re;
     let a01 = o[(0, 1)].re;
@@ -539,7 +538,7 @@ pub(super) fn cs_masses(o: &Mat4) -> (f64, f64) {
 /// Coefficients are indexed by the 3-bit corner `(x=1,y=1,z=1)` mask.  The
 /// table is an exact algebraic representation of the corner interpolant; the
 /// atlas test below certifies that it equals the completed-frame masses.
-#[allow(dead_code)]
+#[cfg(test)]
 pub(super) fn cs_mass_coeffs(planes: [(usize, usize); 3], perm: [usize; 4]) -> [[f64; 8]; 2] {
     let mut coeffs = [[0.0; 8]; 2];
     for mask in 0..8 {
@@ -556,7 +555,7 @@ pub(super) fn cs_mass_coeffs(planes: [(usize, usize); 3], perm: [usize; 4]) -> [
 }
 
 #[inline]
-#[allow(dead_code)]
+#[cfg(test)]
 fn eval_multilinear(coeffs: &[f64; 8], p: [f64; 3]) -> f64 {
     (0..8)
         .map(|mask| {
@@ -652,7 +651,6 @@ pub enum Rung {
     /// One factor has multiplicity `2 + 2`: linear target matching in six
     /// squared Pluecker coordinates followed by one Heron plane quartic.
     Pair22,
-    /// Exact bounded four-Givens algebraic fiber.
     /// Input-side rank-secular closed form ((3,1)-degenerate base or gate).
     /// Radical strata of the distilled solver (skeleton / pin-pair /
     /// split-pair theta characteristics), tried in all four orientations and
@@ -669,6 +667,7 @@ pub enum Rung {
 /// This deliberately records predicates independently of the first successful
 /// rung, so a new branch can be measured as a routing change rather than only
 /// as a new success count.
+#[cfg(feature = "diagnostics")]
 pub fn branch_signature(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> String {
     let p = PreparedSandwich::new(c, g, t);
     format!(
@@ -688,12 +687,7 @@ pub fn branch_signature(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> String {
 #[derive(Clone)]
 pub struct Solution {
     pub o: Mat4,
-    /// Which gate-lifted representative certified, 0 for the shipped
-    /// 4-representative orbit.  Bits: 1 = C rho-lifted, 2 = G rho-lifted,
-    /// 4 = roles swapped. Production returns convert lifted hits through the
-    /// exact magic-basis SO(4) equivalence and re-certify them against the
-    /// caller's representatives. A nonzero tag is retained only when that
-    /// conversion declines and is diagnostic, not stitchable.
+    /// Construction that produced the certified frame, or `Unsolved`.
     pub rung: Rung,
     pub residual: f64,
 }
@@ -758,6 +752,7 @@ pub fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solution {
 /// realization has a continuous fiber; these are distinct closed-form
 /// transversal witnesses exposed by the atlas, rather than repeated calls to
 /// the first-hit production selector.
+#[cfg(any(test, feature = "diagnostics"))]
 pub fn ordered_chart_solutions(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Vec<Solution> {
     let problem = PreparedSandwich::new(c, g, t);
     let mut out = Vec::new();
@@ -802,6 +797,7 @@ pub fn ordered_chart_solutions(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Vec<Sol
 /// `B * V * B ~ target`, where the returned frame is the local middle gate
 /// `V` in the magic basis.  Since both outer factors are 2+2, this dispatches
 /// directly to the Pair22/Heron selector rather than the generic tail.
+#[cfg(any(test, feature = "diagnostics"))]
 pub fn factor_through_berkeley(target: [f64; 3]) -> Option<Mat4> {
     // Berkeley canonical coordinates are (1/2,1/4,0); convert through the
     // package's monodromy convention c=(m0+m1,m0+m2,m1+m2).
@@ -815,6 +811,7 @@ pub fn factor_through_berkeley(target: [f64; 3]) -> Option<Mat4> {
 /// factors are diagonal in the magic basis, the same local frame that realizes
 /// `C · U · B ~ M` realizes `C · U · G ~ T`.  This is the recursive waypoint
 /// reduction with the waypoint eliminated analytically.
+#[cfg(feature = "diagnostics")]
 pub fn solve_via_fixed_berkeley(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<Solution> {
     const B: [f64; 3] = [0.375, 0.125, -0.125];
     solve_via_fixed_factor(c, g, t, B)
@@ -822,6 +819,7 @@ pub fn solve_via_fixed_berkeley(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option
 
 /// General fixed-factor form of the recursive reduction. `h` is a canonical
 /// monodromy triple whose realization chart is known or separately certified.
+#[cfg(feature = "diagnostics")]
 pub fn solve_via_fixed_factor(
     c: [f64; 3],
     g: [f64; 3],
@@ -852,6 +850,7 @@ pub fn solve_via_fixed_factor(
 /// Re-certify an externally selected frame against the original sandwich.
 /// This is intentionally strict: a frame found in a transformed factor chart
 /// is useful only if it survives the caller's representatives.
+#[cfg(feature = "diagnostics")]
 pub fn certify_frame(
     c: [f64; 3],
     g: [f64; 3],
@@ -868,6 +867,7 @@ pub fn certify_frame(
 /// intersection); this routine realizes both B-children and applies the exact
 /// endpoint-Grassmannian compatibility test. A small residual means the two
 /// child certificates can be stitched with the fixed middle local `V`.
+#[cfg(any(test, feature = "diagnostics"))]
 pub fn solve_factorized_waypoint(
     c: [f64; 3],
     g: [f64; 3],
@@ -969,6 +969,7 @@ pub fn solve_factorized_waypoint(
 /// against the Berkeley middle frame.  This is a necessary B-double-coset
 /// check, not a generic waypoint certificate (the left stabilizer of a generic
 /// waypoint is K_M, not K_B).
+#[cfg(feature = "diagnostics")]
 pub fn factorized_waypoint_mass_residual(
     c: [f64; 3],
     g: [f64; 3],
@@ -987,6 +988,7 @@ pub fn factorized_waypoint_mass_residual(
 /// Collapse a compatible factorized waypoint to a direct certified frame for
 /// the original gate. Endpoint gauges are rephased onto the canonical target
 /// diagonal before the fixed Berkeley middle frame is applied.
+#[cfg(feature = "diagnostics")]
 pub fn solve_factorized_waypoint_direct(
     c: [f64; 3],
     g: [f64; 3],

@@ -25,7 +25,7 @@ from pathlib import Path
 
 import numpy as np
 
-from gulps import GateInvariants
+from gulps import LocalEquivalenceClass
 from gulps._accelerate import invariants
 
 
@@ -356,12 +356,12 @@ def _monodromy_from_weyl(points: np.ndarray) -> np.ndarray:
 
 
 def _monodromy_from_unitaries(unitaries: np.ndarray) -> np.ndarray:
-    classes = GateInvariants.from_unitaries(list(unitaries))
+    classes = LocalEquivalenceClass.from_unitaries(list(unitaries))
     return np.asarray([cls._monodromy for cls in classes], dtype=float)
 
 
 def _canonical_matrices(points: np.ndarray) -> np.ndarray:
-    return np.asarray([GateInvariants(list(point)).matrix for point in points])
+    return np.asarray([LocalEquivalenceClass(list(point)).matrix for point in points])
 
 
 def _witness_section(
@@ -457,7 +457,7 @@ def _target_section(
                     if not _contains(facets, t_mono):
                         weyl = invariants.weyl_from_monodromy(t_mono[None])[0]
                         reflected = np.asarray(
-                            GateInvariants(weyl.tolist())._rho_reflect._monodromy,
+                            LocalEquivalenceClass(weyl.tolist())._rho_reflect._monodromy,
                             dtype=float,
                         )
                         if not _contains(facets, reflected):
@@ -478,10 +478,18 @@ def generate(
     near_scale: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, np.ndarray], dict[str, int]]:
     """Return the corpus, row codes, public-pipeline cases, and section sizes."""
-    if samples_per_pair < 1:
-        raise ValueError("samples_per_pair must be positive")
+    if not 1 <= samples_per_pair <= np.iinfo(np.int16).max + 1:
+        raise ValueError("samples_per_pair must be in [1, 32768]")
     if target_rounds < 1:
         raise ValueError("target_rounds must be positive")
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    if seed < 0:
+        raise ValueError("seed must be nonnegative")
+    if near_scale is not None and (
+        not np.isfinite(near_scale) or not 0 <= near_scale <= 1
+    ):
+        raise ValueError("near_scale must be finite and in [0, 1]")
     rng = np.random.default_rng(seed)
     witness, witness_codes, pipeline = _witness_section(
         samples_per_pair, rng, batch_size, near_scale
@@ -612,6 +620,18 @@ def main() -> None:
         help="exit successfully only when all sidecars match the current defaults",
     )
     args = parser.parse_args()
+    if args.output.suffix != ".npy":
+        parser.error("--output must end in .npy")
+    if not 1 <= args.samples_per_pair <= np.iinfo(np.int16).max + 1:
+        parser.error("--samples-per-pair must be in [1, 32768]")
+    if args.target_rounds < 1 or args.batch_size < 1:
+        parser.error("--target-rounds and --batch-size must be positive")
+    if args.seed < 0:
+        parser.error("--seed must be nonnegative")
+    if args.near_scale is not None and (
+        not np.isfinite(args.near_scale) or not 0 <= args.near_scale <= 1
+    ):
+        parser.error("--near-scale must be finite and in [0, 1]")
 
     if args.check_existing:
         if _existing_is_current(
@@ -626,6 +646,17 @@ def main() -> None:
         print(f"missing or stale realization corpus: {args.output}", file=sys.stderr)
         raise SystemExit(1)
 
+    code_path, metadata_path, pipeline_path = _sidecar_paths(args.output)
+    existing = [
+        path
+        for path in (args.output, code_path, metadata_path, pipeline_path)
+        if path.exists() or path.is_symlink()
+    ]
+    if existing:
+        parser.error(
+            "refusing to overwrite existing corpus artifacts; choose a fresh --output "
+            f"or use --check-existing: {', '.join(map(str, existing))}"
+        )
     triples, codes, pipeline, counts = generate(
         args.samples_per_pair,
         args.target_rounds,
@@ -635,7 +666,6 @@ def main() -> None:
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     np.save(args.output, triples)
-    code_path, metadata_path, pipeline_path = _sidecar_paths(args.output)
     np.save(code_path, codes)
     np.savez(pipeline_path, **pipeline)
     artifact_sha256 = {

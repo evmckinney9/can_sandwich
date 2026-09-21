@@ -1,0 +1,484 @@
+{
+  "schema_version": 1,
+  "provenance": {
+    "audit_script": "audit_corpus.py",
+    "audit_script_sha256": "524e5449fef84df7320f6e3948a86cf6f0e65a65fb4f8962b0d8e3bdd9ce4bfd",
+    "source_manifest": "source_corpora.json",
+    "source_manifest_sha256": "03d97b294a3499cd3127f0976b0e27f95ca6d48db1a624ade23d327ea5d4270c",
+    "stratified_generator": "../scripts/generate_realization_edge_corpus.py",
+    "stratified_generator_sha256": "e3ca1fd5c0d38c996e87543966aa5b2c4c3723cb1bc6d154feccc65feb9110f1"
+  },
+  "method": "NumPy binary64 unit-circle chord gaps between all six eigenvalue pairs; thresholds are empirical, not exact multiplicity certificates. No feasibility solver is called.",
+  "total_original_rows": 1074489,
+  "sources": {
+    "feasible_stratified.npy": {
+      "path": "../corpus/feasible_stratified.npy",
+      "rows": 13181,
+      "sha256": "dbbc57cb210eae1d885acb1282abfefa02ea7bc5c84706fbe67eec6b66795f0a",
+      "registered_hash_verified": true,
+      "finite": true,
+      "coordinate_min_max": [
+        -0.5,
+        0.75
+      ],
+      "spectral_gap_counts": {
+        "C": {
+          "1e-14": 6258,
+          "1e-12": 7227,
+          "1e-08": 9281,
+          "0.0001": 10655,
+          "minimum": 0.0
+        },
+        "G": {
+          "1e-14": 6251,
+          "1e-12": 7200,
+          "1e-08": 9256,
+          "0.0001": 10625,
+          "minimum": 0.0
+        },
+        "T": {
+          "1e-14": 2319,
+          "1e-12": 2954,
+          "1e-08": 4568,
+          "0.0001": 5771,
+          "minimum": 0.0
+        }
+      }
+    },
+    "feasible_linspace.npy": {
+      "path": "../corpus/feasible_linspace.npy",
+      "rows": 761308,
+      "sha256": "c4b099f6db8c3a4f06ad6a91c252cac0614f6604b8cc5975d37860bfe3344471",
+      "registered_hash_verified": true,
+      "finite": true,
+      "coordinate_min_max": [
+        -0.5,
+        0.75
+      ],
+      "spectral_gap_counts": {
+        "C": {
+          "1e-14": 336786,
+          "1e-12": 336786,
+          "1e-08": 336786,
+          "0.0001": 336786,
+          "minimum": 0.0
+        },
+        "G": {
+          "1e-14": 336737,
+          "1e-12": 336737,
+          "1e-08": 336737,
+          "0.0001": 336737,
+          "minimum": 0.0
+        },
+        "T": {
+          "1e-14": 342639,
+          "1e-12": 342639,
+          "1e-08": 342639,
+          "0.0001": 342639,
+          "minimum": 0.0
+        }
+      },
+      "unique_scalar_values": 38,
+      "scalar_values": [
+        -0.5,
+        -0.4375,
+        -0.375,
+        -0.34375,
+        -0.3125,
+        -0.28125,
+        -0.25,
+        -0.21875,
+        -0.1875,
+        -0.15625,
+        -0.125,
+        -0.09375,
+        -0.0625,
+        -0.03125,
+        0.0,
+        0.03125,
+        0.0625,
+        0.09375,
+        0.125,
+        0.15625,
+        0.1875,
+        0.21875,
+        0.25,
+        0.28125,
+        0.3125,
+        0.34375,
+        0.375,
+        0.40625,
+        0.4375,
+        0.46875,
+        0.5,
+        0.53125,
+        0.5625,
+        0.59375,
+        0.625,
+        0.65625,
+        0.6875,
+        0.75
+      ],
+      "all_coordinates_multiples_of_one_over_32": true,
+      "unique_C_G_T": [
+        119,
+        118,
+        214
+      ]
+    },
+    "feasible_haar.npy": {
+      "path": "../corpus/feasible_haar.npy",
+      "rows": 300000,
+      "sha256": "8df746bfb604d21c7b1cc143694b9d9870df77625bdfc061caf3779891c302d9",
+      "registered_hash_verified": true,
+      "finite": true,
+      "coordinate_min_max": [
+        -0.4296985495311,
+        0.66580150349346
+      ],
+      "spectral_gap_counts": {
+        "C": {
+          "1e-14": 0,
+          "1e-12": 0,
+          "1e-08": 0,
+          "0.0001": 0,
+          "minimum": 0.0010295745533207225
+        },
+        "G": {
+          "1e-14": 0,
+          "1e-12": 0,
+          "1e-08": 0,
+          "0.0001": 0,
+          "minimum": 0.0013547172837603957
+        },
+        "T": {
+          "1e-14": 0,
+          "1e-12": 0,
+          "1e-08": 0,
+          "0.0001": 0,
+          "minimum": 0.0018630861294303088
+        }
+      }
+    }
+  },
+  "stratified": {
+    "metadata_sha256": "e8904902b0096f1ad17018c40f0d1f1ff402ea57ffd8aac2e0f29782a36fb3b8",
+    "artifact_sha256": {
+      "feasible_stratified.npy": "dbbc57cb210eae1d885acb1282abfefa02ea7bc5c84706fbe67eec6b66795f0a",
+      "feasible_stratified.strata.npy": "a7d8fe509d5771a3ecbe2a16169c3213be576f6f11bad3c1d8fbbc579ef59897",
+      "feasible_stratified.pipeline.npz": "abaef47812798b4d767e259724261c41346e855867a9ba3a19b2336cb837f6be"
+    },
+    "generation": {
+      "corpus_version": 5,
+      "seed": 12648430,
+      "samples_per_pair": 13,
+      "target_rounds": 3,
+      "target_stratum_candidates": 73167,
+      "horn_tolerance": 2e-12
+    },
+    "families": [
+      "interior",
+      "face:0:exact",
+      "face:0:near",
+      "face:1:exact",
+      "face:1:near",
+      "face:2:exact",
+      "face:2:near",
+      "face:3:exact",
+      "face:3:near",
+      "edge:0,1:exact",
+      "edge:0,1:near",
+      "edge:0,2:exact",
+      "edge:0,2:near",
+      "edge:0,3:exact",
+      "edge:0,3:near",
+      "edge:1,2:exact",
+      "edge:1,2:near",
+      "edge:1,3:exact",
+      "edge:1,3:near",
+      "edge:2,3:exact",
+      "edge:2,3:near",
+      "vertex:0:exact",
+      "vertex:0:near",
+      "vertex:1:exact",
+      "vertex:1:near",
+      "vertex:2:exact",
+      "vertex:2:near",
+      "vertex:3:exact",
+      "vertex:3:near"
+    ],
+    "near_scales": [
+      2e-15,
+      1e-14,
+      1e-13,
+      1e-12,
+      1e-11,
+      1e-10,
+      1e-09,
+      3e-09,
+      1e-08,
+      1e-07,
+      1e-06,
+      0.0001,
+      0.01
+    ],
+    "sections": {
+      "-1": {
+        "rows": 15,
+        "families_per_C_G_T": [
+          [
+            -1
+          ],
+          [
+            -1
+          ],
+          [
+            -1
+          ]
+        ],
+        "distinct_C_G_pairs": 1,
+        "rows_per_C_G_pair_min_max": [
+          15,
+          15
+        ],
+        "distinct_C_G_T_family_triples": 1
+      },
+      "0": {
+        "rows": 10933,
+        "families_per_C_G_T": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28
+          ],
+          [
+            -1
+          ]
+        ],
+        "distinct_C_G_pairs": 841,
+        "rows_per_C_G_pair_min_max": [
+          13,
+          13
+        ],
+        "distinct_C_G_T_family_triples": 841
+      },
+      "1": {
+        "rows": 2233,
+        "families_per_C_G_T": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            15,
+            16,
+            17,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28
+          ]
+        ],
+        "distinct_C_G_pairs": 327,
+        "rows_per_C_G_pair_min_max": [
+          1,
+          35
+        ],
+        "distinct_C_G_T_family_triples": 1589
+      }
+    },
+    "pipeline": {
+      "rows": 10935,
+      "local_mode_counts": {
+        "identity": 2523,
+        "left_haar": 1682,
+        "right_haar": 1682,
+        "both_haar": 1682,
+        "correlated_haar": 1682,
+        "near_identity": 1684
+      },
+      "sample_modes": {
+        "0": [
+          0
+        ],
+        "1": [
+          1
+        ],
+        "2": [
+          2
+        ],
+        "3": [
+          3
+        ],
+        "4": [
+          4
+        ],
+        "5": [
+          5
+        ],
+        "6": [
+          0
+        ],
+        "7": [
+          1
+        ],
+        "8": [
+          2
+        ],
+        "9": [
+          3
+        ],
+        "10": [
+          4
+        ],
+        "11": [
+          5
+        ],
+        "12": [
+          0
+        ]
+      }
+    }
+  },
+  "interpretation_limits": [
+    "Haar and linspace names do not establish their generation distribution; their manifest entries contain no generator or seed.",
+    "The stratified witness section crosses all C/G families; each sample index fixes both a near scale and a local mode, not their full Cartesian product.",
+    "The target-stratum section is filtered by live Horn inequalities at the recorded tolerance; it supplies no independent planted witness and does not establish coverage of every Horn facet.",
+    "Public LocalEquivalenceClass construction and matrix extraction quantize coordinates in the stratified generator; near-scale labels do not prove that every intended gap survives target extraction.",
+    "Finite corpus coverage is not a mathematical completeness claim. Source rows and hashes are preserved."
+  ]
+}
