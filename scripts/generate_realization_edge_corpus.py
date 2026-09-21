@@ -25,10 +25,6 @@ from pathlib import Path
 
 import numpy as np
 
-from gulps import LocalEquivalenceClass
-from gulps._accelerate import invariants
-
-
 CORPUS_VERSION = 5
 VERTICES = np.array(
     [
@@ -356,11 +352,15 @@ def _monodromy_from_weyl(points: np.ndarray) -> np.ndarray:
 
 
 def _monodromy_from_unitaries(unitaries: np.ndarray) -> np.ndarray:
+    from gulps import LocalEquivalenceClass
+
     classes = LocalEquivalenceClass.from_unitaries(list(unitaries))
     return np.asarray([cls._monodromy for cls in classes], dtype=float)
 
 
 def _canonical_matrices(points: np.ndarray) -> np.ndarray:
+    from gulps import LocalEquivalenceClass
+
     return np.asarray([LocalEquivalenceClass(list(point)).matrix for point in points])
 
 
@@ -436,6 +436,10 @@ def _target_section(
     rng: np.random.Generator,
     near_scale: float | None,
 ) -> tuple[np.ndarray, np.ndarray, int]:
+    from gulps._accelerate import invariants
+
+    from gulps import LocalEquivalenceClass
+
     triples: list[np.ndarray] = []
     codes: list[tuple[int, int, int, int]] = []
     candidates = 0

@@ -9,9 +9,6 @@ from collections import Counter
 from pathlib import Path
 
 import numpy as np
-from qiskit.quantum_info import Operator
-
-from gulps import LocalEquivalenceClass, GulpsDecomposer
 
 LOCAL_MODE_NAMES = (
     "identity",
@@ -29,6 +26,22 @@ def _phase_aligned_residual(actual: np.ndarray, target: np.ndarray) -> float:
         return float("inf")
     aligned = actual * np.conj(overlap / abs(overlap))
     return float(np.max(np.abs(aligned - target)))
+
+
+def _compile_target(c_point, g_point, target):
+    """Run optional host integration only when a replay is requested."""
+    from qiskit.quantum_info import Operator
+
+    from gulps import GulpsDecomposer, LocalEquivalenceClass
+
+    c_gate = LocalEquivalenceClass(list(c_point))
+    g_gate = LocalEquivalenceClass(list(g_point))
+    if c_gate == g_gate:
+        decomposer = GulpsDecomposer([g_gate], [1.0])
+    else:
+        decomposer = GulpsDecomposer([g_gate, c_gate], [1.0, 1.0])
+    circuit = decomposer.decompose(target)
+    return _phase_aligned_residual(Operator(circuit).data, target)
 
 
 def main() -> None:
@@ -122,14 +135,7 @@ def main() -> None:
         detail: str | None = None
         started = time.perf_counter()
         try:
-            c_gate = LocalEquivalenceClass(list(c_point))
-            g_gate = LocalEquivalenceClass(list(g_point))
-            if c_gate == g_gate:
-                decomposer = GulpsDecomposer([g_gate], [1.0])
-            else:
-                decomposer = GulpsDecomposer([g_gate, c_gate], [1.0, 1.0])
-            circuit = decomposer.decompose(target)
-            residual = _phase_aligned_residual(Operator(circuit).data, target)
+            residual = _compile_target(c_point, g_point, target)
             worst = max(worst, residual)
             if not np.isfinite(residual) or residual > args.tolerance:
                 reason = "matrix residual"

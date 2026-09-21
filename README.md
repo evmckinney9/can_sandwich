@@ -22,7 +22,14 @@ This repository is a standalone Rust crate. Rust 1.97 or newer is required.
 ```sh
 cargo build --release --locked
 cargo test --locked --all-targets --all-features
+python -m pip install numpy pytest
+python -m pytest tests
 ```
+
+The Python tests build the production Rust adapter and check its frames with
+an independent NumPy eigenvalue calculation. They require neither GULPS nor
+Qiskit. See [test provenance](tests/README.md) for the captured inputs and
+known near-wall gaps. These are development checks, not a Python package.
 
 For benchmarks on this machine, set `RUSTFLAGS="-C target-cpu=native"`.
 Portable builds use the default target settings.
