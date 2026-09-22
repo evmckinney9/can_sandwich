@@ -24,10 +24,7 @@ that they reconstruct the requested gate.
 | `algebraic/support_strata.rs`, `one_plus_three.rs`, `two_plus_two.rs`, `resonance.rs`, `klein.rs`, `radical.rs` | Specialized constructions |
 
 The algebraic search tries scalar and rank-one cases, specialized constructions,
-then the chart search. Probes run once per set of spectra; exhaustive selection
-continues without replaying them. Snapped spectra get their own probes.
-Chart candidates retain their additional spectral gate before the shared verifier.
-These routines return candidates. Final acceptance in
+then the chart search. These routines return candidates. Final acceptance in
 `spectral.rs` checks a real SO(4) matrix against the original target spectrum.
 Snapping spectra inside a construction does not change the acceptance target.
 An accepted solution retains its spectral state; the public return path and

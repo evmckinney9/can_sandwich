@@ -28,6 +28,8 @@ strip = "symbols"
 default = []
 # Internal diagnostic routes and profiler counters.
 diagnostics = []
+# Corpus comparison for standalone research projects.
+corpus = []
 
 [dependencies]
 nalgebra = "0.35"

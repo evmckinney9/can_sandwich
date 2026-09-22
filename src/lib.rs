@@ -7,6 +7,8 @@ use nalgebra::{Complex, Matrix4};
 type C = Complex<f64>;
 type ComplexMatrix = Matrix4<C>;
 mod algebraic;
+#[cfg(any(test, feature = "corpus"))]
+pub mod corpus;
 mod diagnostics;
 mod numerical;
 mod problem;

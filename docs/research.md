@@ -2,7 +2,8 @@
 
 The [README](../README.md) gives the project overview and usage. This page
 defines the unrestricted problem, the GULPS conventions, and the requirements
-for a proved construction.
+for a proved construction. The [researcher guide](researcher.md) gives the
+candidate interface and corpus comparison commands.
 
 ## The unrestricted problem
 
@@ -45,6 +46,21 @@ $$
 Allowing $U\in U(4)$ gives the same problem. A scalar phase can set
 $\det U=1$ without changing $UD_\beta U^\dagger$.
 **The research problem places no SO(4) restriction on $U$.**
+
+An SO(4) witness nevertheless exists for every feasible spectral triple.
+[Falbel–Wentworth, Theorems 1 and 3](https://arxiv.org/pdf/math/0506100)
+give representatives for which the first two matrices are simultaneously
+symmetric. A symmetric unitary matrix has commuting real and imaginary
+parts, both real symmetric. Each matrix therefore has a real orthogonal
+eigenbasis. Their relative eigenbasis gives the required orthogonal witness.
+Flipping one column corrects its determinant without changing the conjugated
+diagonal matrix. This argument includes repeated spectra.
+
+[Peterson–Crooks–Smith, Corollary 14](https://arxiv.org/pdf/1904.10541)
+states this spectral reduction in the two-qubit setting. Existence does not
+provide a fast construction or a direct conversion of an arbitrary supplied
+complex witness. Section 7.1 of that paper identifies circuit realization as
+the remaining algorithmic problem.
 
 We seek a construction specialized to $n=4$, with explicit branch choices,
 a proof of coverage, and a termination bound. It must include boundary points
@@ -90,8 +106,8 @@ implementation claims separate.
 
 1. **Reduction.** Every introduced normal form covers the stated inputs.
    Fixing one matrix by simultaneous conjugation is valid. Restricting the
-   unknown witness to SO(4), a sparse pattern, or a fixed chart needs its own
-   argument if used to solve the unrestricted problem.
+   unknown witness to SO(4) uses the existence theorem above. Restricting it
+   further to a sparse pattern or a fixed chart needs its own coverage proof.
 2. **Selection.** The procedure chooses every intermediate parameter from the
    supplied spectra. Assuming a compatible hidden witness does not select one.
 3. **Coverage.** At least one enumerated branch works for every feasible input,
@@ -117,9 +133,22 @@ rank-one updates, and matrix-scaling algorithms cannot be transferred here
 without a proved multiplicative reduction.
 
 The GULPS application requires a real magic-basis witness and permits a central
-sign on the target spectrum. The unrestricted research problem permits any
-SU(4) witness and fixes the target conjugacy class. An algorithm for either
-contract needs an explicit conversion before it solves the other.
+sign on the target spectrum. Real and complex witnesses have the same feasible
+spectral triples, but a constructor must still return the required witness type.
+The unrestricted problem fixes the target conjugacy class. A GULPS result on
+the negative target branch does not solve that fixed-class problem.
+
+Recent related work does not remove these construction requirements.
+[François–Tarrago](https://arxiv.org/abs/2405.06723) give polytope-volume formulas
+for products of generic unitary conjugacy classes. A point in one of those
+polytopes still needs a map to realizing matrices.
+[Kenyon–Ovenhouse](https://arxiv.org/abs/2407.10786) parametrize complex matrix
+pairs with prescribed product spectra. Selecting a unitary realization within
+that parametrization is an additional problem.
+[Ye](https://arxiv.org/abs/2607.14634) constructs cluster structures on complex
+$SL_n/SO_n$ strata, not a selector for the required compact real spectral fibre.
+These are possible tools for a construction, not complete algorithms for this
+contract. This source review was last checked on 2026-09-22.
 
 ## GULPS coordinates and endpoint factors
 
@@ -168,6 +197,25 @@ $$
 
 This avoids a second endpoint eigendecomposition in GULPS. The implementation
 checks the factors against the original matrix, including phase.
+
+## Three real spectral equations
+
+For $M\in SU(4)$, unit-modulus eigenvalues and determinant one imply
+
+$$
+\det(zI-M)=z^4-e_1z^3+e_2z^2-\overline{e_1}z+1,
+\qquad e_2\in\mathbb R.
+$$
+
+Thus exact spectral equality requires only three real quantities:
+$\Re e_1$, $\Im e_1$, and $e_2$. For the negative target, $e_1$ changes
+sign and $e_2$ stays the same. The complementary-minor formulas below compute
+these coefficients directly from a proposed $O$.
+
+This reduces the forward equations. It does not select a solution or prove
+that a chosen family of matrices reaches every feasible target. In numerical
+arithmetic, small coefficient residuals also do not guarantee small root errors
+near repeated eigenvalues. The corpus checks matrices and matched roots directly.
 
 ## One spectral acceptance test
 
