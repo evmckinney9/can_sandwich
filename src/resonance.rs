@@ -23,7 +23,7 @@
 //! Confluence is detected with the same `sqrt(machine-epsilon)` separation as
 //! the dispatch spine: algebraically coincident inputs, never near-degeneracy.
 
-use super::{poly_roots, Mat4, ACCEPT, C};
+use super::{ACCEPT, C, Mat4, poly_roots};
 use nalgebra::{DMatrix, DVector};
 
 const COINCIDE: f64 = 1.5e-8;
@@ -531,10 +531,10 @@ fn construct(
                 let outer3: Vec<C> = active.iter().map(|&i| outer4[i]).collect();
                 let tau3: C = wrem.iter().sum::<C>() - mu * outer3.iter().sum::<C>();
                 let omegas = [wrem[r0]];
-                if let Some(fam) = family(&outer3, alpha, beta, mu, &omegas, tau3) {
-                    if run_sections(&fam, &active, rest[0], rest[1], (m0, m1), accept) {
-                        return true;
-                    }
+                if let Some(fam) = family(&outer3, alpha, beta, mu, &omegas, tau3)
+                    && run_sections(&fam, &active, rest[0], rest[1], (m0, m1), accept)
+                {
+                    return true;
                 }
             }
         }
@@ -549,10 +549,10 @@ fn construct(
             omega_sets.extend(omegas.iter().map(|&om| vec![om]));
         }
         for oms in &omega_sets {
-            if let Some(fam) = family(outer4, alpha, beta, mu, oms, tau4) {
-                if run_sections(&fam, &active, rest[0], rest[1], (m0, m1), accept) {
-                    return true;
-                }
+            if let Some(fam) = family(outer4, alpha, beta, mu, oms, tau4)
+                && run_sections(&fam, &active, rest[0], rest[1], (m0, m1), accept)
+            {
+                return true;
             }
         }
     }
@@ -658,10 +658,10 @@ fn run_sections(
             for (c, d) in cand.iter().zip(&dirs) {
                 x += d * *c;
             }
-            if let Some(o) = frame_from(&x, active, u_slot, v_slot, mu_slots) {
-                if accept(o) {
-                    return true;
-                }
+            if let Some(o) = frame_from(&x, active, u_slot, v_slot, mu_slots)
+                && accept(o)
+            {
+                return true;
             }
         }
     }
@@ -834,10 +834,9 @@ pub(crate) fn solve_with<R>(
             let oriented = super::apply_transpose(o, transpose);
             if let Some((o, residual)) =
                 super::certify_frame_candidate(oriented, dc, lam, &targets[bi])
+                && hit.is_none()
             {
-                if hit.is_none() {
-                    hit = finalize(o, residual);
-                }
+                hit = finalize(o, residual);
             }
             hit.is_some()
         };

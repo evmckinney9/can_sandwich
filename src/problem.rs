@@ -4,7 +4,7 @@
 //! target branches, and frame certificates are owned by the corresponding
 //! certificate module rather than being reimplemented by individual rungs.
 
-use super::{eigphases, esym4, rho_weyl, weyl_from_monodromy, Mat4, C};
+use super::{C, Mat4, eigphases, esym4, rho_weyl, weyl_from_monodromy};
 
 /// Exact spectral partition used by the dispatch spine.
 ///
@@ -211,7 +211,7 @@ impl PreparedSandwich {
 
 #[cfg(test)]
 mod tests {
-    use super::{routed_product_collision, spectrum_proximity, SpectrumProximity, C};
+    use super::{C, SpectrumProximity, routed_product_collision, spectrum_proximity};
 
     #[test]
     fn detects_collision_with_simple_inputs() {

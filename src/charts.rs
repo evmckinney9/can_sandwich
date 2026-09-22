@@ -14,7 +14,7 @@
 //! for a fixed pivot pattern, interpolated from 13 Chebyshev nodes). Every candidate is a
 //! closed-form frame accepted only by the production certificate. Block-stratum leaves
 //! (`3+1`, `2+2`, near-scalar, degenerate pairs) handle clustered spectra.
-use super::{Mat4, C};
+use super::{C, Mat4};
 use nalgebra::{Matrix3, Matrix4, RowVector4, Vector3};
 type M3 = Matrix3<f64>;
 type V3 = Vector3<f64>;
@@ -1753,11 +1753,7 @@ fn solve_charts_gated(
                     }
                     let z = l0[a] * m0[b];
                     let a3 = nalgebra::Matrix3::<C>::from_fn(|i, j| {
-                        if i == j {
-                            z - mpc[i][j]
-                        } else {
-                            -mpc[i][j]
-                        }
+                        if i == j { z - mpc[i][j] } else { -mpc[i][j] }
                     });
                     let Some(inv) = a3.try_inverse() else {
                         continue;
@@ -1795,10 +1791,10 @@ fn solve_charts_gated(
                         (0.5 * tp).max(t0),
                         (1.5 * tp).min(t1),
                     );
-                    if rec.5 < rec.6 {
-                        if let Some(h) = exact_chart(0, lift, &l0, &m0, tau, &rec) {
-                            return Some(h);
-                        }
+                    if rec.5 < rec.6
+                        && let Some(h) = exact_chart(0, lift, &l0, &m0, tau, &rec)
+                    {
+                        return Some(h);
                     }
                 }
             }
@@ -1852,12 +1848,12 @@ fn solve_charts_gated(
                             continue;
                         };
                         let rec: Rec = (t1 - t0, swap, a as u8, j as u8, l as u8, t0, t1);
-                        if ts >= t0 && ts <= t1 {
-                            if let Some(h) =
+                        if ts >= t0
+                            && ts <= t1
+                            && let Some(h) =
                                 try_chart(0, lift, &l0, &m0, tau, &rec, (ts - t0) / (t1 - t0))
-                            {
-                                return Some(h);
-                            }
+                        {
+                            return Some(h);
                         }
                         let rec: Rec = (
                             t1 - t0,
@@ -2347,10 +2343,10 @@ fn overlap_leaf(
                 [s11.clamp(0.0, 1.0), sg * s12],
                 [sg * s12, s22.clamp(0.0, 1.0)],
             ];
-            if let Some(o) = sqrt_psd2(&sm).and_then(|g| frame_from_g(&g)) {
-                if test(o) {
-                    return true;
-                }
+            if let Some(o) = sqrt_psd2(&sm).and_then(|g| frame_from_g(&g))
+                && test(o)
+            {
+                return true;
             }
         }
         return false;
@@ -2429,10 +2425,10 @@ fn overlap_leaf(
                 [sv[0].sqrt(), sig.sqrt()],
                 [sv[1].sqrt(), sign * sv[2].sqrt()],
             ];
-            if let Some(o) = frame_from_g(&g) {
-                if test(o) {
-                    return true;
-                }
+            if let Some(o) = frame_from_g(&g)
+                && test(o)
+            {
+                return true;
             }
         }
         false
@@ -2905,11 +2901,7 @@ fn pair22_leaf(d1: &[C; 4], d2: &[C; 4], lt: &[C; 4], test: &mut dyn FnMut(Real4
             }
             // chart at the largest minor (i,j): v1 = e_i + sum_k alpha_k e_k, v2 = e_j + sum_k beta_k e_k
             let (kmax, _) = x.iter().enumerate().fold((0, 0.0f64), |acc, (k, &v)| {
-                if v.abs() > acc.1 {
-                    (k, v.abs())
-                } else {
-                    acc
-                }
+                if v.abs() > acc.1 { (k, v.abs()) } else { acc }
             });
             let (i, j) = pairs[kmax];
             let xs = |a: usize, b2: usize| -> f64 {
@@ -3154,10 +3146,10 @@ pub(crate) fn solve_full(problem: &super::PreparedSandwich) -> Option<super::Sol
     };
     let clustered = gap(&lam).min(gap(&mu)).min(gap(&lifts[0])) < 1e-4;
     let allequal = |l: &[C; 4]| (1..4).all(|k| (l[k] - l[0]).norm() < 1e-9);
-    if allequal(&lam) || allequal(&mu) {
-        if let Some(h) = check_chart_candidate(problem, Real4::identity()) {
-            return Some(h);
-        }
+    if (allequal(&lam) || allequal(&mu))
+        && let Some(h) = check_chart_candidate(problem, Real4::identity())
+    {
+        return Some(h);
     }
     let run_leaves = |lamc: [C; 4], muc: [C; 4], liftsc: [[C; 4]; 2]| -> Option<super::Solution> {
         for lift in 0..2 {
@@ -3198,28 +3190,24 @@ pub(crate) fn solve_full(problem: &super::PreparedSandwich) -> Option<super::Sol
                 };
                 for o in leaf_31(&d1, &d2, &lt) {
                     let ob = reconstruct_role(role, &lamc, &muc, &lam_t, &o);
-                    if let Some(ob) = ob {
-                        if let Some(h) = check_chart_candidate(problem, ob) {
-                            return Some(h);
-                        }
+                    if let Some(ob) = ob
+                        && let Some(h) = check_chart_candidate(problem, ob)
+                    {
+                        return Some(h);
                     }
                 }
             }
         }
         None
     };
-    if clustered {
-        if let Some(h) = run_leaves(lam, mu, lifts) {
-            return Some(h);
-        }
+    if clustered && let Some(h) = run_leaves(lam, mu, lifts) {
+        return Some(h);
     }
     if let Some(h) = solve_charts_gated(problem, 1, lam, mu, lifts, true) {
         return Some(h);
     }
-    if !clustered {
-        if let Some(h) = run_leaves(lam, mu, lifts) {
-            return Some(h);
-        }
+    if !clustered && let Some(h) = run_leaves(lam, mu, lifts) {
+        return Some(h);
     }
     if let Some(h) = solve_charts_gated(problem, 2, lam, mu, lifts, true) {
         return Some(h);

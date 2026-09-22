@@ -1147,59 +1147,55 @@ fn solve_scalar_factor(problem: &PreparedSandwich) -> Option<Solution> {
 fn solve_rank_one_31(problem: &PreparedSandwich) -> Option<Solution> {
     if problem.strata.c == SpectrumKind::Triple31
         && problem.strata.c_proximity == problem::SpectrumProximity::Exact
-    {
-        if let Some(hit) = solve_rank_one_side(
+        && let Some(hit) = solve_rank_one_side(
             problem,
             problem.left,
             problem.right,
             false,
             64.0 * f64::EPSILON,
             Rung::RankOne31,
-        ) {
-            return Some(hit);
-        }
+        )
+    {
+        return Some(hit);
     }
     if problem.strata.g == SpectrumKind::Triple31
         && problem.strata.g_proximity == problem::SpectrumProximity::Exact
-    {
-        if let Some(hit) = solve_rank_one_side(
+        && let Some(hit) = solve_rank_one_side(
             problem,
             problem.right,
             problem.left,
             true,
             64.0 * f64::EPSILON,
             Rung::RankOne31,
-        ) {
-            return Some(hit);
-        }
+        )
+    {
+        return Some(hit);
     }
     if problem.strata.c == SpectrumKind::Triple31
         && problem.strata.c_proximity == problem::SpectrumProximity::Near
-    {
-        if let Some(hit) = solve_rank_one_side(
+        && let Some(hit) = solve_rank_one_side(
             problem,
             problem.left,
             problem.right,
             false,
             1.0e-7,
             Rung::NearRankOne31,
-        ) {
-            return Some(hit);
-        }
+        )
+    {
+        return Some(hit);
     }
     if problem.strata.g == SpectrumKind::Triple31
         && problem.strata.g_proximity == problem::SpectrumProximity::Near
-    {
-        if let Some(hit) = solve_rank_one_side(
+        && let Some(hit) = solve_rank_one_side(
             problem,
             problem.right,
             problem.left,
             true,
             1.0e-7,
             Rung::NearRankOne31,
-        ) {
-            return Some(hit);
-        }
+        )
+    {
+        return Some(hit);
     }
     None
 }
@@ -1386,11 +1382,10 @@ fn solve_prefix(problem: &PreparedSandwich) -> Option<Solution> {
                 continue;
             }
             let r = perm_vertex_residual(&problem.left, &problem.right, &problem.targets, &p);
-            if r < ACCEPT {
-                if let Some(solution) = compiler_solution(problem, signed_perm(p), Rung::Vertex, r)
-                {
-                    return Some(solution);
-                }
+            if r < ACCEPT
+                && let Some(solution) = compiler_solution(problem, signed_perm(p), Rung::Vertex, r)
+            {
+                return Some(solution);
             }
         }
         support_perms = Some(cand);
@@ -1412,10 +1407,10 @@ fn solve_prefix(problem: &PreparedSandwich) -> Option<Solution> {
             cand,
         );
         prof::rec(prof::EDGE, tp);
-        if let Some((o, r)) = hit {
-            if let Some(solution) = compiler_solution(problem, o, Rung::Edge, r) {
-                return Some(solution);
-            }
+        if let Some((o, r)) = hit
+            && let Some(solution) = compiler_solution(problem, o, Rung::Edge, r)
+        {
+            return Some(solution);
         }
     }
     let tp = prof::start();
@@ -1428,10 +1423,10 @@ fn solve_prefix(problem: &PreparedSandwich) -> Option<Solution> {
         &problem.targets,
     );
     prof::rec(prof::FACE, tp);
-    if let Some((o, r)) = hit {
-        if let Some(solution) = compiler_solution(problem, o, Rung::Face, r) {
-            return Some(solution);
-        }
+    if let Some((o, r)) = hit
+        && let Some(solution) = compiler_solution(problem, o, Rung::Face, r)
+    {
+        return Some(solution);
     }
     // Klein-circulant acceleration: a one-sided section of the same realization
     // relation, with e1 linear in the orthostochastic diagonal and e2 reduced
@@ -1446,10 +1441,10 @@ fn solve_prefix(problem: &PreparedSandwich) -> Option<Solution> {
         &problem.targets,
     );
     prof::rec(prof::KLEIN_TOTAL, tk);
-    if let Some((o, r)) = klein_hit {
-        if let Some(solution) = compiler_solution(problem, o, Rung::Klein, r) {
-            return Some(solution);
-        }
+    if let Some((o, r)) = klein_hit
+        && let Some(solution) = compiler_solution(problem, o, Rung::Klein, r)
+    {
+        return Some(solution);
     }
     let target_repeated = problem.strata.target.iter().any(|kind| kind.is_repeated());
     let mut resonance_best = None;
@@ -1489,47 +1484,44 @@ fn solve_prefix(problem: &PreparedSandwich) -> Option<Solution> {
         &problem.lam,
         &problem.targets,
         problem.strata,
-    ) {
-        if let Some(solution) = compiler_solution(problem, o, rung, r) {
-            return Some(solution);
-        }
+    ) && let Some(solution) = compiler_solution(problem, o, rung, r)
+    {
+        return Some(solution);
     }
     if let Some(solution) = resonance_best {
         return Some(solution);
     }
     let has_one_plus_three = edge_gate.exact.iter().flatten().any(|&mask| mask != 0);
-    if has_one_plus_three {
-        if let Some((o, residual)) = one_plus_three::solve_walls(
+    if has_one_plus_three
+        && let Some((o, residual)) = one_plus_three::solve_walls(
             &problem.left,
             &problem.right,
             &edge_gate.exact,
             &problem.dc,
             &problem.lam,
             &problem.targets,
-        ) {
-            if let Some(solution) = compiler_solution(problem, o, Rung::OnePlusThree, residual) {
-                return Some(solution);
-            }
-        }
+        )
+        && let Some(solution) = compiler_solution(problem, o, Rung::OnePlusThree, residual)
+    {
+        return Some(solution);
     }
-    if let Some((o, residual, rung)) = solve_boundary_accelerators(problem) {
-        if let Some(solution) = compiler_solution(problem, o, rung, residual) {
-            return Some(solution);
-        }
+    if let Some((o, residual, rung)) = solve_boundary_accelerators(problem)
+        && let Some(solution) = compiler_solution(problem, o, rung, residual)
+    {
+        return Some(solution);
     }
-    if has_one_plus_three {
-        if let Some((o, residual)) = one_plus_three::solve_dense(
+    if has_one_plus_three
+        && let Some((o, residual)) = one_plus_three::solve_dense(
             &problem.left,
             &problem.right,
             &edge_gate.exact,
             &problem.dc,
             &problem.lam,
             &problem.targets,
-        ) {
-            if let Some(solution) = compiler_solution(problem, o, Rung::OnePlusThree, residual) {
-                return Some(solution);
-            }
-        }
+        )
+        && let Some(solution) = compiler_solution(problem, o, Rung::OnePlusThree, residual)
+    {
+        return Some(solution);
     }
     None
 }

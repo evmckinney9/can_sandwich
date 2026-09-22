@@ -7,8 +7,8 @@
 //! after those cheaper strata and the Klein section have declined.
 
 use super::{
-    compound_residual, givens, recover_frame, signed_perm, Mat4, SpectrumKind, StratumSignature,
-    ACCEPT, C, PLANES,
+    ACCEPT, C, Mat4, PLANES, SpectrumKind, StratumSignature, compound_residual, givens,
+    recover_frame, signed_perm,
 };
 
 const PAIR6: [(usize, usize); 6] = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];
@@ -743,10 +743,10 @@ pub(crate) fn solve_confluent(
         let tp = super::prof::start();
         let hit = super::resonance::solve(c_in, g_in, target_specs, dc, lam, targets);
         super::prof::rec(super::prof::RADICAL_TOTAL, tp);
-        if let Some((o, r)) = hit {
-            if r < 1e-12 {
-                return Some((o, r, super::Rung::Radical));
-            }
+        if let Some((o, r)) = hit
+            && r < 1e-12
+        {
+            return Some((o, r, super::Rung::Radical));
         }
     }
     if let Some((o, r)) = rad_hit {

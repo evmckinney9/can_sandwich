@@ -12,7 +12,7 @@ mod cascade;
 mod cpoly;
 mod radical;
 
-pub use cascade::{solve, Mat4, Rung, Solution};
+pub use cascade::{Mat4, Rung, Solution, solve};
 
 #[cfg(feature = "diagnostics")]
 pub use cascade::{

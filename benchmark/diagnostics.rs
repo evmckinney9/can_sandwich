@@ -10,7 +10,7 @@
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 use std::collections::BTreeMap;
 
-use can_sandwich::{branch_signature, init_tables, prof, solve, Rung, Solution};
+use can_sandwich::{Rung, Solution, branch_signature, init_tables, prof, solve};
 
 /// Parse a `.npy` header, returning `(shape, data_offset)`.
 fn npy_header(bytes: &[u8]) -> (Vec<usize>, usize) {
@@ -364,10 +364,17 @@ fn bench_paired(path: &str, stride: usize) -> bool {
         added += usize::from(success[2] && !success[1]);
         lost += usize::from(success[0] && !success[2]);
         if !success[2] || (success[2] && !success[1]) {
-            println!("CASE row {row} gap {gap:.3e} production {} forward {} bidirectional {} C {:?} G {:?} T {:?}", success[0],success[1],success[2],c,g,t);
+            println!(
+                "CASE row {row} gap {gap:.3e} production {} forward {} bidirectional {} C {:?} G {:?} T {:?}",
+                success[0], success[1], success[2], c, g, t
+            );
         }
     }
-    println!("PAIRED dataset {path} total {} stride {stride} applicable {} exact_gap_le_1e-12 {exact} near {near} added_by_backward {added} lost_vs_production {lost} invalid {invalid}", triples.len(),exact+near);
+    println!(
+        "PAIRED dataset {path} total {} stride {stride} applicable {} exact_gap_le_1e-12 {exact} near {near} added_by_backward {added} lost_vs_production {lost} invalid {invalid}",
+        triples.len(),
+        exact + near
+    );
     for method in 0..3 {
         times[method].sort_unstable();
         let ns = &times[method];
@@ -378,7 +385,17 @@ fn bench_paired(path: &str, stride: usize) -> bool {
                 micros(ns[((ns.len() - 1) as f64 * p).round() as usize])
             }
         };
-        println!("METHOD {} solved {}/{} mean_us {:.3} p50_us {:.3} p99_us {:.3} max_us {:.3} worst_check {:.3e}", ["production","forward","bidirectional"][method],counts[method],exact+near,micros(ns.iter().sum())/ns.len().max(1) as f64,q(0.5),q(0.99),q(1.0),worst[method]);
+        println!(
+            "METHOD {} solved {}/{} mean_us {:.3} p50_us {:.3} p99_us {:.3} max_us {:.3} worst_check {:.3e}",
+            ["production", "forward", "bidirectional"][method],
+            counts[method],
+            exact + near,
+            micros(ns.iter().sum()) / ns.len().max(1) as f64,
+            q(0.5),
+            q(0.99),
+            q(1.0),
+            worst[method]
+        );
     }
     invalid == 0 && counts[2] == exact + near
 }
@@ -392,7 +409,9 @@ fn main() {
         _ => false,
     };
     if !valid_arity {
-        eprintln!("usage: can_sandwich bench-npy <path> [stride] | census-npy <path> [stride] | bench-paired <path> [stride] | bench-row <path> <row> [reps] | bench-triple <9 coordinates>");
+        eprintln!(
+            "usage: can_sandwich bench-npy <path> [stride] | census-npy <path> [stride] | bench-paired <path> [stride] | bench-row <path> <row> [reps] | bench-triple <9 coordinates>"
+        );
         std::process::exit(2);
     }
     let parse_index = |s: &String| -> usize {
@@ -434,7 +453,9 @@ fn main() {
             bench_triple(&values)
         }
         _ => {
-            eprintln!("usage: can_sandwich bench-npy <path> [stride] | census-npy <path> [stride] | bench-row <path> <row> [reps] | bench-triple <9 coordinates>");
+            eprintln!(
+                "usage: can_sandwich bench-npy <path> [stride] | census-npy <path> [stride] | bench-row <path> <row> [reps] | bench-triple <9 coordinates>"
+            );
             false
         }
     };

@@ -1437,10 +1437,10 @@ pub(crate) fn solve_interior_words(
                     // Existence is proven on some component; recover it from the
                     // bracket the proof supplies rather than declaring absence.
                     for &(lo, hi) in comps[..ncomp].iter() {
-                        if may_have_unit_root(&sextic, lo, hi) % 2 == 1 {
-                            if let Some(x) = refine_bracket(&sextic, lo, hi) {
-                                roots.push(x);
-                            }
+                        if may_have_unit_root(&sextic, lo, hi) % 2 == 1
+                            && let Some(x) = refine_bracket(&sextic, lo, hi)
+                        {
+                            roots.push(x);
                         }
                     }
                     if roots.is_empty() {

@@ -1,6 +1,6 @@
 //! JSON-lines adapter for the production solver, without diagnostic routes.
-use can_sandwich::{solve, Rung};
-use serde_json::{json, Value};
+use can_sandwich::{Rung, solve};
+use serde_json::{Value, json};
 use std::io::{self, BufRead, Write};
 
 fn coordinates(request: &Value, key: &str) -> Result<[f64; 3], String> {

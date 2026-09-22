@@ -65,11 +65,7 @@ pub(super) fn framed_solution(o: Mat4, rung: Rung, residual: f64) -> Option<Solu
 
 #[inline]
 pub(super) fn apply_transpose(frame: Mat4, transpose: bool) -> Mat4 {
-    if transpose {
-        frame.transpose()
-    } else {
-        frame
-    }
+    if transpose { frame.transpose() } else { frame }
 }
 
 /// Shared pre-certificate for algebraic candidate frames.
@@ -529,29 +525,28 @@ pub(super) fn endpoint_factorization_branch(
     // makes the known-root projector reject even though the symmetric master is
     // numerically diagonalizable. Recover its actual unit-circle roots first;
     // the caller still performs the forward class certificate.
-    if let Some((actual, off_diagonal)) = klein::unitary_eigenvalues(&master, roots0) {
-        if off_diagonal < 1e-6 {
-            if let Some(frame) = klein::takagi_real(&master, &actual) {
-                let l = Mat4::from_fn(|i, j| C::new(frame[(i, j)], 0.0));
-                let db = Mat4::from_fn(|i, j| {
-                    if i == j {
-                        problem.lam[(i, i)].sqrt()
-                    } else {
-                        C::default()
-                    }
-                });
-                let dm = Mat4::from_fn(|i, j| {
-                    if i == j {
-                        actual[i].sqrt()
-                    } else {
-                        C::default()
-                    }
-                });
-                let u = problem.dc * *o * db;
-                if let Some(inverse) = dm.try_inverse() {
-                    return Some((l, inverse * l.transpose() * u));
-                }
+    if let Some((actual, off_diagonal)) = klein::unitary_eigenvalues(&master, roots0)
+        && off_diagonal < 1e-6
+        && let Some(frame) = klein::takagi_real(&master, &actual)
+    {
+        let l = Mat4::from_fn(|i, j| C::new(frame[(i, j)], 0.0));
+        let db = Mat4::from_fn(|i, j| {
+            if i == j {
+                problem.lam[(i, i)].sqrt()
+            } else {
+                C::default()
             }
+        });
+        let dm = Mat4::from_fn(|i, j| {
+            if i == j {
+                actual[i].sqrt()
+            } else {
+                C::default()
+            }
+        });
+        let u = problem.dc * *o * db;
+        if let Some(inverse) = dm.try_inverse() {
+            return Some((l, inverse * l.transpose() * u));
         }
     }
     None

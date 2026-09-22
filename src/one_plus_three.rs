@@ -11,7 +11,7 @@
 //! point to `SO(3)` with no sign enumeration.
 
 use super::{
-    c, compound_residual, frame_metrics, orient_so4, poly_roots, signed_perm, Mat4, ACCEPT, C,
+    ACCEPT, C, Mat4, c, compound_residual, frame_metrics, orient_so4, poly_roots, signed_perm,
 };
 
 // The nominal 6 compatible base permutations x 6 ordered plane pairs contain
@@ -470,10 +470,10 @@ fn dense_rank_three_frame<R>(
         let quartic_scale = quartic
             .iter()
             .fold(0.0f64, |maximum, value| maximum.max(value.abs()));
-        if quartic_scale <= 2e-8 * heron_scale {
-            if let Some((lo, hi)) = birkhoff_v_interval(&entries, u) {
-                roots_v.push(0.5 * (lo + hi));
-            }
+        if quartic_scale <= 2e-8 * heron_scale
+            && let Some((lo, hi)) = birkhoff_v_interval(&entries, u)
+        {
+            roots_v.push(0.5 * (lo + hi));
         }
         roots_v.sort_by(f64::total_cmp);
         roots_v.dedup_by(|left, right| (*left - *right).abs() < 1e-9);

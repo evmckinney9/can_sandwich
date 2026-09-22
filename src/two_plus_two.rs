@@ -16,7 +16,7 @@
 //! Every proposed frame receives both an explicit Gram check and the original
 //! forward spectral certificate.
 
-use super::{c, poly_roots, Mat4, C};
+use super::{C, Mat4, c, poly_roots};
 
 const PAIRS: [(usize, usize); 6] = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];
 type Affine = [f64; 3];
@@ -596,10 +596,9 @@ fn solve_paired_support_with<R>(
                 &problem.routed,
                 viable,
                 &[permutation],
-            ) {
-                if let Some(hit) = finalize(o, residual) {
-                    return Some(hit);
-                }
+            ) && let Some(hit) = finalize(o, residual)
+            {
+                return Some(hit);
             }
         }
     }
@@ -829,17 +828,17 @@ fn solve_oriented<R>(
         trim_polynomial(&mut fibre, 1e-13);
         let fibre_scale = fibre.iter().fold(0.0f64, |m, value| m.max(value.abs()));
         if fibre_scale <= 2e-10 * curve_scale {
-            if let Some((lo, hi)) = feasible_v_interval(&forms, u) {
-                if let Some(hit) = try_candidate(
+            if let Some((lo, hi)) = feasible_v_interval(&forms, u)
+                && let Some(hit) = try_candidate(
                     &forms,
                     u,
                     0.5 * (lo + hi),
                     anchor_positions,
                     peel_positions,
                     accept,
-                ) {
-                    return Some(hit);
-                }
+                )
+            {
+                return Some(hit);
             }
             continue;
         }
@@ -1626,7 +1625,7 @@ mod tests {
     #[cfg(feature = "diagnostics")]
     #[test]
     fn paired_diagnostic_scope_and_support_are_explicit() {
-        use super::super::{paired_edge_scope, solve_paired_edges, Rung};
+        use super::super::{Rung, paired_edge_scope, solve_paired_edges};
         let paired = [0.125, 0.125, -0.125];
         let generic = [0.19, 0.07, -0.03];
         assert!(paired_edge_scope(paired, generic, generic).unwrap() < 1e-14);
@@ -1649,7 +1648,7 @@ mod tests {
     #[cfg(feature = "diagnostics")]
     #[test]
     fn paired_support_recovers_boundary_corpus_rows() {
-        use super::super::{solve_paired_edges, Rung};
+        use super::super::{Rung, solve_paired_edges};
         let cases = [
             (
                 [0.5, 0.0, 0.0],
@@ -1680,7 +1679,7 @@ mod tests {
     #[cfg(feature = "diagnostics")]
     #[test]
     fn backward_paired_transport_certifies_both_original_orientations() {
-        use super::super::{compiler_solution, eig4, esym4, givens, PreparedSandwich, Rung};
+        use super::super::{PreparedSandwich, Rung, compiler_solution, eig4, esym4, givens};
         for swapped in [false, true] {
             let paired = [0.125, 0.125, -0.125];
             let generic = [0.19, 0.07, -0.03];

@@ -25,7 +25,7 @@
 //!
 //! so squaring gives a REAL quartic `p(s)² = k²·D₄(s)`. `σ` is then read off from
 //! the sign of `p·k`, not searched.
-use super::{Mat4, ACCEPT, C, PERMS24};
+use super::{ACCEPT, C, Mat4, PERMS24};
 
 /// Diagonalize a nearly unitary normal matrix through a Hermitian projection.
 ///

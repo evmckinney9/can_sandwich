@@ -20,7 +20,7 @@ impl D {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalized, D};
+    use super::{D, normalized};
     use crate::cascade::C;
 
     #[test]

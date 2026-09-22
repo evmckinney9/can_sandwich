@@ -613,8 +613,8 @@ impl PairGate {
         let m2 = -m1;
         let pp_m1 = pp * m1.conj(); // pp / m1 (unit-circle: 1/m = conj(m))
         let pp_m2 = -pp_m1; // pp / m2 = pp / (-m1) = -(pp / m1)
-                            // dt12[k] = (delta[k]-t1)*(delta[k]-t2): pair-specific, computed here.
-                            // ac[k] = a[k]*cis[k] is loop-invariant across all pairs; precomputed by caller.
+        // dt12[k] = (delta[k]-t1)*(delta[k]-t2): pair-specific, computed here.
+        // ac[k] = a[k]*cis[k] is loop-invariant across all pairs; precomputed by caller.
         let dt12: [C; 4] = std::array::from_fn(|k| (delta[k] - t1) * (delta[k] - t2));
         // exact residue of the candidate pair (m, pp/m) at node k
         let vex = |m: C, pp_m: C, k: usize| -> C {
@@ -1605,11 +1605,7 @@ impl StrictWord {
     fn angle(z: C) -> f64 {
         use std::f64::consts::TAU;
         let a = z.arg();
-        if a < 0.0 {
-            a + TAU
-        } else {
-            a
-        }
+        if a < 0.0 { a + TAU } else { a }
     }
 
     fn cyclic_distance(x: f64, y: f64) -> f64 {
@@ -1692,11 +1688,7 @@ impl StrictWord {
     fn coordinate(p: f64, lo: f64) -> f64 {
         use std::f64::consts::TAU;
         let c = p - lo;
-        if c < 0.0 {
-            c + TAU
-        } else {
-            c
-        }
+        if c < 0.0 { c + TAU } else { c }
     }
 
     /// Each option is `(delta_gap, fixed x_in_that_gap)`. There are exactly
@@ -2010,10 +2002,10 @@ pub(crate) fn two_step<R>(
             if !ok {
                 continue;
             }
-            if let Some(s) = verify(c, a, &vv, &uc, rho1, rho2, w) {
-                if let Some(hit) = accept(s) {
-                    return Some(hit);
-                }
+            if let Some(s) = verify(c, a, &vv, &uc, rho1, rho2, w)
+                && let Some(hit) = accept(s)
+            {
+                return Some(hit);
             }
         }
         {
@@ -2032,8 +2024,9 @@ pub(crate) fn two_step<R>(
                 ]);
                 for mu in cands {
                     let prod: C = mu.iter().product();
-                    if (prod - pin).norm_sqr() < 1e-12 && inherits_clusters(&mu, &delta, &dcl) {
-                        if let Some(s) = try_mu(
+                    if (prod - pin).norm_sqr() < 1e-12
+                        && inherits_clusters(&mu, &delta, &dcl)
+                        && let Some(s) = try_mu(
                             &mu,
                             Some((C::default(), slots[0], slots[1])),
                             c,
@@ -2049,11 +2042,10 @@ pub(crate) fn two_step<R>(
                             &pre_rho2_ac,
                             &pre_ac,
                             "forced",
-                        ) {
-                            if let Some(hit) = accept(s) {
-                                return Some(hit);
-                            }
-                        }
+                        )
+                        && let Some(hit) = accept(s)
+                    {
+                        return Some(hit);
                     }
                 }
             }
@@ -2160,10 +2152,9 @@ pub(crate) fn two_step<R>(
                                         &pre_rho2_ac,
                                         &pre_ac,
                                         "skel",
-                                    ) {
-                                        if let Some(hit) = accept(s) {
-                                            return Some(hit);
-                                        }
+                                    ) && let Some(hit) = accept(s)
+                                    {
+                                        return Some(hit);
                                     }
                                 }
                             }
@@ -2272,11 +2263,11 @@ pub(crate) fn two_step<R>(
                 } else {
                     None
                 };
-                if let Some(g) = &arc {
-                    if g.hopeless() {
-                        crate::cascade::prof::hit(crate::cascade::prof::ARC_PAIR_SKIP);
-                        continue;
-                    }
+                if let Some(g) = &arc
+                    && g.hopeless()
+                {
+                    crate::cascade::prof::hit(crate::cascade::prof::ARC_PAIR_SKIP);
+                    continue;
                 }
                 let (m1c, m2c) = if (t1 - t2).norm_sqr() < XTOL * XTOL {
                     (1, 1)
@@ -2421,10 +2412,9 @@ pub(crate) fn two_step<R>(
                         &pre_rho2_ac,
                         &pre_ac,
                         "pair",
-                    ) {
-                        if let Some(hit) = accept(s) {
-                            return Some(hit);
-                        }
+                    ) && let Some(hit) = accept(s)
+                    {
+                        return Some(hit);
                     }
                 }
             }

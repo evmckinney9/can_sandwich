@@ -45,7 +45,7 @@ impl ChartPolynomial {
                 0.0
             }
         });
-        use faer::linalg::gevd::{gevd_real, gevd_scratch, ComputeEigenvectors};
+        use faer::linalg::gevd::{ComputeEigenvectors, gevd_real, gevd_scratch};
         let mut alpha_re = faer::diag::Diag::<f64>::zeros(6);
         let mut alpha_im = faer::diag::Diag::<f64>::zeros(6);
         let mut beta = faer::diag::Diag::<f64>::zeros(6);
@@ -128,11 +128,7 @@ pub(super) fn recover(residuals: &[[f64; 8]; 3], x: f64) -> Vec<(f64, f64)> {
     let ys = if scale == 0.0 {
         Vec::new()
     } else if a.abs() <= 64.0 * f64::EPSILON * scale {
-        if b == 0.0 {
-            Vec::new()
-        } else {
-            vec![-c / b]
-        }
+        if b == 0.0 { Vec::new() } else { vec![-c / b] }
     } else {
         let discriminant = b * b - 4.0 * a * c;
         if discriminant < 0.0 {
@@ -263,11 +259,7 @@ mod qz6 {
     fn rot(a: f64, b: f64) -> (f64, f64) {
         // (c, s) with -s*a + c*b = 0: left rotation zeroing the second entry.
         let r = a.hypot(b);
-        if r == 0.0 {
-            (1.0, 0.0)
-        } else {
-            (a / r, b / r)
-        }
+        if r == 0.0 { (1.0, 0.0) } else { (a / r, b / r) }
     }
 
     #[inline]
@@ -778,7 +770,7 @@ mod qz6_tests {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::print_stderr)]
-    use super::{cubic_product, unit_roots, ChartPolynomial};
+    use super::{ChartPolynomial, cubic_product, unit_roots};
 
     #[test]
     fn bounded_companion_recovers_a_generic_sextic() {
