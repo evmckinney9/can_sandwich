@@ -84,6 +84,7 @@ pub(crate) fn givens(i: usize, j: usize, theta: f64) -> Mat4 {
 /// traces -- no eigendecomposition, so it does not floor at spectrum degeneracy.
 /// Production uses the matrix-free `compound_residual`; this is the test-side
 /// reference implementation.
+#[cfg(any(test, feature = "diagnostics"))]
 pub(crate) fn symfn(a: &Mat4) -> [C; 4] {
     let a2 = a * a;
     let a3 = a2 * a;
@@ -265,6 +266,7 @@ pub struct Solution {
     #[cfg_attr(not(feature = "diagnostics"), allow(dead_code))]
     pub rung: Rung,
     pub residual: f64,
+    pub(crate) verified: Option<crate::spectral::State>,
 }
 
 /// Accept threshold on the smooth residual. A true reach is ~1e-13; this is loose
@@ -283,6 +285,7 @@ pub(crate) fn unsolved_solution() -> Solution {
     Solution {
         o: Mat4::identity(),
         rung: Rung::Unsolved,
+        verified: None,
         residual: f64::INFINITY,
     }
 }
@@ -721,7 +724,14 @@ fn rejects_invalid_solutions() {
     nonorthogonal[(0, 0)].re += 1e-6;
     let mut complex = Mat4::identity();
     complex[(0, 0)].im = 1e-6;
-    for frame in [nonorthogonal, complex, Mat4::repeat(C::new(f64::NAN, 0.0))] {
+    let mut nan_imaginary = Mat4::identity();
+    nan_imaginary[(0, 0)].im = f64::NAN;
+    for frame in [
+        nonorthogonal,
+        complex,
+        nan_imaginary,
+        Mat4::repeat(C::new(f64::NAN, 0.0)),
+    ] {
         assert!(compiler_solution(&problem, frame, Rung::Interior, 0.0).is_none());
     }
     assert!(compiler_solution(&problem, Mat4::identity(), Rung::Interior, 0.0).is_some());
@@ -744,10 +754,10 @@ fn compound_moments_match_matrix_traces() {
         }
         let actual = symfn(&mmat(&problem.dc, &problem.lam, &o));
         // Newton's trace identities do not use complementary minors.
-        for target in problem.targets {
-            let expected = (actual[0] - target[0])
-                .norm()
-                .max(((actual[1] - target[1]) / target[3].sqrt()).re.abs());
+        for mut target in problem.targets {
+            // Isolate e2 so a larger trace residual cannot hide a bad formula.
+            target[0] = actual[0];
+            let expected = ((actual[1] - target[1]) / target[3].sqrt()).re.abs();
             let reduced = compound_residual(&problem.dc, &problem.lam, &o, &target);
             assert!((reduced - expected).abs() < 2e-13, "sample {sample}");
         }
