@@ -1,7 +1,14 @@
 # can_sandwich
 
-GULPS needs to find a local gate that, placed between two given two-qubit gates,
-produces a target nonlocal action. We can solve this numerically, but to the
+can_sandwich is the Rust solver used by
+[GULPS](https://github.com/evmckinney9/gulps), a quantum circuit synthesis
+package that finds minimum-cost decompositions of two-qubit unitaries using
+a supplied set of gates. Once GULPS has selected a gate sequence, it needs
+to find the single-qubit gates that make the sequence implement the target.
+
+That construction reduces to the problem solved here: find a local gate
+(a tensor product of two single-qubit gates) that, placed between two given
+two-qubit gates, produces a target nonlocal action. We can solve this numerically, but to the
 best of my knowledge, finding a practical exact construction for every feasible
 input remains an open problem. In the magic basis, the task is to construct
 a real matrix $O\in SO(4)$ with a prescribed product spectrum, a form of the
