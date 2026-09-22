@@ -18,7 +18,7 @@ $$
 and impose the same conditions on $\beta$ and $\gamma$. Write
 
 $$
-D_\alpha=\operatorname{diag}(e^{i\alpha_1},\ldots,e^{i\alpha_4}),
+D_\alpha=\mathrm{diag}(e^{i\alpha_1},\ldots,e^{i\alpha_4}),
 $$
 
 with analogous definitions for $D_\beta$ and $D_\gamma$.
@@ -31,8 +31,8 @@ we can fix $A=D_\alpha$ and seek
 
 $$
 U\in SU(4),\qquad
-\operatorname{spec}(D_\alpha U D_\beta U^\dagger)
-=\operatorname{spec}(D_\gamma).
+\mathrm{spec}(D_\alpha U D_\beta U^\dagger)
+=\mathrm{spec}(D_\gamma).
 $$
 
 Spectra are multisets: repeated eigenvalues retain their multiplicities.
@@ -134,14 +134,14 @@ four ordered eigenphases in the unrestricted formulation. With zero-based indice
 
 $$
 \theta(m)=\pi(m_1,m_0,-m_0-m_1-m_2,m_2),\qquad
-D(m)=\operatorname{diag}(e^{i\theta_0(m)},\ldots,e^{i\theta_3(m)}).
+D(m)=\mathrm{diag}(e^{i\theta_0(m)},\ldots,e^{i\theta_3(m)}).
 $$
 
 The solver seeks $O\in SO(4)$ such that
 
 $$
-\operatorname{spec}\!\left(D(c)^2 O D(g)^2 O^T\right)
-=\operatorname{spec}\!\left(sD(t)^2\right),\qquad s\in\{+1,-1\}.
+\mathrm{spec}\!\left(D(c)^2 O D(g)^2 O^T\right)
+=\mathrm{spec}\!\left(sD(t)^2\right),\qquad s\in\{+1,-1\}.
 $$
 
 The two signs are generally different conjugacy classes in $SU(4)$.
