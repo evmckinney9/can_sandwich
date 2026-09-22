@@ -169,6 +169,56 @@ $$
 This avoids a second endpoint eigendecomposition in GULPS. The implementation
 checks the factors against the original matrix, including phase.
 
+## Complementary minors in dimension four
+
+The coefficient evaluator uses a dimension-four reduction. This simplifies
+verification work; it does not construct a witness or prove solver completeness.
+
+Put $A=D(c)^2=\mathrm{diag}(a)$ and $B=D(g)^2=\mathrm{diag}(b)$.
+The master matrix is similar to $AOB O^T$. For two-element index sets $I,J$,
+write $a_I=\prod_{i\in I}a_i$, $b_J=\prod_{j\in J}b_j$, and
+$m_{IJ}=\det O[I,J]$. Cauchy–Binet gives
+
+$$
+e_1=\sum_{i,j}a_i b_j O_{ij}^2,\qquad
+e_2=\sum_{|I|=|J|=2}a_I b_J m_{IJ}^2.
+$$
+
+The second sum has 36 terms. Jacobi's complementary-minor identity states
+
+$$
+\det O[I,J]
+=(-1)^{\sum I+\sum J}\det(O)\det O^{-1}[J^c,I^c].
+$$
+
+For orthogonal $O$, substitute $O^{-1}=O^T$ and $(\det O)^2=1$ to obtain
+$m_{IJ}^2=m_{I^cJ^c}^2$. This applies to both orientations of a real orthogonal
+matrix. See Theorem 1 in
+[Bapat and Sivasubramanian](https://www.isid.ac.in/~rbb/dist12.pdf) for the
+underlying Jacobi identity.
+
+Pairing each term with its complement therefore gives
+
+$$
+e_2=\sum_{I\in\{01,02,03\}}\sum_{|J|=2}
+\left(a_Ib_J+a_{I^c}b_{J^c}\right)m_{IJ}^2.
+$$
+
+Only 18 minors are needed. No division by an eigenvalue gap occurs, so the
+identity also covers repeated spectra and boundary inputs. It holds for
+arbitrary diagonal $A,B$; unit determinant is not needed for this reduction.
+
+`compound_residual` implements this formula with compensated summation. A
+small independent test compares it with Newton's trace identities on the
+explicit master matrix, using dense rotation products and both target signs.
+The full corpus checks spectra and endpoint reconstruction independently.
+
+The identity assumes exact orthogonality. Floating-point frames introduce an
+error depending on their orthogonality defect, as well as rounding in the
+sum. This coefficient test remains a construction filter. The final frame and
+rootwise checks are unchanged. In particular, this reduction does not cure
+the poor conditioning of coefficient-to-root inversion near repeated roots.
+
 ## Previous work
 
 The former documentation contained additive studies, failed numerical pilots,
