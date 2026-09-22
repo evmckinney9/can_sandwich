@@ -510,6 +510,7 @@ pub mod prof {
     pub const SEG_VERTEX: usize = 49;
     pub const CHART_TIER: usize = 50;
     pub const CHART_PHASEA: usize = 51;
+    #[cfg(feature = "diagnostics")]
     pub const CERT_FAST: usize = 52;
     #[cfg(feature = "diagnostics")]
     pub const NAMES: [&str; N] = [

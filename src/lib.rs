@@ -65,23 +65,16 @@ fn solve_using<T>(
     prof::rec(prof::SEG_PREPARE, tp);
     let result = algebraic::solve(&problem);
     if let Some(solution) = result
-        && solution.o.iter().all(|z| z.im == 0.0)
-        && let Some(state) = spectral::verify(&problem, &solution.o.map(|z| z.re))
+        && let Some(state) = solution.verified
     {
         return finish(&problem, solution, state);
     }
     let certify = |o: Matrix4<f64>| {
         let solution =
             compiler_solution(&problem, o.map(|v| C::new(v, 0.0)), Rung::Numerical, 0.0)?;
-        let state = spectral::verify(&problem, &solution.o.map(|z| z.re))?;
+        let state = solution.verified?;
         Some((solution, state))
     };
-    if let Some(candidate) = result
-        && let Some((solution, state)) =
-            numerical::refine(&problem, c, g, t, candidate.o.map(|z| z.re)).and_then(certify)
-    {
-        return finish(&problem, solution, state);
-    }
     let (solution, state) = numerical::solve(&problem, c, g, t).and_then(certify)?;
     finish(&problem, solution, state)
 }

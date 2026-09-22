@@ -40,6 +40,7 @@ use super::{ACCEPT, C, Mat4, PERMS24};
 /// quotients of `y`.  The returned error includes every off-diagonal entry in
 /// that basis, so callers do not have to assume that the input was exactly
 /// normal in floating point.
+#[cfg(feature = "diagnostics")]
 pub(crate) fn unitary_eigenvalues(y: &Mat4, target: &[C; 4]) -> Option<([C; 4], f64)> {
     // This must agree with the compiler's repeated-root cluster. Attempting to
     // separate two roots that the public boundary treats as one block makes

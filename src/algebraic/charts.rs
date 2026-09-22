@@ -1237,11 +1237,9 @@ struct ChartRecord {
 }
 /// Wall-rule candidate: (|sin m|, lift, swap, a, j, k, end, root).
 type WallCand = (f64, usize, u8, u8, u8, u8, u8, u8);
-/// One (role, lift) working set: spectra, target coefficients, and its accepted records.
-type RoleSet = (usize, usize, [C; 4], [C; 4], [f64; 3], Vec<ChartRecord>);
 enum Search {
     Probes,
-    AllCharts,
+    ExactSelection,
 }
 
 /// Construct candidates from the supplied spectra, then check the original problem.
@@ -1424,6 +1422,20 @@ fn solve_charts_gated(
         });
         found
     };
+    const SCHEDULE: [(usize, usize); 6] = [(0, 0), (0, 1), (1, 0), (2, 0), (1, 1), (2, 1)];
+    if matches!(mode, Search::ExactSelection) {
+        // Probes on these spectra have already failed. Search the remaining
+        // chart intervals directly, preserving role and record order.
+        for (role, lift) in SCHEDULE {
+            let (l0, m0, tau, lt_r) = role_data(role, lift);
+            for rec in records(&l0, &m0, &lt_r) {
+                if let Some(hit) = exact_chart(role, lift, &l0, &m0, tau, &rec) {
+                    return Some(hit);
+                }
+            }
+        }
+        return None;
+    }
     // Phase W: the second-order wall rule (R0224, R0227) as the first probe.  For role 0, both lifts,
     // both swaps, every record (a; j, k) and both block ends, the target root nearest the split-off
     // product gives the phase margin m.  The block frames of the chart at that end on the target
@@ -1700,9 +1712,7 @@ fn solve_charts_gated(
     }
     super::prof::rec(super::prof::CHART_PHASEA, tpa);
     // the six (role, lift) sets, most productive first
-    let schedule: [(usize, usize); 6] = [(0, 0), (0, 1), (1, 0), (2, 0), (1, 1), (2, 1)];
-    let mut sets: Vec<RoleSet> = Vec::with_capacity(6);
-    for (si, &(role, lift)) in schedule.iter().enumerate() {
+    for (si, &(role, lift)) in SCHEDULE.iter().enumerate() {
         let (l0, m0, tau, lt_r) = role_data(role, lift);
         let recs = records(&l0, &m0, &lt_r);
         let fr: &[f64] = if si == 0 { &FRACTIONS } else { &FRACTIONS[..1] };
@@ -1716,7 +1726,6 @@ fn solve_charts_gated(
                 }
             }
         }
-        sets.push((role, lift, l0, m0, tau, recs));
     }
     // Wall rung: near a reach wall the fibre is a tube around the block stratum that attains
     // it.  1+3: a target root within O(margin) of lam_a mu_b; block frames over the projected target are the
@@ -1910,17 +1919,6 @@ fn solve_charts_gated(
                         }
                     }
                 }
-            }
-        }
-    }
-    if matches!(mode, Search::Probes) {
-        return None;
-    }
-    // exact selection over every chart, sets in schedule order, records narrowest first
-    for (role, lift, l0, m0, tau, recs) in &sets {
-        for rec in recs {
-            if let Some(h) = exact_chart(*role, *lift, l0, m0, *tau, rec) {
-                return Some(h);
             }
         }
     }
@@ -3247,7 +3245,7 @@ pub(crate) fn solve_full(problem: &super::Problem) -> Option<super::Solution> {
     if !clustered && let Some(h) = run_leaves(lam, mu, lifts) {
         return Some(h);
     }
-    if let Some(h) = solve_charts_gated(problem, Search::AllCharts, lam, mu, lifts) {
+    if let Some(h) = solve_charts_gated(problem, Search::ExactSelection, lam, mu, lifts) {
         return Some(h);
     }
     if !clustered {
@@ -3282,5 +3280,6 @@ pub(crate) fn solve_full(problem: &super::Problem) -> Option<super::Solution> {
     if let Some(h) = run_leaves(lamc, muc, liftsc) {
         return Some(h);
     }
-    solve_charts_gated(problem, Search::AllCharts, lamc, muc, liftsc)
+    solve_charts_gated(problem, Search::Probes, lamc, muc, liftsc)
+        .or_else(|| solve_charts_gated(problem, Search::ExactSelection, lamc, muc, liftsc))
 }

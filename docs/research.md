@@ -169,6 +169,50 @@ $$
 This avoids a second endpoint eigendecomposition in GULPS. The implementation
 checks the factors against the original matrix, including phase.
 
+## One spectral acceptance test
+
+For an exactly orthogonal frame, the master $M=KK^T$ is symmetric and unitary.
+Write $M=X+iY$ with real symmetric $X,Y$. Expanding $MM^*=I$ gives
+
+$$
+X^2+Y^2=I,\qquad XY=YX.
+$$
+
+Thus $X,Y$ have a common real orthogonal eigenbasis. `spectral.rs` diagonalizes
+real combinations $X+wY$ and checks the full complex matrix in the resulting
+basis. If a projection merges distinct eigenspaces, its off-diagonal residual
+can trigger another projection. The bounded projection list is a numerical
+procedure, not a completeness theorem.
+
+There is also a gap-independent justification for the residual. Let
+$T=Q^TMQ$, $r_i=T_{ii}$, and let $\eta$ bound the magnitudes of its off-diagonal
+entries. In dimension four,
+
+$$
+\|T-\mathrm{diag}(r)\|_F\leq\sqrt{12}\,\eta.
+$$
+
+Both matrices are normal in exact arithmetic. The Hoffman–Wielandt theorem
+therefore supplies a multiplicity-preserving matching of their spectra within
+this Frobenius bound; see the theorem recalled by
+[Xu](https://arxiv.org/abs/1703.02422).
+If the diagonal entries match the requested roots with maximum error $e$,
+the realized eigenvalues admit a matching with maximum error at most
+$e+\sqrt{12}\eta\leq e+4\eta$. This explains the residual used by the verifier
+without dividing by target root gaps.
+
+Floating-point orthogonality and eigensolver errors still matter. The code
+checks the frame separately, and the corpus checks the resulting spectrum
+independently. This is numerical verification, not an interval certificate.
+
+The accepted eigenbasis is retained for endpoint recovery. Earlier coefficient
+bounds, divided projectors, and companion-root fallback checks have been removed
+from the production certificate. Repeated-root retargeting remains a candidate
+repair and must pass the same verifier as every other candidate.
+Charts retain an additional projector gate: removing it preserved corpus pass
+counts but degraded some per-row residuals. It needs an accuracy-preserving
+replacement before it can be deleted.
+
 ## Complementary minors in dimension four
 
 The coefficient evaluator uses a dimension-four reduction. This simplifies

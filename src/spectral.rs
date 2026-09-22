@@ -6,6 +6,7 @@ use crate::{
 use nalgebra::{Matrix4, SymmetricEigen};
 use std::f64::consts::PI;
 type R4 = Matrix4<f64>;
+#[derive(Clone, Copy)]
 pub(crate) struct State {
     pub(crate) cost: f64,
     pub(crate) error: f64,
