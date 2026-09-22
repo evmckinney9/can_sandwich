@@ -1,24 +1,25 @@
 # can_sandwich
 
-GULPS needs to put a local gate between two given two-qubit gates to produce a
-target nonlocal action. In the magic basis, the task is to find a real matrix
-$O\in SO(4)$ with a prescribed product spectrum. This is a constructive
-multiplicative Horn problem.
+GULPS needs to find a local gate that, placed between two given two-qubit gates,
+produces a target nonlocal action. We can solve this numerically, but to the
+best of my knowledge, finding a practical exact construction for every feasible
+input remains an open problem. In the magic basis, the task is to construct
+a real matrix $O\in SO(4)$ with a prescribed product spectrum, a form of the
+inverse multiplicative Horn problem.
 
-We have a numerical solver that works over the corpus. We want a practical
-exact construction that covers every feasible input, including repeated
-eigenvalues and boundary cases. To the best of my knowledge, that practical
-construction remains an open problem. Existence is established, and general
-real-algebraic algorithms can construct exact witnesses in principle. The
-[mathematical account](docs/research.md) explains the distinction and cites the
-relevant results.
+The current solver passes the corpus, and we'd like to replace its numerical
+search with a construction whose proof covers boundary cases and repeated
+eigenvalues as well as generic inputs. The existence of a witness is already
+established, and general real-algebraic algorithms can construct one in
+principle. The [mathematical account](docs/research.md) explains what those
+results provide and what we still want to improve.
 
-I think this is a good problem for AI-assisted research: we can check the
-matrices an algorithm produces. For now, much of this solver is vibe-coded.
-Our requirement for GULPS is that it stays fast and correct over the corpus.
-That is enough to use it, though it does not prove that the algorithm always
-works. The solver lives in its own crate and repository so we can keep working
-on it independently.
+I think AI models may help us find that construction because we can check the
+matrices their proposed algorithms produce. For now, we're willing to let the
+implementation be largely vibe-coded as long as it's fast and correct over
+the corpus. That's sufficient for GULPS, even though it isn't a proof that
+the solver always works. We moved this work into its own crate and repository
+so researchers can keep trying alternatives without changing the rest of GULPS.
 
 ## Try a different algorithm
 
@@ -36,19 +37,18 @@ Enable the `corpus` feature on your `can_sandwich` dependency and call
 cargo run --release -- --corpus /path/to/can_sandwich/tests/cases.bin --report results.csv
 ```
 
-The runner compares your algorithm with production on the same inputs. It
+The runner compares your algorithm with production on the same inputs and
 reports failures, solver time, and spectral, orthogonality, and determinant
-errors. You can replay any row. No edits to this repository are needed.
-
-The [researcher guide](docs/researcher.md) gives a complete external-project
-example, the input and output contract, and the report format. Start there
-if you want to propose an algorithm.
+errors. If a case needs investigation, you can replay that row on its own.
+The [researcher guide](docs/researcher.md) walks through a separate candidate
+project and defines its inputs, outputs, and reports, so you can try an
+algorithm without editing this repository.
 
 ## Use the solver
 
-The inputs `c`, `g`, and `t` are monodromy triples for the left gate, right
-gate, and target. They are dimensionless coordinates, not angles in radians.
-[`solve`](src/lib.rs) returns the middle matrix `O`.
+[`solve`](src/lib.rs) takes monodromy triples `c`, `g`, and `t` for the left
+gate, right gate, and target, and returns the middle matrix `O`. The triples
+use dimensionless coordinates whose conversion to angles is defined below.
 
 ```rust
 pub fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3])
@@ -64,11 +64,12 @@ $D(c)OD(g)=e^{i\,\mathrm{phase}}LD(t)R$, with all three matrices in $SO(4)$.
 The [coordinate definitions](docs/research.md#gulps-coordinates-and-endpoint-factors)
 specify $D$ and the allowed target signs.
 
-The current solver combines algebraic constructions with bounded
-Levenberg–Marquardt refinement and restarts. It uses binary64 arithmetic.
-`None` means it found no accepted witness within its search budget. It is
-not a proof of infeasibility. The [source guide](docs/architecture.md) explains
-the implementation. Internal diagnostics use the `diagnostics` feature.
+The current solver uses binary64 arithmetic and combines algebraic constructions
+with bounded Levenberg–Marquardt refinement and restarts. Because the search
+has a fixed budget, a `None` result means it found no accepted witness within
+that budget; the input may still be feasible. The [source guide](docs/architecture.md)
+explains how the constructions fit together and where to find the internal
+diagnostics, which are available through the `diagnostics` feature.
 
 ## Build and check
 
@@ -80,17 +81,18 @@ make test
 make lint
 ```
 
-The corpus contains 1,093,691 cases in `tests/cases.bin`. Tests check the
-returned matrices and endpoint reconstruction independently at `1e-8`.
-The comparison runner uses the same spectral checker. Acceptance thresholds
-are fixed, and the reports also expose error changes below those thresholds.
+The corpus contains 1,093,691 cases in `tests/cases.bin`, which the tests use
+to check returned matrices and endpoint reconstruction independently at `1e-8`.
+The comparison runner uses the same spectral checker and reports the measured
+errors as well as pass counts, so a loss of accuracy remains visible even
+when both algorithms pass.
 
 The corpus stores nine little-endian `f64` values per row, without a header:
 `[c0,c1,c2,g0,g1,g2,t0,t1,t2]`. To generate it from the original construction
-code, run `python3 tests/generate.py` with NumPy and SciPy installed. Python
-is only needed for generation. The solver and corpus checks run in Rust.
+code, run `python3 tests/generate.py` with NumPy and SciPy installed. Once the
+data exists, the solver and corpus checks run entirely in Rust.
 
-GULPS uses a specific commit of this repository as a Git submodule. To use a
-newer solver commit, follow the
-[Upgrade the solver](https://github.com/evmckinney9/gulps/blob/main/.github/CONTRIBUTING.md#upgrade-the-solver)
-instructions in the GULPS contributor guide.
+Because GULPS records a specific solver commit through a Git submodule,
+changes here won't affect other GULPS checkouts until they use that commit.
+The GULPS contributor guide explains
+[how to update and test the solver dependency](https://github.com/evmckinney9/gulps/blob/main/.github/CONTRIBUTING.md#upgrade-the-solver).

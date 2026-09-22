@@ -1,8 +1,9 @@
 # Propose an algorithm
 
-Keep your candidate in a separate Rust project. The comparison harness needs
-one function and a path to the corpus. It runs the production solver and your
-candidate, then checks both results independently.
+You can develop a candidate in a separate Rust project and pass its solve
+function to the corpus runner. Given a path to the corpus, the runner calls
+both your candidate and the production solver, then checks their results
+independently.
 
 ## First run
 
@@ -26,9 +27,10 @@ lto = "fat"
 codegen-units = 1
 ```
 
-The path is relative to your manifest. For a candidate outside the GULPS tree,
-you can point it at `/path/to/gulps/crates/can_sandwich` instead. Both solvers
-use your candidate project's build profile.
+The dependency path is relative to your candidate's `Cargo.toml`; if you're
+using the solver checkout inside GULPS, set it to
+`/path/to/gulps/crates/can_sandwich`. Your candidate project's release profile
+applies to both algorithms in the comparison.
 
 Put this in your candidate's `src/main.rs`:
 
@@ -52,14 +54,16 @@ Run the full comparison:
 cargo run --release -- --corpus ../can_sandwich/tests/cases.bin --report results.csv
 ```
 
-The smoke test should pass every row and report equal spectral errors. Timing
-will vary. Then replace `solve` in **your project**. You do not need to change
-can_sandwich, its tests, or its production solver.
+This first run compares production with itself, so every row should pass
+with equal spectral errors, although the measured times will vary. Once that
+works, replace the body of `solve` in your candidate project with your algorithm.
+The same runner will evaluate it without changes to can_sandwich or its tests.
 
-Record the can_sandwich commit, any local diff, your candidate revision,
-`Cargo.lock`, `rustc --version`, and the corpus SHA-256 alongside results.
-A local path dependency follows local edits. For reproducible shared work,
-use a clean checkout at a recorded commit or a Git dependency with `rev`.
+When sharing results, include the can_sandwich commit and any local edits,
+your candidate revision, `Cargo.lock`, `rustc --version`, and the corpus SHA-256.
+A path dependency uses the files in your local checkout, so another researcher
+will need the same versions to reproduce your run. A clean checkout at a
+recorded commit, or a Git dependency with `rev`, makes that easier.
 
 ## Mathematical contract
 
@@ -71,7 +75,8 @@ The function takes three finite monodromy triples, in this order:
 | `g: [f64; 3]` | Right canonical gate |
 | `t: [f64; 3]` | Target canonical gate |
 
-These coordinates are dimensionless. For zero-based indices, define
+The coordinates are dimensionless and determine the diagonal gate through
+the following formula, with indices starting at zero:
 
 $$
 D(m)=\mathrm{diag}\left(
@@ -93,27 +98,32 @@ $$
 =\mathrm{spec}\left(sD(t)^2\right).
 $$
 
-Spectra are multisets. The sign applies to all four target roots together.
-Repeated roots keep their multiplicities. GULPS allows the two signs because
-it tracks global phase separately.
+The spectral equality counts repeated roots with their multiplicities, and
+the chosen sign applies to all four target roots together. Both signs are
+allowed because GULPS tracks global phase separately.
 
-The output is the middle matrix in the magic basis. It is not the product
-matrix, an eigenbasis of that product, or a general complex SU(4) witness.
-You do not need to compute the endpoint factors `L` and `R`.
+Your function returns the middle matrix `O` in the magic basis, from which
+GULPS can recover the endpoint factors `L` and `R`. This real-matrix output
+requirement matters if your construction solves the unrestricted SU(4)
+problem: a general complex witness needs a conversion before it can be used
+by this interface.
 
 `Matrix4[(i, j)]` means row `i`, column `j`. If your algorithm produces 16
 values in row order, use `Matrix4::from_row_slice(&values)`. Nalgebra stores
 matrices in column order internally, so `from_column_slice` is not equivalent.
 
-Return `None` when your method cannot produce a witness. A method for a
-restricted family is welcome: decline other inputs and measure its coverage.
-Do not call production as a fallback unless you explicitly describe the
-candidate as a hybrid algorithm. `None` does not establish infeasibility.
+If your method handles only a restricted family, return `None` for other
+inputs so the report can measure its coverage. A decline says that your
+algorithm didn't produce a witness, without making a claim about feasibility.
+If you call production as a fallback, describe that combination in your results
+so readers know which algorithm they are evaluating.
 
-The corpus includes generic, boundary, and repeated-spectrum inputs. Do not
-assume distinct roots, a nonzero denominator, or one fixed target sign. The
-corpus evaluates binary64 outputs. Exact or higher-precision internal
-arithmetic is allowed, but passing these checks is not an exact proof.
+The corpus includes generic inputs, boundary points, and repeated spectra, so
+a construction that divides by an eigenvalue gap will need to handle cases
+where that gap vanishes. It also permits either global target sign. You can
+use exact or higher-precision arithmetic internally, but the runner evaluates
+the binary64 matrix you return; its numerical checks cannot establish an
+exact construction theorem.
 
 The [research formulation](research.md) gives the existence theorem, an exact
 input model, the three-coefficient reduction, and the remaining proof obligations.
@@ -136,22 +146,27 @@ Both algorithms receive the same inputs. The checker measures:
 | Orthogonality | Largest absolute entry of $O^TO-I$ | At most `1e-8` |
 | Determinant | $|\det O-1|$ | At most `1e-8` |
 
-A returned matrix must pass all three checks. The runner reports `None` as
-`declined` and a rejected matrix as `invalid`. It also reports p50, p99, and
-maximum errors among returned matrices. An unavailable measurement is `inf`.
-For example, it skips spectral evaluation when orthogonality already fails.
+A returned matrix passes only if it meets all three bounds. The runner labels
+a rejected matrix `invalid` and a `None` result `declined`, then reports p50,
+p99, and maximum errors among the returned matrices. When a measurement is
+unavailable, its value is `inf`; for example, the checker skips spectral
+evaluation if the matrix already fails the orthogonality check.
 
-`fixed` rows fail production and pass the candidate. `regressed` rows pass
-production and fail the candidate. The spectral comparison counts every
-strict increase or decrease, even when both results pass. Tiny changes can
-be roundoff. Inspect their magnitudes in the CSV before drawing conclusions.
+The report calls a row `fixed` when production fails and the candidate passes,
+and `regressed` when the reverse happens. It also counts every strict increase
+or decrease in spectral error, including rows where both algorithms pass.
+Since small differences can come from roundoff, use the CSV to inspect their
+magnitudes before interpreting them as an improvement or regression.
 
-The runner warms up both functions on up to 16 selected rows, then alternates
-which function runs first. Each selected row has one timed call per solver.
-Timing excludes file loading, verification, and reporting, but includes all
-work inside `solve`. Candidate state persists across calls, including warmup.
-Repeat runs on an idle machine before claiming a speedup. Compare coverage
-alongside time: a fast decline is not a successful solve.
+After warming up both functions on up to 16 selected rows, the runner makes
+one timed call to each solver per row and alternates which runs first.
+The measurement includes all work inside `solve`, but excludes file loading,
+verification, and reporting. Any state your candidate keeps persists across
+calls, including the warmup.
+
+For a useful speed comparison, repeat the run on an idle machine and consider
+how many cases each algorithm solves. A candidate that returns `None` on hard
+inputs may take less time simply because it does less work.
 
 `--report` creates a new CSV with two records per case:
 
@@ -159,11 +174,13 @@ alongside time: a fast decline is not a successful solve.
 case,solver,status,nanoseconds,spectrum_error,orthogonality_error,determinant_error
 ```
 
-Errors are blank for declines. Existing files are never overwritten. Choose
-a new report name for each run. Exit code `0` means the candidate passed all
-selected rows, `1` means candidate failures, and `2` means a runner error.
-Baseline failures remain visible and do not prevent evaluation of a candidate.
+For declined cases, the error columns are blank. Choose a new report filename
+for each run because the runner refuses to overwrite existing files.
+Exit code `0` means the candidate passed every selected row, `1` means it
+failed at least one, and `2` means the runner encountered an error. Failures
+in production appear in the report without preventing candidate evaluation.
 
-Both solvers run in the same process. A panic or hang can stop the run. Use
-your normal sandbox and a process timeout for experimental candidates.
-This harness accepts Rust functions, not executables written in other languages.
+The harness calls Rust functions in the same process, so a panic or hang in
+either solver can stop the comparison. If your experiment needs isolation
+or a time limit, run the candidate executable inside your usual sandbox or
+process timeout.

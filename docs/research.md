@@ -1,9 +1,10 @@
 # Problem formulation and research contract
 
-The [README](../README.md) gives the project overview and usage. This page
-defines the unrestricted problem, the GULPS conventions, and the requirements
-for a proved construction. The [researcher guide](researcher.md) gives the
-candidate interface and corpus comparison commands.
+This page develops the mathematical problem behind can_sandwich, explains
+how GULPS represents its inputs and outputs, and sets out what a complete
+construction would need to prove. The [README](../README.md) introduces the
+project, while the [researcher guide](researcher.md) shows how to evaluate a
+candidate against the corpus.
 
 ## The unrestricted problem
 
@@ -26,9 +27,10 @@ with analogous definitions for $D_\beta$ and $D_\gamma$.
 A triple is **feasible** if some $A,B,C\in SU(4)$ in these conjugacy classes
 satisfy $AB=C$.
 
-The multiplicative Horn inequalities characterize feasibility.
-The **inverse problem** asks for a witness. After simultaneous conjugation,
-we can fix $A=D_\alpha$ and seek
+The multiplicative Horn inequalities characterize which triples are feasible;
+the **inverse problem** asks us to construct matrices that realize one of
+those triples. Simultaneous conjugation lets us fix $A=D_\alpha$, so it is
+enough to find
 
 $$
 U\in SU(4),\qquad
@@ -43,39 +45,42 @@ $$
 A=D_\alpha,\qquad B=UD_\beta U^\dagger,\qquad C=AB.
 $$
 
-Allowing $U\in U(4)$ gives the same problem. A scalar phase can set
-$\det U=1$ without changing $UD_\beta U^\dagger$.
-**The research problem places no SO(4) restriction on $U$.**
+Allowing $U\in U(4)$ would give the same problem because a scalar phase
+can set $\det U=1$ without changing $UD_\beta U^\dagger$. This formulation
+allows a general complex witness, although the existence results below show
+that a real one can always be chosen.
 
 An SO(4) witness nevertheless exists for every feasible spectral triple.
 [Falbel–Wentworth, Theorems 1 and 3](https://arxiv.org/pdf/math/0506100)
 give representatives for which the first two matrices are simultaneously
-symmetric. A symmetric unitary matrix has commuting real and imaginary
-parts, both real symmetric. Each matrix therefore has a real orthogonal
-eigenbasis. Their relative eigenbasis gives the required orthogonal witness.
-Flipping one column corrects its determinant without changing the conjugated
-diagonal matrix. This argument includes repeated spectra.
+symmetric. Since the real and imaginary parts of a symmetric unitary matrix
+are commuting real symmetric matrices, each representative has a real
+orthogonal eigenbasis. The relative eigenbasis then gives an orthogonal
+witness, whose determinant can be corrected by flipping one column without
+changing the conjugated diagonal matrix. The argument also covers repeated
+spectra.
 
 [Peterson–Crooks–Smith, Corollary 14](https://arxiv.org/pdf/1904.10541)
-states this spectral reduction in the two-qubit setting. Existence does not
-provide a fast construction or a direct conversion of an arbitrary supplied
-complex witness. Section 7.1 of that paper identifies circuit realization as
-the remaining algorithmic problem.
+states this spectral reduction in the two-qubit setting and identifies
+circuit realization as an algorithmic problem in Section 7.1. The existence
+theorem guarantees a real witness, but finding it efficiently, or converting
+an arbitrary complex witness into one, still requires a construction.
 
-We seek a construction specialized to $n=4$, with explicit branch choices,
-a proof of coverage, and a termination bound. It must include boundary points
-and repeated spectra. The witness need not be unique or continuous in the input.
-Rational operations, radicals, and explicitly bounded polynomial solves are
-acceptable ingredients. A numerical search that works on many examples does
-not establish coverage.
+We seek a construction specialized to $n=4$ that selects its branches
+explicitly and has a termination bound for every feasible input, including
+boundary points and repeated spectra. The selected witness may change
+discontinuously with the input and need not be unique. Rational operations,
+radicals, and polynomial solves with explicit bounds are acceptable, provided
+the proof establishes coverage beyond the examples used to test the algorithm.
 
 Feasibility reference: [Agnihotri–Woodward](https://arxiv.org/abs/alg-geom/9712013).
 
 ## Exact input and output
 
-For an exact algebraic baseline, supply the real and imaginary parts of the
-three spectra as algebraic numbers with exact representations. Algebraic
-angles do not in general imply algebraic eigenvalues.
+To make exact computation precise, we can supply the real and imaginary
+parts of the three spectra as exactly represented algebraic numbers. This
+assumption concerns the eigenvalues themselves: algebraic angles do not in
+general give algebraic eigenvalues.
 
 Write the unknown witness as $U=X+iY$, with $X,Y\in\mathbb R^{4\times4}$.
 Impose
@@ -85,22 +90,22 @@ U^\dagger U=I,\qquad \det U=1,\qquad
 \det(zI-D_\alpha U D_\beta U^\dagger)=\det(zI-D_\gamma).
 $$
 
-Equating real and imaginary parts, and coefficients in $z$, gives a finite
-polynomial system in 32 real variables. Feasibility makes its real solution
-set nonempty. General real-algebraic sampling can select an algebraic point.
-This is an application of established algorithms, not a dimension-four result
-of this project. See [Basu's survey](https://arxiv.org/abs/1409.1534).
+Equating real and imaginary parts and coefficients in $z$ gives a finite
+polynomial system in 32 real variables. For a feasible input, its real solution
+set is nonempty, so general real-algebraic sampling can select an algebraic
+point. These established algorithms already provide an exact construction
+in principle, as described in [Basu's survey](https://arxiv.org/abs/1409.1534).
 
-A useful new construction must explain what it gains over that baseline:
-lower degree, fewer variables, explicit branches, controlled arithmetic cost,
-or a practical stable implementation. State the bound and the input model.
-An unspecified call to “solve the remaining equations” does not complete the
-construction.
+A new construction should explain how it improves on that general procedure,
+for example through lower degree, fewer variables, explicit branches, or
+better arithmetic cost and numerical stability. Its input model and bounds
+need to include the method used to solve any remaining equations, since
+that step may account for most of the work.
 
-Arbitrary real input requires a separate computational model. A bounded
-numerical approximation is not an exact finite representation of its solution.
-Keep exact algebraic selection, approximate reconstruction, and floating-point
-implementation claims separate.
+For arbitrary real inputs, a different computational model is needed to say
+what information the algorithm receives and what it can return exactly.
+A numerical approximation with a proved error bound is useful, but it makes
+a different claim from an exact algebraic construction.
 
 ## What a construction must prove
 
@@ -117,45 +122,46 @@ implementation claims separate.
 5. **Reconstruction.** The output satisfies unitarity, determinant, and the
    original spectral equations, with multiplicities and the target class intact.
 
-For numerical experiments, state the input distribution, failures, error metric,
-tolerance, and runtime. Match eigenvalues bijectively. Distance between sets of
-distinct roots loses multiplicity and is not an adequate spectral check.
+Numerical results should describe the input distribution, failures, error
+metric, tolerance, and runtime so readers can assess the evidence. Spectral
+checks must match eigenvalues bijectively, because comparing sets of distinct
+roots would discard their multiplicities.
 
-## Keep the problems distinct
+## Related problems and results
 
-The multiplicative feasibility problem concerns products of unitary matrices.
-[Agnihotri–Woodward](https://arxiv.org/abs/alg-geom/9712013) characterize their
-possible spectra using quantum Schubert calculus. The inverse problem asks for
-the matrices themselves.
+For products of unitary matrices,
+[Agnihotri–Woodward](https://arxiv.org/abs/alg-geom/9712013) characterize the
+possible spectra using quantum Schubert calculus. Those feasibility results
+provide the premise for the inverse problem, which asks for the matrices
+themselves. The additive Horn problem instead concerns sums of Hermitian
+matrices, so using its hives, rank-one updates, or matrix-scaling algorithms
+here requires a proved reduction to the multiplicative setting.
 
-The additive Horn problem concerns sums of Hermitian matrices. Additive hives,
-rank-one updates, and matrix-scaling algorithms cannot be transferred here
-without a proved multiplicative reduction.
+GULPS requires a real witness in the magic basis and allows a central sign
+on the target spectrum. Although real and complex witnesses have the same
+feasible spectral triples, the implementation still needs the real matrix
+that represents a local gate. The sign allowance is a separate distinction:
+a result on the negative target branch does not realize the fixed target
+class in the unrestricted problem.
 
-The GULPS application requires a real magic-basis witness and permits a central
-sign on the target spectrum. Real and complex witnesses have the same feasible
-spectral triples, but a constructor must still return the required witness type.
-The unrestricted problem fixes the target conjugacy class. A GULPS result on
-the negative target branch does not solve that fixed-class problem.
-
-Recent related work does not remove these construction requirements.
+Several recent results may help with a construction, though each leaves a
+selection problem for this application.
 [François–Tarrago](https://arxiv.org/abs/2405.06723) give polytope-volume formulas
-for products of generic unitary conjugacy classes. A point in one of those
-polytopes still needs a map to realizing matrices.
+for products of generic unitary conjugacy classes, from which we would still
+need a map taking a polytope point to realizing matrices.
 [Kenyon–Ovenhouse](https://arxiv.org/abs/2407.10786) parametrize complex matrix
-pairs with prescribed product spectra. Selecting a unitary realization within
-that parametrization is an additional problem.
+pairs with prescribed product spectra, leaving the choice of parameters that
+give a unitary realization.
 [Ye](https://arxiv.org/abs/2607.14634) constructs cluster structures on complex
-$SL_n/SO_n$ strata, not a selector for the required compact real spectral fibre.
-These are possible tools for a construction, not complete algorithms for this
-contract. This source review was last checked on 2026-09-22.
+$SL_n/SO_n$ strata, which would need a method to select a point in the required
+compact real spectral fibre. These sources were last checked on 2026-09-22.
 
 ## GULPS coordinates and endpoint factors
 
-GULPS needs a local two-qubit gate between two canonical gates. In the magic
-basis, local $SU(2)\otimes SU(2)$ gates act as real matrices in $SO(4)$.
-This is the reason for the current witness restriction. See
-[Zhang–Vala–Whaley–Sastry, Eqs. (19–20)](https://arxiv.org/pdf/quant-ph/0209120).
+The matrix GULPS needs represents a local two-qubit gate between two canonical
+gates. In the magic basis, local $SU(2)\otimes SU(2)$ gates act as real
+matrices in $SO(4)$, which explains the output requirement in the solver API.
+See [Zhang–Vala–Whaley–Sastry, Eqs. (19–20)](https://arxiv.org/pdf/quant-ph/0209120).
 
 The API takes three monodromy triples `c`, `g`, and `t`: the left gate, the
 right gate or prefix, and the target. These are GULPS coordinates, not the
@@ -173,12 +179,10 @@ $$
 =\mathrm{spec}\!\left(sD(t)^2\right),\qquad s\in\{+1,-1\}.
 $$
 
-The two signs are generally different conjugacy classes in $SU(4)$.
-GULPS permits both because it tracks global phase separately. This differs
-from the fixed target class in the research problem.
-A general complex witness also does not directly provide the local gate
-that GULPS requires. Any transfer from an unrestricted constructor must explain
-how to recover the required real witness.
+The two signs generally give different conjugacy classes in $SU(4)$, both
+of which GULPS permits because it tracks global phase separately. A constructor
+for the unrestricted problem must therefore account for the chosen target
+class as well as provide the real witness needed for the local gate.
 
 For endpoint recovery, set $K=D(c)OD(g)$. Its symmetric unitary matrix
 
@@ -195,8 +199,9 @@ K=e^{i\phi}L D(t)R,\qquad L,R\in SO(4),\qquad
 \phi\in\{0,\pi/2\}.
 $$
 
-This avoids a second endpoint eigendecomposition in GULPS. The implementation
-checks the factors against the original matrix, including phase.
+Reusing this basis avoids a second endpoint eigendecomposition in GULPS;
+the implementation then checks that the factors reconstruct the original
+matrix, including its phase.
 
 ## Three real spectral equations
 
@@ -212,10 +217,11 @@ $\Re e_1$, $\Im e_1$, and $e_2$. For the negative target, $e_1$ changes
 sign and $e_2$ stays the same. The complementary-minor formulas below compute
 these coefficients directly from a proposed $O$.
 
-This reduces the forward equations. It does not select a solution or prove
-that a chosen family of matrices reaches every feasible target. In numerical
-arithmetic, small coefficient residuals also do not guarantee small root errors
-near repeated eigenvalues. The corpus checks matrices and matched roots directly.
+These three quantities simplify the forward equations, but selecting a matrix
+that satisfies them still requires a construction and a coverage proof.
+For numerical verification, the corpus checks matrices and matched roots
+directly because small coefficient residuals can conceal larger root errors
+near repeated eigenvalues.
 
 ## One spectral acceptance test
 
@@ -249,9 +255,10 @@ the realized eigenvalues admit a matching with maximum error at most
 $e+\sqrt{12}\eta\leq e+4\eta$. This explains the residual used by the verifier
 without dividing by target root gaps.
 
-Floating-point orthogonality and eigensolver errors still matter. The code
-checks the frame separately, and the corpus checks the resulting spectrum
-independently. This is numerical verification, not an interval certificate.
+Because floating-point orthogonality and eigensolver errors affect this
+argument, the code also checks the frame, and the corpus independently checks
+the resulting spectrum. These numerical checks do not provide the rigorous
+enclosures needed for an interval certificate.
 
 The accepted eigenbasis is retained for endpoint recovery. Earlier coefficient
 bounds, divided projectors, and companion-root fallback checks have been removed
@@ -263,8 +270,9 @@ replacement before it can be deleted.
 
 ## Complementary minors in dimension four
 
-The coefficient evaluator uses a dimension-four reduction. This simplifies
-verification work; it does not construct a witness or prove solver completeness.
+In dimension four, complementary minors let the coefficient evaluator compute
+$e_2$ with half as many minors. This reduces the work for evaluating a proposed
+matrix without resolving how to construct one.
 
 Put $A=D(c)^2=\mathrm{diag}(a)$ and $B=D(g)^2=\mathrm{diag}(b)$.
 The master matrix is similar to $AOB O^T$. For two-element index sets $I,J$,
@@ -296,28 +304,27 @@ e_2=\sum_{I\in\{01,02,03\}}\sum_{|J|=2}
 \left(a_Ib_J+a_{I^c}b_{J^c}\right)m_{IJ}^2.
 $$
 
-Only 18 minors are needed. No division by an eigenvalue gap occurs, so the
-identity also covers repeated spectra and boundary inputs. It holds for
-arbitrary diagonal $A,B$; unit determinant is not needed for this reduction.
+The reduced sum needs 18 minors and involves no division by an eigenvalue
+gap, so it also covers repeated spectra and boundary inputs. This identity
+holds for arbitrary diagonal $A,B$, without a unit-determinant assumption.
 
 `compound_residual` implements this formula with compensated summation. A
 small independent test compares it with Newton's trace identities on the
 explicit master matrix, using dense rotation products and both target signs.
 The full corpus checks spectra and endpoint reconstruction independently.
 
-The identity assumes exact orthogonality. Floating-point frames introduce an
-error depending on their orthogonality defect, as well as rounding in the
-sum. This coefficient test remains a construction filter. The final frame and
-rootwise checks are unchanged. In particular, this reduction does not cure
-the poor conditioning of coefficient-to-root inversion near repeated roots.
+With floating-point frames, the identity acquires errors from the
+orthogonality defect and rounding in the sum. The implementation therefore
+uses it to filter candidate constructions before the final frame and rootwise
+checks, which remain necessary because coefficient-to-root inversion is
+poorly conditioned near repeated roots.
 
 ## Previous work
 
-The former documentation contained additive studies, failed numerical pilots,
-exact-model proposals, scripts, data, and duplicate status reports. Those records
-are preserved in Git at commit
-`0a48fdc0d0a0f264a20e5d07e362cd1d082544b2`, under `docs/inverse-horn/`.
-The former `docs/architecture.md` is preserved at the same commit.
+Earlier studies, experiments, scripts, and data are preserved under
+`docs/inverse-horn/` at Git commit
+`0a48fdc0d0a0f264a20e5d07e362cd1d082544b2`, along with the former
+`docs/architecture.md`.
 
 Inspect a historical file without restoring the archive into the working tree:
 
@@ -325,6 +332,7 @@ Inspect a historical file without restoring the archive into the working tree:
 git show 0a48fdc0d0a0f264a20e5d07e362cd1d082544b2:docs/inverse-horn/README.md
 ```
 
-Historical labels such as “accepted,” “complete,” and “reviewed” describe those
-records. They are not substitutes for a checked theorem and its hypotheses.
-The README and these two documentation pages define the current account.
+When using a result from those records, check its statement, hypotheses, and
+evidence rather than relying on labels such as “accepted” or “complete.”
+The current problem formulation is on this page, and the
+[researcher guide](researcher.md) describes the current evaluation workflow.

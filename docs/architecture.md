@@ -1,13 +1,15 @@
 # Source guide
 
-The [README](../README.md) describes the crate and API. The
-[research contract](research.md) defines the mathematics and conventions.
+The two solver functions in [`src/lib.rs`](../src/lib.rs) share input
+preparation, algebraic constructions, and result verification. If the algebraic
+search finds no accepted matrix, they try numerical refinement with restarts.
+`solve_with_factors` then uses the eigenbasis from verification to recover the
+endpoint factors and check that they reconstruct the requested gate.
 
-Start with [`src/lib.rs`](../src/lib.rs). Both public functions use the same
-solve path: prepare the input, try algebraic constructions, verify the result,
-and use numerical restarts if the algebraic search declines. `solve_with_factors`
-uses the verification eigenbasis to recover the endpoint factors and checks
-that they reconstruct the requested gate.
+For the API and coordinate conventions, see the [README](../README.md) and
+[mathematical formulation](research.md). If you want to test a separate
+algorithm, the [researcher guide](researcher.md) explains how to use the corpus
+runner without working through these internals.
 
 ## Source layout
 
@@ -18,32 +20,34 @@ that they reconstruct the requested gate.
 | `spectral.rs` | Spectral matching, final verification, and endpoint factors |
 | `numerical.rs` | Levenberg–Marquardt refinement and deterministic starts |
 | `diagnostics.rs` | Research entry points and optional stage timing |
+| `corpus.rs` | Independent corpus checks, candidate comparison, and reports |
 | `algebraic/mod.rs` | Algebraic dispatch and shared frame operations |
 | `algebraic/certificate.rs` | Candidate checks, repeated-root repair, and calls to the shared verifier |
 | `algebraic/charts.rs`, `interior.rs`, `three_givens.rs`, `chart_precision.rs` | Chart enumeration, reconstruction, root selection, and precision helpers |
 | `algebraic/support_strata.rs`, `one_plus_three.rs`, `two_plus_two.rs`, `resonance.rs`, `klein.rs`, `radical.rs` | Specialized constructions |
 
-The algebraic search tries scalar and rank-one cases, specialized constructions,
-then the chart search. These routines return candidates. Final acceptance in
-`spectral.rs` checks a real SO(4) matrix against the original target spectrum.
-Snapping spectra inside a construction does not change the acceptance target.
-An accepted solution retains its spectral state; the public return path and
-endpoint recovery reuse it. There is no second certificate or diagonalization.
-The diagnostic `Solution` exposes its frame, route, and residual, but its
-verification state is private; obtain it through the solver functions.
+The algebraic search starts with scalar and rank-one cases, then tries the
+specialized constructions and chart search. Every proposed matrix must pass
+verification in `spectral.rs` against the original target spectrum, even if
+a construction used a nearby spectrum with repeated roots. The numerical
+fallback uses the same prepared inputs and spectral checks, with a fixed
+iteration budget that can expire before it finds a solution.
 
-The numerical fallback uses the same prepared problem and spectral matching.
-It has bounded iterations and can fail. Passing the corpus is not a completeness
-proof.
+Once a matrix passes verification, the solver keeps its spectral state for
+endpoint recovery, avoiding another check and diagonalization. Diagnostic
+callers can inspect the frame, route, and residual through `Solution`; its
+private verification state is populated by the solver functions.
 
 ## Working on a construction
 
-The algebraic code remains experimental. In particular, the chart search has
-several local search orders, and some older endpoint routines remain for
-research diagnostics. The public solve path does not use those endpoint routines.
+The algebraic code remains experimental, particularly the chart search,
+which has several local search orders. Some older endpoint routines are also
+available through research diagnostics, although the public solver doesn't
+call them.
 
-Before deleting a specialized construction, measure its contribution to coverage
-and runtime. Similar formulas or names do not establish redundancy. Use the
-existing corpus: it checks spectra and endpoint reconstruction independently of
-the internal acceptance tests. Also measure GULPS integration when a change
-affects factor extraction or repeated work at the crate boundary.
+Before removing a specialized construction, use the corpus to measure which
+cases depend on it and how its removal affects runtime and accuracy. Routines
+with similar formulas may handle different degeneracies, which is why the
+corpus checks spectra and endpoint reconstruction independently of the solver's
+own tests. Changes to factor extraction also need measurements in GULPS,
+where repeated decompositions can affect the total synthesis time.
