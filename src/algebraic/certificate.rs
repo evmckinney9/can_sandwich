@@ -1,10 +1,13 @@
 //! The production certificate: rootwise acceptance of a candidate frame against the
 //! target roots, and the sandwich master it is evaluated on.
-use super::*;
+use super::{
+    ACCEPT, C, FRAME_ACCEPT, Mat4, PERMS24, Problem, Rung, Solution, compound_residual, klein,
+    prof, symfn,
+};
 
 /// Numerical certificate required before treating a matrix as a real frame.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct FrameMetrics {
+pub(crate) struct FrameMetrics {
     pub determinant: f64,
     pub gram: f64,
     pub imaginary: f64,
@@ -12,7 +15,7 @@ pub(super) struct FrameMetrics {
 
 impl FrameMetrics {
     #[inline]
-    pub(super) fn within(self, tolerance: f64) -> bool {
+    pub(crate) fn within(self, tolerance: f64) -> bool {
         self.gram <= tolerance
             && self.imaginary <= tolerance
             && (self.determinant.abs() - 1.0).abs() <= tolerance
@@ -20,7 +23,7 @@ impl FrameMetrics {
 }
 
 #[inline]
-pub(super) fn frame_metrics(frame: &Mat4) -> Option<FrameMetrics> {
+pub(crate) fn frame_metrics(frame: &Mat4) -> Option<FrameMetrics> {
     let real = frame.map(|value| value.re);
     let determinant = real.determinant();
     let gram = (real.transpose() * real - nalgebra::Matrix4::identity())
@@ -38,7 +41,7 @@ pub(super) fn frame_metrics(frame: &Mat4) -> Option<FrameMetrics> {
 
 /// Normalize an accepted real orthogonal frame to `SO(4)`.
 #[inline]
-pub(super) fn orient_so4(mut frame: Mat4) -> Mat4 {
+pub(crate) fn orient_so4(mut frame: Mat4) -> Mat4 {
     if frame.determinant().re < 0.0 {
         for row in 0..4 {
             frame[(row, 0)] = -frame[(row, 0)];
@@ -48,7 +51,7 @@ pub(super) fn orient_so4(mut frame: Mat4) -> Mat4 {
 }
 
 /// Cheap frame contract shared by every public certificate path.
-pub(super) fn framed_solution(o: Mat4, rung: Rung, residual: f64) -> Option<Solution> {
+pub(crate) fn framed_solution(o: Mat4, rung: Rung, residual: f64) -> Option<Solution> {
     if !residual.is_finite() {
         return None;
     }
@@ -64,7 +67,7 @@ pub(super) fn framed_solution(o: Mat4, rung: Rung, residual: f64) -> Option<Solu
 }
 
 #[inline]
-pub(super) fn apply_transpose(frame: Mat4, transpose: bool) -> Mat4 {
+pub(crate) fn apply_transpose(frame: Mat4, transpose: bool) -> Mat4 {
     if transpose { frame.transpose() } else { frame }
 }
 
@@ -75,7 +78,7 @@ pub(super) fn apply_transpose(frame: Mat4, transpose: bool) -> Mat4 {
 /// non-orthogonal frames, normalize orientation, and evaluate the forward
 /// spectral residual.  Keeping that operation here prevents each route from
 /// quietly growing its own tolerance or orientation convention.
-pub(super) fn certify_frame_candidate(
+pub(crate) fn certify_frame_candidate(
     frame: Mat4,
     dc: &Mat4,
     lam: &Mat4,
@@ -87,7 +90,7 @@ pub(super) fn certify_frame_candidate(
 /// Candidate pre-certificate with an explicit proxy limit.  A few bounded
 /// algebraic routes intentionally use a looser construction threshold and
 /// defer the final decision to their caller's stronger certificate.
-pub(super) fn certify_frame_candidate_with_limit(
+pub(crate) fn certify_frame_candidate_with_limit(
     mut frame: Mat4,
     dc: &Mat4,
     lam: &Mat4,
@@ -95,7 +98,7 @@ pub(super) fn certify_frame_candidate_with_limit(
     limit: f64,
 ) -> Option<(Mat4, f64)> {
     let metrics = frame_metrics(&frame)?;
-    if !metrics.within(2e-10) {
+    if !metrics.within(FRAME_ACCEPT) {
         return None;
     }
     frame = orient_so4(frame);
@@ -106,14 +109,14 @@ pub(super) fn certify_frame_candidate_with_limit(
 /// The same pre-certificate for a finite set of target lifts.  The minimum is
 /// taken only after the frame contract passes; callers must not use a target
 /// coefficient proxy as a substitute for this forward check.
-pub(super) fn certify_frame_against_targets(
+pub(crate) fn certify_frame_against_targets(
     frame: Mat4,
     dc: &Mat4,
     lam: &Mat4,
     targets: &[[C; 4]],
 ) -> Option<(Mat4, f64)> {
     let metrics = frame_metrics(&frame)?;
-    if !metrics.within(2e-10) {
+    if !metrics.within(FRAME_ACCEPT) {
         return None;
     }
     let frame = orient_so4(frame);
@@ -124,16 +127,11 @@ pub(super) fn certify_frame_against_targets(
     (residual <= ACCEPT).then_some((frame, residual))
 }
 
-/// Rootwise certificate for the public compiler boundary. Symmetric-function
-/// residuals are the stable algebraic test used inside the solver, but their
-/// inverse map is ill-conditioned at repeated spectra: an `O(1e-9)` coefficient
-/// error can represent an `O(1e-5)` class error. Once per returned candidate,
-/// diagonalize the realized master against the target roots via Sylvester
-/// spectral projectors (eigenvalues known, no iteration): the diagonalization
-/// residual IS the rootwise certificate, and the real frame it produces is the
-/// complete spectral factorization, kept on the solution for the stitch.
-pub(super) fn compiler_solution(
-    problem: &PreparedSandwich,
+/// Check the realized spectrum against the target roots. Coefficient residuals
+/// alone are unreliable near repeated roots, so acceptance uses direct root
+/// matching or spectral projectors. Final verification also runs in `spectral`.
+pub(crate) fn compiler_solution(
+    problem: &Problem,
     o: Mat4,
     rung: Rung,
     residual: f64,
@@ -442,7 +440,7 @@ pub(super) fn compiler_solution(
     // has a clean-product extraction fallback when `takagi` is absent.
     let e = symfn(&master);
     let coefficients = [C::new(1.0, 0.0), -e[0], e[1], -e[2], e[3]];
-    let actual = crate::cpoly::roots(&coefficients);
+    let actual = polynomial_roots(&coefficients);
     if actual.len() == 4 {
         let mut best_error = f64::INFINITY;
         for &branch in &branch_order {
@@ -465,15 +463,15 @@ pub(super) fn compiler_solution(
 /// `D_C O D_G = L D_T R`.  The left frame is needed when a factorized
 /// `B V B` witness is collapsed back to the original canonical gate `G`.
 #[cfg(feature = "diagnostics")]
-pub(super) fn endpoint_factorization(problem: &PreparedSandwich, o: &Mat4) -> Option<(Mat4, Mat4)> {
+pub(crate) fn endpoint_factorization(problem: &Problem, o: &Mat4) -> Option<(Mat4, Mat4)> {
     endpoint_factorization_branch(problem, o, 0)
         .or_else(|| endpoint_factorization_branch(problem, o, 1))
 }
 
 /// Endpoint factorization on one explicit target representative branch.
 #[cfg(feature = "diagnostics")]
-pub(super) fn endpoint_factorization_branch(
-    problem: &PreparedSandwich,
+pub(crate) fn endpoint_factorization_branch(
+    problem: &Problem,
     o: &Mat4,
     branch: usize,
 ) -> Option<(Mat4, Mat4)> {
@@ -548,7 +546,7 @@ pub(super) fn endpoint_factorization_branch(
 
 /// Diagnostic residual before the endpoint-gauge acceptance threshold.
 #[cfg(feature = "diagnostics")]
-pub(super) fn endpoint_factorization_residual(problem: &PreparedSandwich, o: &Mat4) -> f64 {
+pub(crate) fn endpoint_factorization_residual(problem: &Problem, o: &Mat4) -> f64 {
     let master = sandwich_master(problem, o);
     let mut best = f64::INFINITY;
     for branch in 0..2 {
@@ -605,7 +603,7 @@ fn rho_transport() -> (Mat4, Mat4) {
 }
 
 #[cfg(feature = "diagnostics")]
-pub(super) fn rho_transport_for_collapse() -> (Mat4, Mat4) {
+pub(crate) fn rho_transport_for_collapse() -> (Mat4, Mat4) {
     rho_transport()
 }
 
@@ -614,7 +612,7 @@ pub(super) fn rho_transport_for_collapse() -> (Mat4, Mat4) {
 /// principal square roots because it serves both rho branches; a factorized
 /// middle gate must use the caller's canonical `D_T` before multiplying by V.
 #[cfg(feature = "diagnostics")]
-pub(super) fn canonical_right_endpoint_gauge(problem: &PreparedSandwich, o: &Mat4) -> Option<Mat4> {
+pub(crate) fn canonical_right_endpoint_gauge(problem: &Problem, o: &Mat4) -> Option<Mat4> {
     // `u = D_C O D_G`; the canonical middle diagonal is `D_T`, not `D_G`.
     // The old implementation accidentally used `right_phases` for both, which
     // can still look plausible for Berkeley tests but makes generic child
@@ -674,7 +672,7 @@ pub(super) fn canonical_right_endpoint_gauge(problem: &PreparedSandwich, o: &Mat
 /// Kept separate so generic waypoint code can enumerate finite K_M lifts
 /// without recomputing the endpoint gauge.
 #[cfg(feature = "diagnostics")]
-pub(super) fn endpoint_plane_residual(expected: &Mat4, second_frame: &Mat4) -> f64 {
+pub(crate) fn endpoint_plane_residual(expected: &Mat4, second_frame: &Mat4) -> f64 {
     let pluecker = |frame: &Mat4| {
         [
             (frame[(0, 0)] * frame[(1, 1)] - frame[(1, 0)] * frame[(0, 1)]).re,
@@ -704,7 +702,7 @@ pub(super) fn endpoint_plane_residual(expected: &Mat4, second_frame: &Mat4) -> f
 /// scalings: one bilinear pass instead of four dense 4×4 products. Exact
 /// same arithmetic content as the dense chain.
 #[inline]
-pub(super) fn sandwich_master(problem: &PreparedSandwich, o: &Mat4) -> Mat4 {
+pub(crate) fn sandwich_master(problem: &Problem, o: &Mat4) -> Mat4 {
     let d: [C; 4] = std::array::from_fn(|i| problem.dc[(i, i)]);
     let l: [C; 4] = std::array::from_fn(|j| problem.lam[(j, j)]);
     let ol: [[C; 4]; 4] = std::array::from_fn(|i| std::array::from_fn(|k| o[(i, k)] * l[k]));
@@ -715,4 +713,38 @@ pub(super) fn sandwich_master(problem: &PreparedSandwich, o: &Mat4) -> Mat4 {
         }
         d[i] * s * d[j]
     })
+}
+
+/// All complex roots via the companion matrix (faer eigenvalues).
+/// Leading near-zero coefficients are trimmed relative to the max magnitude,
+/// and the polynomial is normalized (scale-invariant) for conditioning: the
+/// edge polynomials carry factors like P²w_d²zB² that otherwise degrade the
+/// companion eigensolve. Coefficients are ordered highest degree first.
+fn polynomial_roots(co: &[C]) -> Vec<C> {
+    let maxc = co.iter().map(|c| c.norm()).fold(0.0f64, f64::max);
+    if maxc == 0.0 {
+        return vec![];
+    }
+    let normed: Vec<C> = co.iter().map(|&c| c / maxc).collect();
+    let co = &normed[..];
+    let mut start = 0usize;
+    while start < co.len() && co[start].norm() < 1e-13 {
+        start += 1;
+    }
+    let co = &co[start..];
+    let n = co.len().saturating_sub(1);
+    if n == 0 {
+        return vec![];
+    }
+    let lead = co[0];
+    let comp = faer::Mat::<C>::from_fn(n, n, |i, j| {
+        if j == n - 1 {
+            -co[n - i] / lead
+        } else if i == j + 1 {
+            C::new(1.0, 0.0)
+        } else {
+            C::default()
+        }
+    });
+    comp.eigenvalues().unwrap_or_default()
 }

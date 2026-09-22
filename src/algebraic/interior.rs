@@ -1,6 +1,9 @@
 //! The interior rung: three-Givens chart scans, their sextic eliminant, exclusion gates
 //! and root isolation, plus the transported Klein/three-Givens accelerators.
-use super::*;
+use super::{
+    ACCEPT, C, CAND_K, FAST_ACCEPT, InteriorHit, Mat4, PERMS24, PLANES, Problem, Rung, c, chart_o,
+    chart_o_sqrt, compound_residual, esym4, klein, mmat, prof, three_givens,
+};
 
 /// Monomial corners `(x,y,z) ∈ {0,1}³` in the order used by the
 /// trilinear Möbius transform below.
@@ -322,7 +325,7 @@ pub(crate) fn may_have_unit_root(a0: &[f64; 7], lo: f64, hi: f64) -> usize {
 /// continues to the residual axis evaluator.
 /// Direct and transported charts are coordinate choices in one cyclic
 /// three-spectrum relation.
-pub(super) fn solve_boundary_accelerators(problem: &PreparedSandwich) -> Option<(Mat4, f64, Rung)> {
+pub(crate) fn solve_boundary_accelerators(problem: &Problem) -> Option<(Mat4, f64, Rung)> {
     let mut direct_vertices = [None; 256];
     let direct = |order: &[(usize, usize)], vertices: &mut [Option<(C, C)>; 256]| {
         let started = prof::start();
@@ -459,7 +462,7 @@ pub(crate) fn point_in_complex_hull<const N: usize>(vertices: &[C; N], point: C)
 /// placements advance this object over disjoint plane ranges instead of
 /// rebuilding an eleven-argument fallback and repeating earlier planes.
 pub(crate) struct CyclicThreeGivens<'a> {
-    problem: &'a PreparedSandwich,
+    problem: &'a Problem,
     product: C,
     ct: [C; 4],
     gt: [C; 4],
@@ -473,7 +476,7 @@ impl<'a> CyclicThreeGivens<'a> {
         (0..4).all(|i| (0..i).all(|j| (spectrum[i] - spectrum[j]).norm() > 1e-6))
     }
 
-    pub(super) fn new(problem: &'a PreparedSandwich) -> Option<Self> {
+    pub(crate) fn new(problem: &'a Problem) -> Option<Self> {
         // Repeated spectra belong to the closed multiplicity dispatcher.
         if !Self::distinct(&problem.left) || !Self::distinct(&problem.right) {
             return None;
@@ -652,7 +655,7 @@ pub(crate) fn recover_frame(u1: &Mat4, lam: &Mat4) -> Mat4 {
 /// tries per row) and the vertex gate re-verifies the full reduced distance via
 /// `perm_vertex_residual` before accepting, so dropping the per-permutation e2
 /// term halves the ranking cost without changing any accept decision.
-pub(super) fn rank_perms_pre(
+pub(crate) fn rank_perms_pre(
     a2: &[C; 4],
     lam: &[C; 4],
     targets: &[[C; 4]],
@@ -1016,7 +1019,7 @@ pub(crate) static INTERIOR_QUOTIENT: std::sync::LazyLock<InteriorQuotient> =
 /// strictly improves the verified residual, so coverage and routing are unchanged
 /// by construction.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn rescue_root(
+pub(crate) fn rescue_root(
     eliminant: &three_givens::ChartPolynomial,
     res: &[[f64; 8]; 3],
     dc: &Mat4,

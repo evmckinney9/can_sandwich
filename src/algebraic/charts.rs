@@ -397,10 +397,7 @@ fn reconstruct_role(
 /// Shared chart candidate gate.  All chart/leaf constructors produce a real
 /// matrix that is only approximately orthogonal; normalize it once, apply the
 /// same coefficient pre-gate, and then use the production rootwise certificate.
-fn check_chart_candidate(
-    problem: &super::PreparedSandwich,
-    frame: Real4,
-) -> Option<super::Solution> {
+fn check_chart_candidate(problem: &super::Problem, frame: Real4) -> Option<super::Solution> {
     if !finite(&frame) {
         return None;
     }
@@ -1227,42 +1224,35 @@ fn block_leaves(lam: &[C; 4], mu: &[C; 4], e1t: C, e2t: C) -> Vec<Real4> {
     }
     out
 }
-/// One accepted chart record: residual, chart indices, lift, role, and the `t'` window.
-type Rec = (f64, u8, u8, u8, u8, f64, f64);
+/// Chart indices and parameter window, ranked by the original window width.
+#[derive(Clone, Copy, Default)]
+struct ChartRecord {
+    width: f64,
+    swap: u8,
+    row: u8,
+    first: u8,
+    second: u8,
+    lo: f64,
+    hi: f64,
+}
 /// Wall-rule candidate: (|sin m|, lift, swap, a, j, k, end, root).
 type WallCand = (f64, usize, u8, u8, u8, u8, u8, u8);
 /// One (role, lift) working set: spectra, target coefficients, and its accepted records.
-type RoleSet = (usize, usize, [C; 4], [C; 4], [f64; 3], Vec<Rec>);
-fn solve_charts_snapped(
-    problem: &super::PreparedSandwich,
-    lamc: [C; 4],
-    muc: [C; 4],
-    liftsc: [[C; 4]; 2],
-) -> Option<super::Solution> {
-    solve_charts_gated(problem, 2, lamc, muc, liftsc, true)
+type RoleSet = (usize, usize, [C; 4], [C; 4], [f64; 3], Vec<ChartRecord>);
+enum Search {
+    Probes,
+    AllCharts,
 }
 
-/// Charts built from `lam, mu, lifts` (snapped to the nearest stratum on the second pass); every
-/// candidate is checked against the problem's true spectra. `mode` 1 stops after the fast and wall
-/// passes, 2 continues with exact selection over every chart. `allow_clustered` admits spectra with
-/// two roots within 1e-4.
+/// Construct candidates from the supplied spectra, then check the original problem.
+/// The second pass supplies spectra snapped to the nearest multiplicity stratum.
 fn solve_charts_gated(
-    problem: &super::PreparedSandwich,
-    mode: u8,
+    problem: &super::Problem,
+    mode: Search,
     lam: [C; 4],
     mu: [C; 4],
     lifts: [[C; 4]; 2],
-    allow_clustered: bool,
 ) -> Option<super::Solution> {
-    let gap = |l: &[C; 4]| {
-        (0..4)
-            .flat_map(|i| ((i + 1)..4).map(move |j| (i, j)))
-            .map(|(i, j)| (l[i] - l[j]).norm())
-            .fold(f64::INFINITY, f64::min)
-    };
-    if !allow_clustered && gap(&lam).min(gap(&mu)).min(gap(&lifts[0])) < 1e-4 {
-        return None;
-    }
     let conj4 = |d: &[C; 4]| -> [C; 4] { std::array::from_fn(|q| d[q].conj()) };
     let role_data = |role: usize, lift: usize| -> ([C; 4], [C; 4], [f64; 3], [C; 4]) {
         let lam_t = lifts[lift];
@@ -1272,9 +1262,9 @@ fn solve_charts_gated(
             _ => (lam_t, conj4(&lam), e1e2_of_spectrum(&mu), mu),
         }
     };
-    let records = |l0: &[C; 4], m0: &[C; 4], lt_r: &[C; 4]| -> Vec<Rec> {
+    let records = |l0: &[C; 4], m0: &[C; 4], lt_r: &[C; 4]| -> Vec<ChartRecord> {
         let hull = hull_of(lt_r);
-        let mut raw = [(0.0f64, 0u8, 0u8, 0u8, 0u8, 0.0f64, 0.0f64); 48];
+        let mut raw = [ChartRecord::default(); 48];
         let mut nr = 0;
         let mut wmax = 0.0f64;
         for swap in 0..2u8 {
@@ -1285,7 +1275,15 @@ fn solve_charts_gated(
                         if let Some((t0, t1)) =
                             nr_interval(l[a as usize], m[j as usize], m[k as usize], &hull)
                         {
-                            raw[nr] = (t1 - t0, swap, a, j, k, t0, t1);
+                            raw[nr] = ChartRecord {
+                                width: t1 - t0,
+                                swap,
+                                row: a,
+                                first: j,
+                                second: k,
+                                lo: t0,
+                                hi: t1,
+                            };
                             nr += 1;
                             wmax = wmax.max(t1 - t0);
                         }
@@ -1298,7 +1296,15 @@ fn solve_charts_gated(
                 for a in 0..4u8 {
                     for j in 0..4u8 {
                         for k in (j + 1)..4u8 {
-                            raw[nr] = (1.0, swap, a, j, k, 0.0, 1.0);
+                            raw[nr] = ChartRecord {
+                                width: 1.0,
+                                swap,
+                                row: a,
+                                first: j,
+                                second: k,
+                                lo: 0.0,
+                                hi: 1.0,
+                            };
                             nr += 1;
                         }
                     }
@@ -1306,12 +1312,12 @@ fn solve_charts_gated(
             }
             wmax = 1.0;
         }
-        let mut recs: Vec<Rec> = vec![raw[0]; nr];
+        let mut recs: Vec<ChartRecord> = vec![raw[0]; nr];
         let inv = 7.999 / wmax.max(1e-300);
         let mut bkt = [0u8; 48];
         let mut cnt = [0usize; 9];
         for r in 0..nr {
-            let b = (raw[r].0 * inv) as usize;
+            let b = (raw[r].width * inv) as usize;
             bkt[r] = b as u8;
             cnt[b + 1] += 1;
         }
@@ -1335,10 +1341,18 @@ fn solve_charts_gated(
                      l: &[C; 4],
                      m: &[C; 4],
                      tau: [f64; 3],
-                     rec: &Rec,
+                     rec: &ChartRecord,
                      f: f64|
      -> Option<super::Solution> {
-        let &(_, swap, a, j, k, t0, t1) = rec;
+        let ChartRecord {
+            swap,
+            row: a,
+            first: j,
+            second: k,
+            lo: t0,
+            hi: t1,
+            ..
+        } = *rec;
         let (l, m) = if swap == 0 { (l, m) } else { (m, l) };
         let lt_r = role_data(role, lift).3;
         let tp = if f == CHORD {
@@ -1367,9 +1381,17 @@ fn solve_charts_gated(
                        l: &[C; 4],
                        m: &[C; 4],
                        tau: [f64; 3],
-                       rec: &Rec|
+                       rec: &ChartRecord|
      -> Option<super::Solution> {
-        let &(_, swap, a, j, k, t0, t1) = rec;
+        let ChartRecord {
+            swap,
+            row: a,
+            first: j,
+            second: k,
+            lo: t0,
+            hi: t1,
+            ..
+        } = *rec;
         let (l, m) = if swap == 0 { (l, m) } else { (m, l) };
         let (ch, pm) = make_chart(
             l,
@@ -1660,7 +1682,15 @@ fn solve_charts_gated(
         });
         for k in ord {
             if let Some((t0, t1)) = ivs[k as usize - 1] {
-                let rec: Rec = (t1 - t0, 0, 0, 0, k, t0, t1);
+                let rec: ChartRecord = ChartRecord {
+                    width: t1 - t0,
+                    swap: 0,
+                    row: 0,
+                    first: 0,
+                    second: k,
+                    lo: t0,
+                    hi: t1,
+                };
                 if let Some(h) = try_chart(0, 0, &l0, &m0, tau, &rec, CHORD) {
                     super::prof::rec(super::prof::CHART_PHASEA, tpa);
                     return Some(h);
@@ -1678,7 +1708,7 @@ fn solve_charts_gated(
         let fr: &[f64] = if si == 0 { &FRACTIONS } else { &FRACTIONS[..1] };
         for (fi, &f) in fr.iter().enumerate() {
             for rec in &recs {
-                if fi == 0 && si == 0 && rec.1 == 0 && rec.2 == 0 && rec.3 == 0 {
+                if fi == 0 && si == 0 && rec.swap == 0 && rec.row == 0 && rec.first == 0 {
                     continue;
                 }
                 if let Some(h) = try_chart(role, lift, &l0, &m0, tau, rec, f) {
@@ -1782,16 +1812,16 @@ fn solve_charts_gated(
                     if let Some(h) = hit {
                         return Some(h);
                     }
-                    let rec: Rec = (
-                        t1 - t0,
-                        0,
-                        a as u8,
-                        b as u8,
-                        l as u8,
-                        (0.5 * tp).max(t0),
-                        (1.5 * tp).min(t1),
-                    );
-                    if rec.5 < rec.6
+                    let rec = ChartRecord {
+                        width: t1 - t0,
+                        swap: 0,
+                        row: a as u8,
+                        first: b as u8,
+                        second: l as u8,
+                        lo: (0.5 * tp).max(t0),
+                        hi: (1.5 * tp).min(t1),
+                    };
+                    if rec.lo < rec.hi
                         && let Some(h) = exact_chart(0, lift, &l0, &m0, tau, &rec)
                     {
                         return Some(h);
@@ -1847,7 +1877,15 @@ fn solve_charts_gated(
                         let Some((t0, t1)) = nr_interval(ls[a], ms[j], ms[l], &hull) else {
                             continue;
                         };
-                        let rec: Rec = (t1 - t0, swap, a as u8, j as u8, l as u8, t0, t1);
+                        let rec: ChartRecord = ChartRecord {
+                            width: t1 - t0,
+                            swap,
+                            row: a as u8,
+                            first: j as u8,
+                            second: l as u8,
+                            lo: t0,
+                            hi: t1,
+                        };
                         if ts >= t0
                             && ts <= t1
                             && let Some(h) =
@@ -1855,16 +1893,16 @@ fn solve_charts_gated(
                         {
                             return Some(h);
                         }
-                        let rec: Rec = (
-                            t1 - t0,
+                        let rec = ChartRecord {
+                            width: t1 - t0,
                             swap,
-                            a as u8,
-                            j as u8,
-                            l as u8,
-                            (ts - 1.5 * d).max(t0),
-                            (ts + 1.5 * d).min(t1),
-                        );
-                        if rec.5 < rec.6 && budget > 0 {
+                            row: a as u8,
+                            first: j as u8,
+                            second: l as u8,
+                            lo: (ts - 1.5 * d).max(t0),
+                            hi: (ts + 1.5 * d).min(t1),
+                        };
+                        if rec.lo < rec.hi && budget > 0 {
                             budget -= 1;
                             if let Some(h) = exact_chart(0, lift, &l0, &m0, tau, &rec) {
                                 return Some(h);
@@ -1875,7 +1913,7 @@ fn solve_charts_gated(
             }
         }
     }
-    if mode != 2 {
+    if matches!(mode, Search::Probes) {
         return None;
     }
     // exact selection over every chart, sets in schedule order, records narrowest first
@@ -1893,7 +1931,7 @@ fn solve_charts_gated(
 /// rootwise residual of the master (clusters as blocks, 1e-8, the standalone certificate) must pass
 /// before compiler_solution is asked for the frame and the public certificate.
 fn certified(
-    problem: &super::PreparedSandwich,
+    problem: &super::Problem,
     lam: &[C; 4],
     mu: &[C; 4],
     lifts: &[[C; 4]; 2],
@@ -3134,7 +3172,7 @@ fn degenerate_pair_leaf(
 /// The complete cascade under the production certificate: leaves first on
 /// clustered spectra, charts (fast, wall rung, exact), leaves after the fast path otherwise, then a second
 /// pass with the spectra snapped to their strata on clustered rows.  No linearized corrections anywhere.
-pub(crate) fn solve_full(problem: &super::PreparedSandwich) -> Option<super::Solution> {
+pub(crate) fn solve_full(problem: &super::Problem) -> Option<super::Solution> {
     let lam = problem.left;
     let mu = problem.right;
     let lifts = problem.target_roots;
@@ -3203,13 +3241,13 @@ pub(crate) fn solve_full(problem: &super::PreparedSandwich) -> Option<super::Sol
     if clustered && let Some(h) = run_leaves(lam, mu, lifts) {
         return Some(h);
     }
-    if let Some(h) = solve_charts_gated(problem, 1, lam, mu, lifts, true) {
+    if let Some(h) = solve_charts_gated(problem, Search::Probes, lam, mu, lifts) {
         return Some(h);
     }
     if !clustered && let Some(h) = run_leaves(lam, mu, lifts) {
         return Some(h);
     }
-    if let Some(h) = solve_charts_gated(problem, 2, lam, mu, lifts, true) {
+    if let Some(h) = solve_charts_gated(problem, Search::AllCharts, lam, mu, lifts) {
         return Some(h);
     }
     if !clustered {
@@ -3244,5 +3282,5 @@ pub(crate) fn solve_full(problem: &super::PreparedSandwich) -> Option<super::Sol
     if let Some(h) = run_leaves(lamc, muc, liftsc) {
         return Some(h);
     }
-    solve_charts_snapped(problem, lamc, muc, liftsc)
+    solve_charts_gated(problem, Search::AllCharts, lamc, muc, liftsc)
 }

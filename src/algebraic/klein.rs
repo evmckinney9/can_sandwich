@@ -40,7 +40,7 @@ use super::{ACCEPT, C, Mat4, PERMS24};
 /// quotients of `y`.  The returned error includes every off-diagonal entry in
 /// that basis, so callers do not have to assume that the input was exactly
 /// normal in floating point.
-pub(super) fn unitary_eigenvalues(y: &Mat4, target: &[C; 4]) -> Option<([C; 4], f64)> {
+pub(crate) fn unitary_eigenvalues(y: &Mat4, target: &[C; 4]) -> Option<([C; 4], f64)> {
     // This must agree with the compiler's repeated-root cluster. Attempting to
     // separate two roots that the public boundary treats as one block makes
     // the projection direction chase their O(1e-12) split and can collapse
@@ -116,7 +116,7 @@ pub(super) fn unitary_eigenvalues(y: &Mat4, target: &[C; 4]) -> Option<([C; 4], 
 /// so one real self-adjoint eigendecomposition supplies that frame. The target
 /// assignment is a finite permutation, and the caller must still reconstruct
 /// and verify the original sandwich.
-pub(super) fn retarget_symmetric(y: &Mat4, target: &[C; 4]) -> Option<(Mat4, Mat4)> {
+pub(crate) fn retarget_symmetric(y: &Mat4, target: &[C; 4]) -> Option<(Mat4, Mat4)> {
     const ROOT_CLUSTER: f64 = 1e-8;
     let mut best_phi = 0.0;
     let mut best_gap = -1.0f64;
@@ -325,7 +325,7 @@ fn in_hull(c: &[C; 4], z: C) -> bool {
 /// one 4×4 real-symmetric eigendecomposition return the columns, matched to
 /// the known spectrum rather than searched for. Column signs are free because
 /// `O·diag(g)·Oᵀ` is invariant under them.
-pub(super) fn takagi_real(y: &Mat4, g: &[C; 4]) -> Option<nalgebra::Matrix4<f64>> {
+pub(crate) fn takagi_real(y: &Mat4, g: &[C; 4]) -> Option<nalgebra::Matrix4<f64>> {
     let a = nalgebra::Matrix4::<f64>::from_fn(|i, j| y[(i, j)].re);
     let b = nalgebra::Matrix4::<f64>::from_fn(|i, j| y[(i, j)].im);
     for &t in &[0.0f64, 1.0, -1.0, 0.5, 2.0, -0.37] {
@@ -471,7 +471,7 @@ impl Line {
 
 /// Try every Klein chart in both target branches. Returns the certified frame
 /// and its residual against the ORIGINAL sandwich.
-pub(super) fn solve(
+pub(crate) fn solve(
     a2: &[C; 4],
     g2v: &[C; 4],
     products: &[[C; 4]; 4],
@@ -704,7 +704,7 @@ pub(super) fn solve(
 /// degenerate leading coefficient or non-finite intermediates; the
 /// caller falls back to the eigensolve rooter, so completeness never
 /// depends on this path.
-pub(super) fn quartic_roots(q: &[f64; 5], out: &mut [C; 4]) -> Option<usize> {
+pub(crate) fn quartic_roots(q: &[f64; 5], out: &mut [C; 4]) -> Option<usize> {
     let scale = q.iter().fold(0.0f64, |m, &v| m.max(v.abs()));
     if !(scale.is_finite()) || scale == 0.0 || q[4].abs() < 1e-12 * scale {
         return None;

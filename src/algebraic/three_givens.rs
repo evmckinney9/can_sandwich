@@ -7,9 +7,9 @@
 //! this constructs the genuine sextic directly from the original equations:
 //! no degree-eight resultant and no numerical quadratic deflation.
 
-pub(super) struct ChartPolynomial {
+pub(crate) struct ChartPolynomial {
     pub coefficients: [f64; 7],
-    pub(super) kernel: [[f64; 4]; 4],
+    pub(crate) kernel: [[f64; 4]; 4],
 }
 
 /// Recover all `(y,z)` candidates at a computed `x` root.
@@ -17,7 +17,7 @@ pub(super) struct ChartPolynomial {
 /// Each trilinear becomes `(a_i+b_i*y)+(c_i+d_i*y)z=0`. Eliminate `z`
 /// with the best-conditioned of the three row pairs, solve one quadratic,
 /// then use the strongest row for the linear `z` solve.
-pub(super) fn recover(residuals: &[[f64; 8]; 3], x: f64) -> Vec<(f64, f64)> {
+pub(crate) fn recover(residuals: &[[f64; 8]; 3], x: f64) -> Vec<(f64, f64)> {
     let rows: [[f64; 4]; 3] = std::array::from_fn(|i| {
         let r = residuals[i];
         [
@@ -76,7 +76,7 @@ pub(super) fn recover(residuals: &[[f64; 8]; 3], x: f64) -> Vec<(f64, f64)> {
 }
 
 /// Genuine chart eliminant and its projective recovery map.
-pub(super) fn eliminate(residuals: &[[f64; 8]; 3]) -> ChartPolynomial {
+pub(crate) fn eliminate(residuals: &[[f64; 8]; 3]) -> ChartPolynomial {
     // A(x) [1,y,z,yz]^T = 0. Each entry of A is affine in x.
     let a: [[[f64; 2]; 4]; 3] = std::array::from_fn(|row| {
         let r = residuals[row];

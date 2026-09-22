@@ -1,18 +1,13 @@
-//! Canonical input and output contracts for one depth-two sandwich.
-//!
-//! Every realization formula must consume [`PreparedSandwich`].  Weyl lifts,
-//! target branches, and frame certificates are owned by the corresponding
-//! certificate module rather than being reimplemented by individual rungs.
+//! Prepared spectra and shared spectral conventions.
 
-use super::{C, Mat4, eigphases, esym4, weyl_from_monodromy};
+use crate::{C, ComplexMatrix as Mat4};
+use std::f64::consts::PI;
 
-/// Exact spectral partition used by the dispatch spine.
-///
-/// This is deliberately stricter than conditioning clusters inside confluent
-/// formulas: a merely close pair is generic algebra and must not be collapsed
-/// into a repeated eigenvalue.
+/// Multiplicity classification for dispatch, using a sqrt(epsilon) root tolerance.
+/// This can classify nearby roots as repeated. Candidates must still pass
+/// verification against the original spectra.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum SpectrumKind {
+pub(crate) enum SpectrumKind {
     Distinct,
     Pair211,
     Pair22,
@@ -24,7 +19,7 @@ pub(super) enum SpectrumKind {
 /// dispatch partition; it prevents near multiplicities from being advertised
 /// as exact closed-form inputs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum SpectrumProximity {
+pub(crate) enum SpectrumProximity {
     Exact,
     Near,
     Distinct,
@@ -32,17 +27,17 @@ pub(super) enum SpectrumProximity {
 
 impl SpectrumKind {
     #[inline]
-    pub(super) fn is_repeated(self) -> bool {
+    pub(crate) fn is_repeated(self) -> bool {
         self != Self::Distinct
     }
 
     #[inline]
-    pub(super) fn is_rank_two(self) -> bool {
+    pub(crate) fn is_rank_two(self) -> bool {
         matches!(self, Self::Pair211 | Self::Pair22)
     }
 }
 
-pub(super) fn spectrum_kind(s: &[C; 4]) -> SpectrumKind {
+pub(crate) fn spectrum_kind(s: &[C; 4]) -> SpectrumKind {
     let mut used = [false; 4];
     let mut counts = [0usize; 4];
     let mut groups = 0usize;
@@ -70,7 +65,7 @@ pub(super) fn spectrum_kind(s: &[C; 4]) -> SpectrumKind {
     }
 }
 
-pub(super) fn spectrum_proximity(s: &[C; 4]) -> SpectrumProximity {
+pub(crate) fn spectrum_proximity(s: &[C; 4]) -> SpectrumProximity {
     let mut minimum = f64::INFINITY;
     for i in 0..4 {
         for j in (i + 1)..4 {
@@ -87,23 +82,23 @@ pub(super) fn spectrum_proximity(s: &[C; 4]) -> SpectrumProximity {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(super) struct StratumSignature {
-    pub(super) c: SpectrumKind,
-    pub(super) g: SpectrumKind,
-    pub(super) target: [SpectrumKind; 2],
-    pub(super) c_proximity: SpectrumProximity,
-    pub(super) g_proximity: SpectrumProximity,
+pub(crate) struct StratumSignature {
+    pub(crate) c: SpectrumKind,
+    pub(crate) g: SpectrumKind,
+    pub(crate) target: [SpectrumKind; 2],
+    pub(crate) c_proximity: SpectrumProximity,
+    pub(crate) g_proximity: SpectrumProximity,
     #[cfg(feature = "diagnostics")]
-    pub(super) target_proximity: [SpectrumProximity; 2],
+    pub(crate) target_proximity: [SpectrumProximity; 2],
     /// A repeated value in the routed product table `c_i g_j`, even when both
     /// input spectra themselves are simple.  This is a separate confluence
     /// mechanism from input/target spectral multiplicity.
     #[cfg(feature = "diagnostics")]
-    pub(super) routed_collision: bool,
+    pub(crate) routed_collision: bool,
 }
 
 impl StratumSignature {
-    pub(super) fn new(c: &[C; 4], g: &[C; 4], target: &[[C; 4]; 2]) -> Self {
+    pub(crate) fn new(c: &[C; 4], g: &[C; 4], target: &[[C; 4]; 2]) -> Self {
         Self {
             c: spectrum_kind(c),
             g: spectrum_kind(g),
@@ -118,7 +113,7 @@ impl StratumSignature {
     }
 
     #[inline]
-    pub(super) fn has_confluence(self) -> bool {
+    pub(crate) fn has_confluence(self) -> bool {
         self.c.is_repeated()
             || self.g.is_repeated()
             || self.target.iter().any(|kind| kind.is_repeated())
@@ -148,21 +143,21 @@ fn routed_product_collision(c: &[C; 4], g: &[C; 4]) -> bool {
 /// coefficients, and diagonal master-object factors are constructed exactly
 /// once here.
 #[derive(Clone, Copy)]
-pub(super) struct PreparedSandwich {
-    pub(super) left_phases: [f64; 4],
-    pub(super) right_phases: [f64; 4],
-    pub(super) left: [C; 4],
-    pub(super) right: [C; 4],
-    pub(super) target_roots: [[C; 4]; 2],
-    pub(super) targets: [[C; 4]; 2],
-    pub(super) routed: [[C; 4]; 4],
-    pub(super) dc: Mat4,
-    pub(super) lam: Mat4,
-    pub(super) strata: StratumSignature,
+pub(crate) struct Problem {
+    pub(crate) left_phases: [f64; 4],
+    pub(crate) right_phases: [f64; 4],
+    pub(crate) left: [C; 4],
+    pub(crate) right: [C; 4],
+    pub(crate) target_roots: [[C; 4]; 2],
+    pub(crate) targets: [[C; 4]; 2],
+    pub(crate) routed: [[C; 4]; 4],
+    pub(crate) dc: Mat4,
+    pub(crate) lam: Mat4,
+    pub(crate) strata: StratumSignature,
 }
 
-impl PreparedSandwich {
-    pub(super) fn new(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Self {
+impl Problem {
+    pub(crate) fn new(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Self {
         let left_phases = eigphases(weyl_from_monodromy(c));
         let right_phases = eigphases(weyl_from_monodromy(g));
         let target_phases = eigphases(weyl_from_monodromy(t));
@@ -207,3 +202,86 @@ impl PreparedSandwich {
         }
     }
 }
+
+/// Monodromy triple -> Weyl coords (gulps convention `[m₀+m₁, m₀+m₂, m₁+m₂]`).
+pub(crate) fn weyl_from_monodromy(m: [f64; 3]) -> [f64; 3] {
+    [m[0] + m[1], m[0] + m[2], m[1] + m[2]]
+}
+
+#[inline]
+/// The 4 magic-basis eigenphases of `Can(w)` in closed form (no matrix): the diagonal
+/// of `mb(Can(w))`, i.e. `D_C = diag(exp(i·eigphases))`. Same order as `dphase`.
+pub(crate) fn eigphases(w: [f64; 3]) -> [f64; 4] {
+    let h = PI / 2.0;
+    [
+        h * (w[0] - w[1] + w[2]),
+        h * (w[0] + w[1] - w[2]),
+        h * (-w[0] - w[1] - w[2]),
+        h * (-w[0] + w[1] + w[2]),
+    ]
+}
+
+/// Elementary symmetric functions `e₁..e₄` of four scalars (the diagonal-spectrum
+/// fast path: `symfn` without forming any matrix).
+pub(crate) fn esym4(s: [C; 4]) -> [C; 4] {
+    let e1 = compensated_sum(s);
+    let e2 = compensated_sum([
+        s[0] * s[1],
+        s[0] * s[2],
+        s[0] * s[3],
+        s[1] * s[2],
+        s[1] * s[3],
+        s[2] * s[3],
+    ]);
+    let e3 = compensated_sum([
+        s[0] * s[1] * s[2],
+        s[0] * s[1] * s[3],
+        s[0] * s[2] * s[3],
+        s[1] * s[2] * s[3],
+    ]);
+    let e4 = s[0] * s[1] * s[2] * s[3];
+    [e1, e2, e3, e4]
+}
+
+#[inline]
+pub(crate) fn compensated_sum<const N: usize>(terms: [C; N]) -> C {
+    let mut sum = C::default();
+    let mut correction = C::default();
+    for term in terms {
+        let adjusted = term - correction;
+        let next = sum + adjusted;
+        correction = (next - sum) - adjusted;
+        sum = next;
+    }
+    sum
+}
+/// The 6 Givens planes (= the 6 transpositions / permutohedron edge directions).
+pub(crate) const PLANES: [(usize, usize); 6] = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];
+
+/// Permutations in Heap order. Search order matters when several frames are valid.
+pub(crate) const PERMS24: &[[usize; 4]; 24] = &[
+    [0, 1, 2, 3],
+    [1, 0, 2, 3],
+    [2, 0, 1, 3],
+    [0, 2, 1, 3],
+    [1, 2, 0, 3],
+    [2, 1, 0, 3],
+    [3, 1, 2, 0],
+    [1, 3, 2, 0],
+    [2, 3, 1, 0],
+    [3, 2, 1, 0],
+    [1, 2, 3, 0],
+    [2, 1, 3, 0],
+    [3, 0, 2, 1],
+    [0, 3, 2, 1],
+    [2, 3, 0, 1],
+    [3, 2, 0, 1],
+    [0, 2, 3, 1],
+    [2, 0, 3, 1],
+    [3, 0, 1, 2],
+    [0, 3, 1, 2],
+    [1, 3, 0, 2],
+    [3, 1, 0, 2],
+    [0, 1, 3, 2],
+    [1, 0, 3, 2],
+];

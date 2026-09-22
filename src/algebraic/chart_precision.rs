@@ -3,13 +3,13 @@ use super::C;
 use std::ops::{Add, Div, Mul, Sub};
 
 #[derive(Clone, Copy, Default)]
-pub(super) struct D(f64, f64);
+pub(crate) struct D(f64, f64);
 impl D {
     fn new(a: f64, b: f64) -> Self {
         let s = a + b;
         Self(s, b - (s - a))
     }
-    pub(super) fn value(self) -> f64 {
+    pub(crate) fn value(self) -> f64 {
         self.0 + self.1
     }
     fn sqrt(self) -> Self {
@@ -121,13 +121,13 @@ fn normalized(roots: &[C; 4]) -> [Z; 4] {
     // A first-order fourth-root correction reduces determinant drift from
     // floating conversion and the existing snapped-spectrum candidate pass.
     // This changes only candidate-generation coefficients, not the original
-    // PreparedSandwich spectra used by both public rootwise certificates.
+    // Problem spectra used by both public rootwise certificates.
     let one = Z::from(C::new(1.0, 0.0));
     let factor = one - (product - one) * 0.25;
     unit.map(|z| z * factor)
 }
 
-pub(super) fn rows_at(
+pub(crate) fn rows_at(
     lam: &[C; 4],
     mu: &[C; 4],
     i: usize,

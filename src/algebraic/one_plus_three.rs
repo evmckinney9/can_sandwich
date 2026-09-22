@@ -33,7 +33,7 @@ const WALL9: [(usize, usize, usize); 9] = [
 /// Lower-degree part of a routed `1 + 3` split: rank drops and the nine
 /// zero-entry faces. The compact plane-quartic completion is `solve_dense`
 /// and deliberately runs after the other boundary accelerators.
-pub(super) fn solve_walls(
+pub(crate) fn solve_walls(
     a: &[C; 4],
     b: &[C; 4],
     routed: &[[u8; 4]; 4],
@@ -133,7 +133,7 @@ pub(super) fn solve_walls(
 /// Complete dense part of the routed `1 + 3` theorem.  This runs after all
 /// lower-degree boundary realizers so a degree-at-most-12 selector cannot
 /// preempt a cheaper exact witness.
-pub(super) fn solve_dense(
+pub(crate) fn solve_dense(
     a: &[C; 4],
     b: &[C; 4],
     routed: &[[u8; 4]; 4],
@@ -228,7 +228,7 @@ fn poly_term(out: &mut Poly, coefficient: f64, factors: &[&Poly]) {
 /// Discriminant of `a*v^4+b*v^3+c*v^2+d*v+e`, coefficientwise in the
 /// remaining Birkhoff coordinate.  For a total-degree-four plane curve the
 /// result has degree at most twelve.
-pub(super) fn quartic_discriminant_poly(f: &[Poly; 5]) -> Option<Poly> {
+pub(crate) fn quartic_discriminant_poly(f: &[Poly; 5]) -> Option<Poly> {
     let (e, d, c_, b, a) = (&f[0], &f[1], &f[2], &f[3], &f[4]);
     let (a2, a3) = (poly_mul(a, a), poly_mul(&poly_mul(a, a), a));
     let (b2, b3, b4) = {

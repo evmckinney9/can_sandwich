@@ -1,17 +1,5 @@
-//! The distilled can-sandwich solver: one curve, two strata, one
-//! residue law.
-//!
-//! Every instance defines a real genus-3 curve. Gate-degenerate rows
-//! are the HYPERELLIPTIC stratum: solutions are theta characteristics,
-//! computed in radicals -- skeletons (even characteristics: 4+4 data
-//! splits with the det-pin product), pin pairs (odd characteristics:
-//! the beta-cubic closure), and split pairs (the quartic closure). The
-//! all-generic stratum is the SMOOTH QUARTIC, where radicals are
-//! impossible by the classical bitangent theorem, and the certified
-//! bounded eigensolve (the production dispatcher) is the sanctioned
-//! form. Gates are recovered by ONE confluent residue law applied to
-//! both factors (v from chi_mu with rho1, u from chi_mu' with rho2),
-//! signs by the ray/involution structure, one forward verify.
+//! Candidate constructions for degenerate spectra using polynomial roots
+//! and residue identities. Each candidate is checked against the original problem.
 use nalgebra::{Complex, Matrix4};
 
 pub(crate) type C = Complex<f64>;
@@ -158,10 +146,7 @@ fn chi4(r: &[C; 4]) -> [C; 5] {
     c
 }
 
-/// Closed-form roots for degree <= 3 (leading-trimmed like
-/// cpoly::roots): quadratic formula and complex Cardano. The beta
-/// polynomial is rooted once per pin pair, so this removes the hot
-/// path's companion eigensolve entirely.
+/// Quadratic formula and complex Cardano, after trimming negligible leading terms.
 fn roots_small(p: &[C]) -> ([C; 4], usize) {
     let zero = C::default();
     let maxc = p.iter().map(|c| c.norm()).fold(0.0f64, f64::max);
@@ -365,7 +350,7 @@ fn beta_interval_variations(beta: BetaClosure, pp: C, lo: f64, hi: f64) -> Optio
     if eval(lo).abs() <= 1e-8 || eval(hi).abs() <= 1e-8 {
         return None;
     }
-    Some(crate::cascade::bernstein_variations(
+    Some(crate::algebraic::bernstein_variations(
         &power[..=degree],
         lo,
         hi,
@@ -1181,18 +1166,18 @@ fn mirror_base(
         }
         let vi = -bd / pre_rho1_ac[k0];
         if !vi.re.is_finite() || !vi.im.is_finite() || vi.im.abs() > 1e-6 {
-            crate::cascade::prof::hit(crate::cascade::prof::RJ_V_IMAG);
+            crate::algebraic::prof::hit(crate::algebraic::prof::RJ_V_IMAG);
             return None;
         }
         if vi.re < -1e-7 {
-            crate::cascade::prof::hit(crate::cascade::prof::RJ_V_NEG);
+            crate::algebraic::prof::hit(crate::algebraic::prof::RJ_V_NEG);
             return None;
         }
         vv[k0] = vi.re.max(0.0).sqrt();
         nv += vi.re.max(0.0);
     }
     if (nv - 1.0).abs() > 1e-4 {
-        crate::cascade::prof::hit(crate::cascade::prof::RJ_V_SUM);
+        crate::algebraic::prof::hit(crate::algebraic::prof::RJ_V_SUM);
         return None;
     }
 
@@ -1313,7 +1298,7 @@ fn mirror_completion(
                 }
             }
             if pi == usize::MAX || pd > XTOL {
-                crate::cascade::prof::hit(crate::cascade::prof::RJ_SKEL);
+                crate::algebraic::prof::hit(crate::algebraic::prof::RJ_SKEL);
                 return None; // gamma = 0 forces mu into the data multiset
             }
             phused[pi] = true;
@@ -1391,14 +1376,14 @@ fn mirror_completion(
     let sre: f64 = u2.iter().map(|z| z.re * z.re).sum();
     let simm: f64 = u2.iter().map(|z| z.im * z.im).sum();
     if simm > sre || u2.iter().any(|z| z.re < 0.0 && z.re * z.re > simm) {
-        crate::cascade::prof::hit(crate::cascade::prof::RJ_UREAL);
+        crate::algebraic::prof::hit(crate::algebraic::prof::RJ_UREAL);
         return None;
     }
     let s2: f64 = (0..dcl.k)
         .map(|c_| u2[dcl.cluster_rep(c_)].re.max(0.0))
         .sum();
     if (s2 - 1.0).abs() >= 1e-4 {
-        crate::cascade::prof::hit(crate::cascade::prof::RJ_USUM);
+        crate::algebraic::prof::hit(crate::algebraic::prof::RJ_USUM);
         return None;
     }
     // canonical-gauge reconstruction: one u, one verify, no enumeration
@@ -1429,7 +1414,7 @@ fn mirror_completion(
     }
     let out = verify(c, a, &vv, &uc, rho1, rho2, w);
     if out.is_some() {
-        crate::cascade::prof::hit(crate::cascade::prof::N_ACCEPT);
+        crate::algebraic::prof::hit(crate::algebraic::prof::N_ACCEPT);
     }
     out
 }
@@ -1456,30 +1441,30 @@ fn try_mu(
     method: &'static str,
 ) -> Option<Solved> {
     let (g2, t1, t2) = gq?;
-    crate::cascade::prof::hit(crate::cascade::prof::N_TRY_MU);
-    let tb = crate::cascade::prof::start();
+    crate::algebraic::prof::hit(crate::algebraic::prof::N_TRY_MU);
+    let tb = crate::algebraic::prof::start();
     let mb0 = mirror_base(mu, delta, dcl, pre_rho1_ac);
-    crate::cascade::prof::rec(crate::cascade::prof::SW_BASE, tb);
+    crate::algebraic::prof::rec(crate::algebraic::prof::SW_BASE, tb);
     let Some(mb) = mb0 else {
-        crate::cascade::prof::hit(crate::cascade::prof::RJ_BASE);
-        crate::cascade::prof::hit(match method {
-            "forced" => crate::cascade::prof::BASE_FAIL_FORCED,
-            "skel" => crate::cascade::prof::BASE_FAIL_SKEL,
-            _ => crate::cascade::prof::BASE_FAIL_PAIR,
+        crate::algebraic::prof::hit(crate::algebraic::prof::RJ_BASE);
+        crate::algebraic::prof::hit(match method {
+            "forced" => crate::algebraic::prof::BASE_FAIL_FORCED,
+            "skel" => crate::algebraic::prof::BASE_FAIL_SKEL,
+            _ => crate::algebraic::prof::BASE_FAIL_PAIR,
         });
         if method == "pair" {
             let dev = (mu[2].norm_sqr() - 1.0).abs();
-            crate::cascade::prof::hit(if dev < 1e-6 {
-                crate::cascade::prof::DEV_LT_1EM6
+            crate::algebraic::prof::hit(if dev < 1e-6 {
+                crate::algebraic::prof::DEV_LT_1EM6
             } else if dev < 1e-2 {
-                crate::cascade::prof::DEV_MID
+                crate::algebraic::prof::DEV_MID
             } else {
-                crate::cascade::prof::DEV_GT_1EM2
+                crate::algebraic::prof::DEV_GT_1EM2
             });
         }
         return None;
     };
-    let tp = crate::cascade::prof::start();
+    let tp = crate::algebraic::prof::start();
     let mc = mirror_completion(
         &mb,
         pb,
@@ -1495,7 +1480,7 @@ fn try_mu(
         pre_ac,
         method,
     );
-    crate::cascade::prof::rec(crate::cascade::prof::SW_MIRROR, tp);
+    crate::algebraic::prof::rec(crate::algebraic::prof::SW_MIRROR, tp);
     if let Some(s) = mc {
         return Some(s);
     }
@@ -1519,9 +1504,9 @@ fn verify(
     rho2: C,
     w: &[C; 4],
 ) -> Option<Solved> {
-    let tp = crate::cascade::prof::start();
+    let tp = crate::algebraic::prof::start();
     let r = verify_inner(c, a, vv, uc, rho1, rho2, w);
-    crate::cascade::prof::rec(crate::cascade::prof::SW_VERIFY, tp);
+    crate::algebraic::prof::rec(crate::algebraic::prof::SW_VERIFY, tp);
     r
 }
 
@@ -1842,7 +1827,7 @@ pub(crate) fn two_step<R>(
     cap: usize,
     accept: &mut impl FnMut(Solved) -> Option<R>,
 ) -> Option<R> {
-    let th = crate::cascade::prof::start();
+    let th = crate::algebraic::prof::start();
     let (rho1v, rho2v) = (d1 - c, d2 - c);
     if rho1v.norm() < CTOL || rho2v.norm() < CTOL {
         return None;
@@ -1918,7 +1903,7 @@ pub(crate) fn two_step<R>(
         (rho1v, rho2v, c * c * c * d1 * prod_a),
         (rho2v, rho1v, c * c * c * d2 * prod_a),
     ];
-    crate::cascade::prof::rec(crate::cascade::prof::SW_HEADER, th);
+    crate::algebraic::prof::rec(crate::algebraic::prof::SW_HEADER, th);
     // On a (2,2) gate the two off-cluster values are equal. Exchanging the
     // two rank-one peels then leaves rho1, rho2, the determinant pin, every
     // characteristic, and the reconstructed matrix unchanged. Quotient that
@@ -2072,7 +2057,9 @@ pub(crate) fn two_step<R>(
                                 if (av[i] * av[j] * av[k] * av[l] - pin).norm_sqr() < 1e-12 {
                                     let mu = [av[i], av[j], av[k], av[l]];
                                     if !inherits_clusters(&mu, &delta, &dcl) {
-                                        crate::cascade::prof::hit(crate::cascade::prof::INH_SKIP);
+                                        crate::algebraic::prof::hit(
+                                            crate::algebraic::prof::INH_SKIP,
+                                        );
                                         continue;
                                     }
                                     let mut gate_known = false;
@@ -2133,7 +2120,9 @@ pub(crate) fn two_step<R>(
                                         }
                                     }
                                     if gate_known && !gate_ok {
-                                        crate::cascade::prof::hit(crate::cascade::prof::SKEL_SKIP);
+                                        crate::algebraic::prof::hit(
+                                            crate::algebraic::prof::SKEL_SKIP,
+                                        );
                                         continue;
                                     }
                                     if let Some(s) = try_mu(
@@ -2187,19 +2176,19 @@ pub(crate) fn two_step<R>(
                 }
             }) {
                 let (t1, t2) = (pair.t1, pair.t2);
-                let tp = crate::cascade::prof::start();
+                let tp = crate::algebraic::prof::start();
                 let wg = strict_word.as_ref().map(|word| word.accepts(t1, t2));
-                crate::cascade::prof::rec(crate::cascade::prof::SW_WORD_GATE, tp);
+                crate::algebraic::prof::rec(crate::algebraic::prof::SW_WORD_GATE, tp);
                 if wg == Some(false) {
                     continue;
                 }
                 let pp = pin / (t1 * t2);
                 let arc = if all_simple {
                     let g = PairGate::new(t1, t2, pp, &delta, &pre_ac, rho1);
-                    crate::cascade::prof::hit(if g.is_some() {
-                        crate::cascade::prof::PAIR_GATE_SOME
+                    crate::algebraic::prof::hit(if g.is_some() {
+                        crate::algebraic::prof::PAIR_GATE_SOME
                     } else {
-                        crate::cascade::prof::PAIR_GATE_NONE
+                        crate::algebraic::prof::PAIR_GATE_NONE
                     });
                     g
                 } else {
@@ -2266,7 +2255,7 @@ pub(crate) fn two_step<R>(
                 if let Some(g) = &arc
                     && g.hopeless()
                 {
-                    crate::cascade::prof::hit(crate::cascade::prof::ARC_PAIR_SKIP);
+                    crate::algebraic::prof::hit(crate::algebraic::prof::ARC_PAIR_SKIP);
                     continue;
                 }
                 let (m1c, m2c) = if (t1 - t2).norm_sqr() < XTOL * XTOL {
@@ -2274,19 +2263,19 @@ pub(crate) fn two_step<R>(
                 } else {
                     (mult_of(t1), mult_of(t2))
                 };
-                let tp = crate::cascade::prof::start();
+                let tp = crate::algebraic::prof::start();
                 let beta1 = free_pair_beta(&p_poly, t1, t2, 1, 1, pp);
                 if beta1.is_some_and(|beta| {
                     arc.as_ref()
                         .is_some_and(|g| g.excludes_closure(beta, pp, t1, t2))
                 }) {
-                    crate::cascade::prof::hit(crate::cascade::prof::ARC_PAIR_SKIP);
+                    crate::algebraic::prof::hit(crate::algebraic::prof::ARC_PAIR_SKIP);
                     continue;
                 }
                 let (r1, nr1) = beta1
                     .map(|beta| lift_beta_roots(beta, pp))
                     .unwrap_or(([C::default(); 8], 0));
-                crate::cascade::prof::rec(crate::cascade::prof::SW_PAIR_ROOTS, tp);
+                crate::algebraic::prof::rec(crate::algebraic::prof::SW_PAIR_ROOTS, tp);
                 let (r2, nr2) = if m1c > 1 || m2c > 1 {
                     free_pair_roots(&p_poly, t1, t2, m1c, m2c, pp)
                 } else {
@@ -2315,7 +2304,7 @@ pub(crate) fn two_step<R>(
                         .as_ref()
                         .is_some_and(|g| g.hopeless() || g.rejects(m_free));
                     if arc_reject {
-                        crate::cascade::prof::hit(crate::cascade::prof::ARC_CAND_SKIP);
+                        crate::algebraic::prof::hit(crate::algebraic::prof::ARC_CAND_SKIP);
                         continue;
                     }
                     let mu = [t1, t2, m_free, pp / m_free];
@@ -2326,13 +2315,13 @@ pub(crate) fn two_step<R>(
                     // residue evaluation before the reality gate kills them.
                     let inh_reject = !all_simple && !inherits_clusters(&mu, &delta, &dcl);
                     if inh_reject {
-                        crate::cascade::prof::hit(crate::cascade::prof::INH_SKIP);
+                        crate::algebraic::prof::hit(crate::algebraic::prof::INH_SKIP);
                         continue;
                     }
                     let red_reject =
                         !inh_reject && arc_r.as_ref().is_some_and(|g| g.rejects(m_free));
                     if red_reject {
-                        crate::cascade::prof::hit(crate::cascade::prof::RED_SKIP);
+                        crate::algebraic::prof::hit(crate::algebraic::prof::RED_SKIP);
                         continue;
                     }
                     let m2f = mu[3]; // == pp/m_free; already computed above for mu
@@ -2393,7 +2382,7 @@ pub(crate) fn two_step<R>(
                         _ => false,
                     };
                     if uray_reject {
-                        crate::cascade::prof::hit(crate::cascade::prof::URAY_SKIP);
+                        crate::algebraic::prof::hit(crate::algebraic::prof::URAY_SKIP);
                         continue;
                     }
                     if let Some(s) = try_mu(
@@ -2470,9 +2459,9 @@ pub(crate) fn solve_oriented<R>(
                 .find(|&c| cls.cluster_len(c) == 1)
                 .map(|c| cls.cluster_rep(c))
                 .unwrap();
-            let tp = crate::cascade::prof::start();
+            let tp = crate::algebraic::prof::start();
             let r = rank_one(gate[tri_rep], gate[sng_rep], a, w);
-            crate::cascade::prof::rec(crate::cascade::prof::SW_RANK1, tp);
+            crate::algebraic::prof::rec(crate::algebraic::prof::SW_RANK1, tp);
             r.and_then(accept)
         }
         [2, 2] | [1, 1, 2] => {
@@ -2491,9 +2480,9 @@ pub(crate) fn solve_oriented<R>(
                     }
                 }
                 let (c, d1, d2) = (gate[pair_rep], gate[sing[0]], gate[sing[1]]);
-                let tp = crate::cascade::prof::start();
+                let tp = crate::algebraic::prof::start();
                 let hit = two_step(c, d1, d2, a, w, cap, accept);
-                crate::cascade::prof::rec(crate::cascade::prof::SW_TWO_STEP, tp);
+                crate::algebraic::prof::rec(crate::algebraic::prof::SW_TWO_STEP, tp);
                 if let Some(s) = hit {
                     return Some(s);
                 }

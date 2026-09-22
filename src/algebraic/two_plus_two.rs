@@ -148,7 +148,7 @@ impl CDd {
 /// Try the two exact factor orientations.  Swapping the factors transposes the
 /// realizing orthogonal frame.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn solve(
+pub(crate) fn solve(
     prefix: &[C; 4],
     gate: &[C; 4],
     target_specs: &[[C; 4]; 2],
@@ -182,7 +182,7 @@ pub(super) fn solve(
 /// coefficient residual is only a candidate gate and must not terminate the
 /// finite enumeration when its direct root certificate fails.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn solve_with<R>(
+pub(crate) fn solve_with<R>(
     prefix: &[C; 4],
     gate: &[C; 4],
     target_specs: &[[C; 4]; 2],
@@ -453,7 +453,7 @@ fn pair22_groups(values: &[C; 4]) -> Option<(C, C, [usize; 2], [usize; 2])> {
 
 /// Representation gap of a nonscalar paired input recognized by this module.
 #[cfg(feature = "diagnostics")]
-pub(super) fn paired_gap(values: &[C; 4]) -> Option<f64> {
+pub(crate) fn paired_gap(values: &[C; 4]) -> Option<f64> {
     let (_, _, first, second) = pair22_groups(values)?;
     Some(
         (values[first[0]] - values[first[1]])
@@ -465,8 +465,8 @@ pub(super) fn paired_gap(values: &[C; 4]) -> Option<f64> {
 /// R0266's two paired roles, restricted to the existing rank-four wall
 /// implementation. Unsupported affine ranks decline; no dense selector runs.
 #[cfg(feature = "diagnostics")]
-pub(super) fn solve_paired_edges_with<R>(
-    problem: &super::PreparedSandwich,
+pub(crate) fn solve_paired_edges_with<R>(
+    problem: &super::Problem,
     backward: bool,
     mut finalize: impl FnMut(Mat4, f64) -> Option<R>,
 ) -> Option<R> {
@@ -507,7 +507,7 @@ pub(super) fn solve_paired_edges_with<R>(
 
 #[cfg(feature = "diagnostics")]
 fn solve_paired_support_with<R>(
-    problem: &super::PreparedSandwich,
+    problem: &super::Problem,
     finalize: &mut impl FnMut(Mat4, f64) -> Option<R>,
 ) -> Option<R> {
     let support = super::support_strata::edge_gate(&problem.routed, &problem.target_roots);
@@ -571,7 +571,7 @@ fn solve_paired_support_with<R>(
 
 #[cfg(feature = "diagnostics")]
 fn solve_paired_backward_with<R>(
-    problem: &super::PreparedSandwich,
+    problem: &super::Problem,
     mut finalize: impl FnMut(Mat4, f64) -> Option<R>,
 ) -> Option<R> {
     for (paired, other, transpose) in [
