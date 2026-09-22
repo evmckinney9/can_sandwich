@@ -1,4 +1,4 @@
-use can_sandwich::{Rung, solve};
+use can_sandwich::solve;
 use nalgebra::{Complex, Matrix4};
 use std::{
     collections::BTreeSet,
@@ -31,11 +31,23 @@ fn cases() -> Vec<Case> {
 }
 
 fn production(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<Frame> {
-    let solution = solve(c, g, t);
-    if solution.rung == Rung::Unsolved || solution.o.iter().any(|z| z.im != 0.0) {
-        return None;
+    let (o, left, right, phase) = can_sandwich::solve_with_factors(c, g, t)?;
+    let diagonal = |m: [f64; 3]| {
+        let [x, y, z] = [m[0] + m[1], m[0] + m[2], m[1] + m[2]];
+        let d = [x - y + z, x + y - z, -x - y - z, -x + y + z]
+            .map(|v| Complex::from_polar(1.0, std::f64::consts::FRAC_PI_2 * v));
+        Matrix4::from_diagonal(&nalgebra::Vector4::from(d))
+    };
+    for factor in [&left, &right] {
+        assert!((factor.transpose() * factor - Frame::identity()).amax() < 1e-8);
+        assert!((factor.determinant() - 1.0).abs() < 1e-8);
     }
-    Some(solution.o.map(|z| z.re))
+    let complex = |v| Complex::new(v, 0.0);
+    let actual = diagonal(c) * o.map(complex) * diagonal(g);
+    let reconstructed =
+        left.map(complex) * diagonal(t) * right.map(complex) * Complex::from_polar(1.0, phase);
+    assert!((actual - reconstructed).iter().all(|v| v.norm() < 1e-8));
+    Some(o)
 }
 
 fn spectrum(m: [f64; 3]) -> [Complex<f64>; 4] {
@@ -120,13 +132,13 @@ fn rejects_invalid_inputs() {
         for index in 0..3 {
             let mut case = [[0.0; 3]; 3];
             case[index][0] = value;
-            assert_eq!(solve(case[0], case[1], case[2]).rung, Rung::Unsolved);
+            assert!(solve(case[0], case[1], case[2]).is_none());
         }
     }
     let c = [0.17, 0.04, -0.09];
     let wrong = [0.21, 0.03, -0.08];
     for (left, right) in [(c, [0.0; 3]), ([0.0; 3], c)] {
-        assert_eq!(solve(left, right, wrong).rung, Rung::Unsolved);
+        assert!(solve(left, right, wrong).is_none());
     }
 }
 
@@ -160,10 +172,10 @@ fn checker() {
 fn compare_candidate() {
     // Replace this function with the algorithm under test, or call a local module.
     fn candidate(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<Frame> {
-        production(c, g, t)
+        solve(c, g, t)
     }
     let rows = cases();
-    let (baseline, baseline_time) = evaluate(&rows, production);
+    let (baseline, baseline_time) = evaluate(&rows, solve);
     let (proposed, proposed_time) = evaluate(&rows, candidate);
     println!(
         "production: {}/{} passed, {baseline_time:?}",

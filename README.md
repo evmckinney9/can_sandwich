@@ -6,11 +6,13 @@ It takes three monodromy coordinate vectors and returns a verified real
 Every result must pass numerical certification; convergence is not guaranteed.
 
 ```rust
-pub fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solution;
+pub fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<nalgebra::Matrix4<f64>>;
 ```
 
-The library exports `solve`, `Solution`, `Rung`, and `Mat4`. Production code
-lives in `src/`; Rust tests and one binary fixture live in `tests/`.
+`solve_with_factors` also returns the two endpoint SO(4) factors and global
+phase, reusing the verification eigenbasis. `Solution`, `Rung`, and the complex
+`Mat4` alias are diagnostic exports. Production code lives in `src/`; Rust
+tests and one binary fixture live in `tests/`.
 Diagnostic routes require the `diagnostics` feature. Research records live
 in `docs/inverse-horn/` and do not participate in the build.
 
@@ -25,7 +27,8 @@ make lint
 ```
 
 `make test` runs the corpus and three rejection/checker checks in release mode.
-Frames must satisfy SO(4) and an independent spectral check at `1e-8`.
+Frames must satisfy SO(4), an independent spectral check, and full endpoint
+factor reconstruction at `1e-8`.
 
 Regenerate with `python3 tests/generate.py` (requires NumPy and SciPy).
 `tests/cases.bin` stores nine little-endian `f64` values per row:

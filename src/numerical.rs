@@ -5,16 +5,6 @@ type Z = Complex<f64>;
 type R4 = Matrix4<f64>;
 const PLANES: [(usize, usize); 6] = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];
 const ACCEPT: f64 = 4e-9;
-fn phases(m: [f64; 3]) -> [f64; 4] {
-    let w = [m[0] + m[1], m[0] + m[2], m[1] + m[2]];
-    [
-        w[0] - w[1] + w[2],
-        w[0] + w[1] - w[2],
-        -w[0] - w[1] - w[2],
-        -w[0] + w[1] + w[2],
-    ]
-    .map(|v| PI * v)
-}
 fn rotate(o: &mut R4, p: usize, q: usize, angle: f64) {
     let (s, c) = angle.sin_cos();
     for j in 0..4 {
@@ -24,7 +14,7 @@ fn rotate(o: &mut R4, p: usize, q: usize, angle: f64) {
         o[(q, j)] = -s * x + c * y;
     }
 }
-struct Problem {
+pub(super) struct Problem {
     a: [Z; 4],
     b: [Z; 4],
     d: [Z; 4],
@@ -32,31 +22,33 @@ struct Problem {
     ratios: [Z; 6],
     perms: [[usize; 4]; 24],
 }
-struct State {
+pub(super) struct State {
     cost: f64,
     error: f64,
     roots: [Z; 4],
     target: [Z; 4],
     v: R4,
     off: f64,
+    order: [usize; 4],
+    sign: f64,
 }
 impl Problem {
-    fn new(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Self {
-        let ap = phases(c);
-        let bp = phases(g);
-        let tp = phases(t);
-        let d = ap.map(|p| Z::from_polar(1.0, p / 2.0));
+    pub(super) fn from_prepared(p: &super::PreparedSandwich) -> Self {
+        let d = std::array::from_fn(|i| p.dc[(i, i)]);
         Self {
-            a: ap.map(|p| Z::from_polar(1.0, p)),
-            b: bp.map(|p| Z::from_polar(1.0, p)),
+            a: p.left,
+            b: p.right,
             d,
-            target: tp.map(|p| Z::from_polar(1.0, p)),
+            target: p.target_roots[0],
             ratios: std::array::from_fn(|k| {
-                let (p, q) = PLANES[k];
-                d[p] * d[q].conj()
+                let (i, j) = PLANES[k];
+                d[i] * d[j].conj()
             }),
             perms: *super::PERMS24,
         }
+    }
+    fn new(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Self {
+        Self::from_prepared(&super::PreparedSandwich::new(c, g, t))
     }
     fn match_roots(&self, roots: [Z; 4]) -> f64 {
         let mut best = f64::INFINITY;
@@ -127,16 +119,22 @@ impl Problem {
         }
         let mut best = f64::INFINITY;
         let mut chosen = self.target;
+        let mut order = [0, 1, 2, 3];
+        let mut chosen_sign = 1.0;
         for sign in [-1.0, 1.0] {
             if branch != 0.0 && sign != branch {
                 continue;
             }
+            let distances: [[f64; 4]; 4] = std::array::from_fn(|i| {
+                std::array::from_fn(|j| (roots[i] - self.target[j] * sign).norm_sqr())
+            });
             for perm in self.perms {
-                let target = std::array::from_fn(|i| self.target[perm[i]] * sign);
-                let cost: f64 = (0..4).map(|i| (roots[i] - target[i]).norm_sqr()).sum();
+                let cost: f64 = (0..4).map(|i| distances[i][perm[i]]).sum();
                 if cost < best {
                     best = cost;
-                    chosen = target;
+                    chosen = std::array::from_fn(|i| self.target[perm[i]] * sign);
+                    order = perm;
+                    chosen_sign = sign;
                 }
             }
         }
@@ -151,6 +149,8 @@ impl Problem {
             target: chosen,
             v: eigenvectors,
             off,
+            order,
+            sign: chosen_sign,
         }
     }
 
@@ -307,11 +307,9 @@ fn random(state: &mut u64) -> f64 {
     z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
     ((z ^ (z >> 31)) >> 11) as f64 / (1u64 << 53) as f64
 }
-fn solve_primary(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<[[f64; 4]; 4]> {
-    let problem = Problem::new(c, g, t);
-    let pack = |o: R4| std::array::from_fn(|i| std::array::from_fn(|j| o[(i, j)]));
+fn solve_primary(problem: &Problem, c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<R4> {
     if let Some(o) = problem.early() {
-        return Some(pack(o));
+        return Some(o);
     }
     let mut seed = 0x123456789abcdefu64;
     for value in c.into_iter().chain(g).chain(t) {
@@ -323,12 +321,12 @@ fn solve_primary(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<[[f64; 4]; 4]>
             rotate(&mut o, p, q, (2.0 * random(&mut seed) - 1.0) * PI);
         }
         if let Some(solution) = problem.iterate(o, 0.0) {
-            return Some(pack(solution));
+            return Some(solution);
         }
     }
     let swapped = Problem::new(g, c, t);
     if let Some(o) = swapped.early() {
-        return Some(pack(o.transpose()));
+        return Some(o.transpose());
     }
     for _ in 0..24 {
         let mut o = R4::identity();
@@ -336,7 +334,7 @@ fn solve_primary(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<[[f64; 4]; 4]>
             rotate(&mut o, p, q, (2.0 * random(&mut seed) - 1.0) * PI);
         }
         if let Some(solution) = swapped.iterate(o, 0.0) {
-            return Some(pack(solution.transpose()));
+            return Some(solution.transpose());
         }
     }
     for attempt in 0..24 {
@@ -346,7 +344,7 @@ fn solve_primary(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<[[f64; 4]; 4]>
         }
         let branch = if attempt % 2 == 0 { 1.0 } else { -1.0 };
         if let Some(solution) = problem.iterate(o, branch) {
-            return Some(pack(solution));
+            return Some(solution);
         }
     }
     None
@@ -354,11 +352,11 @@ fn solve_primary(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<[[f64; 4]; 4]>
 
 /// Reorder the real eigenbasis of A^-1/2 W C W^T A^-1/2 to B's spectrum.
 /// This maps an inverse-factor problem back to the original problem.
-fn inverse_factor(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<[[f64; 4]; 4]> {
+fn inverse_factor(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<R4> {
     let inverse_c = c.map(|x| -x);
-    let frame = solve_primary(inverse_c, t, g)?;
     let dual = Problem::new(inverse_c, t, g);
-    let state = dual.state(&R4::from_fn(|i, j| frame[i][j]), 0.0);
+    let frame = solve_primary(&dual, inverse_c, t, g)?;
+    let state = dual.state(&frame, 0.0);
     let mut best = f64::INFINITY;
     let mut ordering = [0, 1, 2, 3];
     for sign in [-1.0, 1.0] {
@@ -379,18 +377,16 @@ fn inverse_factor(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<[[f64; 4]; 4]
     if o.determinant() < 0.0 {
         o.column_mut(0).neg_mut();
     }
-    let pack = |o: R4| std::array::from_fn(|i| std::array::from_fn(|j| o[(i, j)]));
     let original = Problem::new(c, g, t);
     let check = original.state(&o, 0.0);
     if check.cost.is_finite() && check.error < ACCEPT {
-        Some(pack(o))
+        Some(o)
     } else {
-        original.iterate(o, 0.0).map(pack)
+        original.iterate(o, 0.0)
     }
 }
 
-fn near_commuting(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<[[f64; 4]; 4]> {
-    let problem = Problem::new(c, g, t);
+fn near_commuting(problem: &Problem) -> Option<R4> {
     let mut starts: Vec<_> = problem
         .perms
         .into_iter()
@@ -422,45 +418,41 @@ fn near_commuting(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<[[f64; 4]; 4]
                 );
             }
             if let Some(o) = problem.iterate(o, 0.0) {
-                return Some(std::array::from_fn(|i| std::array::from_fn(|j| o[(i, j)])));
+                return Some(o);
             }
         }
     }
     None
 }
 
-pub(super) fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<[[f64; 4]; 4]> {
-    solve_primary(c, g, t)
-        .or_else(|| near_commuting(c, g, t))
+pub(super) fn solve(problem: &Problem, c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<R4> {
+    solve_primary(problem, c, g, t)
+        .or_else(|| near_commuting(problem))
         .or_else(|| inverse_factor(c, g, t))
-        .or_else(|| {
-            inverse_factor(g, c, t)
-                .map(|o| std::array::from_fn(|i| std::array::from_fn(|j| o[j][i])))
-        })
+        .or_else(|| inverse_factor(g, c, t).map(|o| o.transpose()))
 }
 
 /// Spectral screen for algebraic and numerical candidates.
-pub(super) fn verify(c: [f64; 3], g: [f64; 3], t: [f64; 3], frame: [[f64; 4]; 4]) -> bool {
-    let o = R4::from_fn(|i, j| frame[i][j]);
+pub(super) fn verify(problem: &Problem, o: &R4) -> Option<State> {
     if !o.iter().all(|v| v.is_finite()) {
-        return false;
+        return None;
     }
     if (o.transpose() * o - R4::identity()).amax() > 1e-11 || (o.determinant() - 1.0).abs() > 1e-11
     {
-        return false;
+        return None;
     }
-    let state = Problem::new(c, g, t).state(&o, 0.0);
-    state.cost.is_finite() && state.error < 8e-9
+    let state = problem.state(o, 0.0);
+    (state.cost.is_finite() && state.error < 8e-9).then_some(state)
 }
 
 /// Polish an existing frame before paying for fresh deterministic starts.
 pub(super) fn refine(
+    problem: &Problem,
     c: [f64; 3],
     g: [f64; 3],
     t: [f64; 3],
-    frame: [[f64; 4]; 4],
-) -> Option<[[f64; 4]; 4]> {
-    let mut o = R4::from_fn(|i, j| frame[i][j]);
+    mut o: R4,
+) -> Option<R4> {
     if !o.iter().all(|v| v.is_finite()) {
         return None;
     }
@@ -485,12 +477,51 @@ pub(super) fn refine(
             o[(i, 0)] *= -1.0;
         }
     }
-    let result = Problem::new(c, g, t).iterate(o, 0.0).or_else(|| {
+    problem.iterate(o, 0.0).or_else(|| {
         Problem::new(g, c, t)
             .iterate(o.transpose(), 0.0)
             .map(|v| v.transpose())
-    })?;
-    Some(std::array::from_fn(|i| {
-        std::array::from_fn(|j| result[(i, j)])
-    }))
+    })
+}
+
+impl State {
+    /// U = D_c O D_g = exp(i phase) L D_t R. The real and imaginary
+    /// parts of U U^T commute, so its real eigenbasis supplies L.
+    pub(super) fn factors(
+        &self,
+        p: &super::PreparedSandwich,
+        t: [f64; 3],
+        o: R4,
+    ) -> Option<(R4, R4, R4, f64)> {
+        let mut left = R4::zeros();
+        for i in 0..4 {
+            left.set_column(self.order[i], &self.v.column(i));
+        }
+        if left.determinant() < 0.0 {
+            left.column_mut(0).neg_mut();
+        }
+        let dt = super::eigphases(super::weyl_from_monodromy(t)).map(|v| Z::from_polar(1.0, v));
+        let dg = p.right_phases.map(|v| Z::from_polar(1.0, v));
+        let u = Matrix4::from_fn(|i, j| p.dc[(i, i)] * o[(i, j)] * dg[j]);
+        let phase = if self.sign < 0.0 { PI / 2.0 } else { 0.0 };
+        let scalar = Z::from_polar(1.0, phase);
+        let mut right = left.map(|v| Z::new(v, 0.0)).transpose() * u;
+        for i in 0..4 {
+            for j in 0..4 {
+                right[(i, j)] *= (scalar * dt[i]).conj();
+            }
+        }
+        let right = right.map(|v| v.re);
+        let rebuilt =
+            left.map(|v| Z::new(v, 0.0)) * Matrix4::from_fn(|i, j| scalar * dt[i] * right[(i, j)]);
+        if right.iter().all(|v| v.is_finite())
+            && (right.transpose() * right - R4::identity()).amax() < 1e-11
+            && (right.determinant() - 1.0).abs() < 1e-11
+            && (rebuilt - u).iter().all(|v| v.norm() < 8e-9)
+        {
+            Some((o, left, right, phase))
+        } else {
+            None
+        }
+    }
 }

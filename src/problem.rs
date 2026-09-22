@@ -4,7 +4,7 @@
 //! target branches, and frame certificates are owned by the corresponding
 //! certificate module rather than being reimplemented by individual rungs.
 
-use super::{C, Mat4, eigphases, esym4, rho_weyl, weyl_from_monodromy};
+use super::{C, Mat4, eigphases, esym4, weyl_from_monodromy};
 
 /// Exact spectral partition used by the dispatch spine.
 ///
@@ -165,12 +165,11 @@ impl PreparedSandwich {
     pub(super) fn new(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Self {
         let left_phases = eigphases(weyl_from_monodromy(c));
         let right_phases = eigphases(weyl_from_monodromy(g));
-        let target_weyl = weyl_from_monodromy(t);
-        let target_phases = [eigphases(target_weyl), eigphases(rho_weyl(target_weyl))];
+        let target_phases = eigphases(weyl_from_monodromy(t));
 
         let left = left_phases.map(|phase| C::from_polar(1.0, 2.0 * phase));
         let right = right_phases.map(|phase| C::from_polar(1.0, 2.0 * phase));
-        let target0 = target_phases[0].map(|phase| C::from_polar(1.0, 2.0 * phase));
+        let target0 = target_phases.map(|phase| C::from_polar(1.0, 2.0 * phase));
         // The central rho reflection is exact on roots: negate and swap the
         // two pairs. Its odd elementary coefficients change sign.
         let target_roots = [

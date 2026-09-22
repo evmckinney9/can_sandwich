@@ -1,8 +1,8 @@
 //! Depth-two two-qubit realization in binary64 arithmetic.
 //!
 //! The public boundary is [`solve`]: one depth-two triple in monodromy
-//! coordinates in, a forward-certified real frame out. Everything else is
-//! research tooling behind the `diagnostics` feature.
+//! coordinates in, a forward-certified real frame out. [`solve_with_factors`]
+//! also returns endpoint factors. Research tooling requires `diagnostics`.
 
 // Index loops mirror the matrix formulas they implement, and negated float
 // comparisons are deliberate NaN guards.
@@ -12,13 +12,14 @@ mod cascade;
 mod cpoly;
 mod radical;
 
-pub use cascade::{Mat4, Rung, Solution, solve};
+pub use cascade::{solve, solve_with_factors};
 
 #[cfg(feature = "diagnostics")]
 pub use cascade::{
-    branch_signature, certify_frame, endpoint_gauge_residual, endpoint_right_gauge,
-    factor_through_berkeley, factorized_gate_collapse_residual, factorized_waypoint_mass_residual,
-    init_tables, ordered_chart_solutions, paired_edge_scope, prof, solve_charts_only,
-    solve_factorized_waypoint, solve_factorized_waypoint_direct, solve_paired_edges,
-    solve_paired_edges_forward, solve_via_fixed_berkeley, solve_via_fixed_factor,
+    Mat4, Rung, Solution, branch_signature, certify_frame, endpoint_gauge_residual,
+    endpoint_right_gauge, factor_through_berkeley, factorized_gate_collapse_residual,
+    factorized_waypoint_mass_residual, init_tables, ordered_chart_solutions, paired_edge_scope,
+    prof, solve_charts_only, solve_factorized_waypoint, solve_factorized_waypoint_direct,
+    solve_paired_edges, solve_paired_edges_forward, solve_via_fixed_berkeley,
+    solve_via_fixed_factor,
 };

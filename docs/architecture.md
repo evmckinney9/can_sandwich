@@ -11,8 +11,7 @@ polynomial root isolation, and branch checks in binary64 arithmetic, followed
 by bounded Levenberg–Marquardt refinement and restarts.
 
 `gulps-core` is the only consumer. It transports the frame through the raw
-ISA gate and prefix frames and re-verifies the invariant class; nothing in this
-crate depends on core.
+ISA gate and prefix frames; nothing in this crate depends on core.
 
 ## Realization research
 
@@ -40,11 +39,26 @@ the production cascade remains a separate engineering artifact.
 ## API
 
 ```rust
-pub fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solution;
+pub fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<nalgebra::Matrix4<f64>>;
 ```
 
-`Solution` carries the frame `o`, the rung that produced it, and the
-certificate residual. Core declines `Unsolved`.
+Monodromy coordinates remain the input: GULPS trajectories already use them,
+and raw eigenvalues would require an ordering and square-root convention.
+`Solution`, `Rung`, and the complex `Mat4` alias require `diagnostics`.
+
+`solve_with_factors` returns `(O, L, R, phase)`, satisfying
+`D_C O D_G = exp(i phase) L D_T R`, with all three matrices in SO(4).
+The verification matrix is `M = U Uᵀ`, where `U = D_C O D_G`.
+For unitary symmetric `M`, its real and imaginary parts are commuting real
+symmetric matrices. Their common orthogonal eigenbasis gives `L`; then
+`R = exp(-i phase) D_T† Lᵀ U`. The spectral match orders that eigenbasis.
+The central sign selects phase 0 or π/2. Repeated eigenvalues permit a choice
+of basis within each eigenspace; reconstruction checks the resulting factors.
+
+This applies the magic-basis Cartan decomposition in
+[Zhang, Vala, Whaley and Sastry, Eqs. (19–20)](https://arxiv.org/pdf/quant-ph/0209120).
+GULPS converts these three SO(4) matrices to local qubit gates and propagates
+their phases. It no longer diagonalizes each solved segment again.
 
 ## Master object and certificate
 
@@ -56,7 +70,7 @@ functions, so routing does not degrade at repeated spectra.
 Acceptance is rootwise. For a simple target the annihilation bound on the
 master's own characteristic polynomial is a complete certificate: `bound < 1e-8`
 proves the master spectrum matches the target to that scale, and the frame is
-already known to be `SO(4)`, so the row is accepted with no eigendecomposition.
+already known to be `SO(4)`, so the algebraic certificate needs no eigendecomposition.
 `solution.residual` then carries that bound, a rigorous upper bound on the
 spectral error rather than the exact diagonalization residual. Repeated targets
 are diagonalized against the matched root blocks by real spectral projectors and

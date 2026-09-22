@@ -302,12 +302,6 @@ pub(super) fn weyl_from_monodromy(m: [f64; 3]) -> [f64; 3] {
     [m[0] + m[1], m[0] + m[2], m[1] + m[2]]
 }
 
-/// Rho-reflected Weyl coords `[1−c₁, c₂, −c₃]`: same Makhlin invariants, different
-/// eigenvalue set -- a target can match in either orientation, so rungs try both.
-pub(super) fn rho_weyl(w: [f64; 3]) -> [f64; 3] {
-    [1.0 - w[0], w[1], -w[2]]
-}
-
 #[inline]
 /// The 4 magic-basis eigenphases of `Can(w)` in closed form (no matrix): the diagonal
 /// of `mb(Can(w))`, i.e. `D_C = diag(exp(i·eigphases))`. Same order as `dphase`.
@@ -676,42 +670,65 @@ pub fn init_tables() {
     let _ = &*INTERIOR_QUOTIENT;
 }
 
-pub fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solution {
+/// Return a verified real SO(4) frame, or decline.
+pub fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<Matrix4<f64>> {
+    solve_using(c, g, t, |_, solution, _| Some(solution.o.map(|z| z.re)))
+}
+
+/// Return `(O, L, R, phase)` with all three matrices real SO(4), where
+/// `D(c) O D(g) = exp(i phase) L D(t) R` in the magic basis.
+/// Reuses the eigenbasis from verification; no second diagonalization.
+#[allow(clippy::type_complexity)]
+pub fn solve_with_factors(
+    c: [f64; 3],
+    g: [f64; 3],
+    t: [f64; 3],
+) -> Option<(Matrix4<f64>, Matrix4<f64>, Matrix4<f64>, f64)> {
+    solve_using(c, g, t, |problem, solution, state| {
+        state.factors(problem, t, solution.o.map(|z| z.re))
+    })
+}
+
+#[cfg(feature = "diagnostics")]
+fn solve_report(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solution {
+    solve_using(c, g, t, |_, solution, _| Some(solution)).unwrap_or_else(unsolved_solution)
+}
+
+fn solve_using<T>(
+    c: [f64; 3],
+    g: [f64; 3],
+    t: [f64; 3],
+    finish: impl FnOnce(&PreparedSandwich, Solution, numerical::State) -> Option<T>,
+) -> Option<T> {
     if c.iter().chain(&g).chain(&t).any(|x| !x.is_finite()) {
-        return unsolved_solution();
+        return None;
     }
-    let result = solve_inner(c, g, t);
-    let frame = std::array::from_fn(|i| std::array::from_fn(|j| result.o[(i, j)].re));
+    let tp = prof::start();
+    let problem = PreparedSandwich::new(c, g, t);
+    prof::rec(prof::SEG_PREPARE, tp);
+    let numerical = numerical::Problem::from_prepared(&problem);
+    let result = solve_inner(&problem);
+    let frame = result.o.map(|z| z.re);
     if result.rung != Rung::Unsolved
         && result.o.iter().all(|z| z.im == 0.0)
-        && numerical::verify(c, g, t, frame)
+        && let Some(state) = numerical::verify(&numerical, &frame)
     {
-        return result;
+        return finish(&problem, result, state);
     }
-    let certify = |o: [[f64; 4]; 4]| {
-        compiler_solution(
-            &PreparedSandwich::new(c, g, t),
-            Mat4::from_fn(|i, j| C::new(o[i][j], 0.0)),
-            Rung::Numerical,
-            0.0,
-        )
-        .filter(|solution| {
-            numerical::verify(
-                c,
-                g,
-                t,
-                std::array::from_fn(|i| std::array::from_fn(|j| solution.o[(i, j)].re)),
-            )
-        })
+    let certify = |o: Matrix4<f64>| {
+        let solution =
+            compiler_solution(&problem, o.map(|v| C::new(v, 0.0)), Rung::Numerical, 0.0)?;
+        let state = numerical::verify(&numerical, &solution.o.map(|z| z.re))?;
+        Some((solution, state))
     };
     if result.rung != Rung::Unsolved
-        && let Some(solution) = numerical::refine(c, g, t, frame).and_then(certify)
+        && let Some((solution, state)) =
+            numerical::refine(&numerical, c, g, t, frame).and_then(certify)
     {
-        return solution;
+        return finish(&problem, solution, state);
     }
-    numerical::solve(c, g, t)
-        .and_then(certify)
-        .unwrap_or_else(unsolved_solution)
+    let (solution, state) = numerical::solve(&numerical, c, g, t).and_then(certify)?;
+    finish(&problem, solution, state)
 }
 
 /// Enumerate the finite ordered interior chart witnesses.  A generic child
@@ -751,7 +768,7 @@ pub fn ordered_chart_solutions(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Vec<Sol
         }
     }
     if out.is_empty() {
-        let solution = solve_inner(c, g, t);
+        let solution = solve_inner(&problem);
         if solution.rung != Rung::Unsolved {
             out.push(solution);
         }
@@ -768,7 +785,7 @@ pub fn factor_through_berkeley(target: [f64; 3]) -> Option<Mat4> {
     // Berkeley canonical coordinates are (1/2,1/4,0); convert through the
     // package's monodromy convention c=(m0+m1,m0+m2,m1+m2).
     const B: [f64; 3] = [0.375, 0.125, -0.125];
-    let solution = solve(B, B, target);
+    let solution = solve_report(B, B, target);
     (solution.rung != Rung::Unsolved).then_some(solution.o)
 }
 
@@ -805,7 +822,7 @@ pub fn solve_via_fixed_factor(
         (residual[0] - residual[1] + residual[2]) * 0.5,
         (-residual[0] + residual[1] + residual[2]) * 0.5,
     ];
-    let child = solve(c, h, middle);
+    let child = solve_report(c, h, middle);
     if child.rung == Rung::Unsolved {
         return None;
     }
@@ -842,8 +859,8 @@ pub fn solve_factorized_waypoint(
 ) -> Option<(Solution, Solution, Mat4, f64)> {
     const B: [f64; 3] = [0.375, 0.125, -0.125];
     let middle = factor_through_berkeley(g)?;
-    let first = solve(c, B, waypoint);
-    let second = solve(waypoint, B, t);
+    let first = solve_report(c, B, waypoint);
+    let second = solve_report(waypoint, B, t);
     let mut candidates = Vec::new();
     if first.rung != Rung::Unsolved && second.rung != Rung::Unsolved {
         candidates.push((first, second));
@@ -1047,26 +1064,23 @@ fn solve_paired_edges_inner(c: [f64; 3], g: [f64; 3], t: [f64; 3], backward: boo
     .unwrap_or_else(unsolved_solution)
 }
 
-fn solve_inner(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solution {
-    let tp = prof::start();
-    let problem = PreparedSandwich::new(c, g, t);
-    prof::rec(prof::SEG_PREPARE, tp);
+fn solve_inner(problem: &PreparedSandwich) -> Solution {
     // A scalar factor makes the realization fibre empty or all of SO(4):
     // `alpha O B O^T` is similar to `alpha B`, and likewise on the right.
     // This includes the identity edge without a separate tolerance branch.
-    if let Some(solution) = solve_scalar_factor(&problem) {
+    if let Some(solution) = solve_scalar_factor(problem) {
         return solution;
     }
     // Exact 3+1 factors have a rank-one spectral-measure selector.
     // Keep it ahead of the generic multiplicity cascade.
-    if let Some(solution) = solve_rank_one_31(&problem) {
+    if let Some(solution) = solve_rank_one_31(problem) {
         return solution;
     }
     // The exact-stratum prefix (walls, paired and 3+1 spectra, the two
     // one-sided accelerators), then the chart tail.  The first certified
     // frame is returned; the certificate is the acceptance test, so a better
     // residual is never hunted.
-    if let Some(solution) = solve_prefix(&problem) {
+    if let Some(solution) = solve_prefix(problem) {
         return solution;
     }
     // The tail: the standalone cascade under the production certificate: charts
@@ -1074,7 +1088,7 @@ fn solve_inner(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solution {
     // leaves, and a second pass on spectra snapped to their strata.  Closed-form
     // frames only.
     let tct = prof::start();
-    let out = charts::solve_full(&problem).unwrap_or_else(unsolved_solution);
+    let out = charts::solve_full(problem).unwrap_or_else(unsolved_solution);
     prof::rec(prof::CHART_TIER, tct);
     out
 }
