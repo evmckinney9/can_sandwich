@@ -21,6 +21,9 @@ is sandwiched between `CAN(G)` and `CAN(C)`. The circuits run from left to
 right, with `≈` meaning equality up to single-qubit gates before and after
 the circuit and a global phase.
 
+> [!IMPORTANT]
+> The contents of this repository are largely AI-generated. Once there is enough mathematical clarity on the problem, this code can be rewritten and integrated into the gulps package properly. For now, we handle with exceedingly large amount of special case handling, heuristics, and other carefully engineered *slop*. The correctness of AI-generated code is the large corpus of unit tests which are easily verified via multiplying back the factorization, so what remains is some sort of mathematically elegant or intepretable method instead.
+
 Closed-form solutions are known for special choices of `C`, `G`, and `T`.
 Numerical methods, including the least-squares approach described in the
 [GULPS paper](https://arxiv.org/abs/2505.00543), can solve more general cases,
