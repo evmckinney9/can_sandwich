@@ -1,4 +1,4 @@
-//! Non-iterative depth-two two-qubit realization in binary64 arithmetic.
+//! Depth-two two-qubit realization in binary64 arithmetic.
 //!
 //! The public boundary is [`solve`]: one depth-two triple in monodromy
 //! coordinates in, a forward-certified real frame out. Everything else is

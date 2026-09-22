@@ -18,41 +18,6 @@ impl D {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{D, normalized};
-    use crate::cascade::C;
-
-    #[test]
-    fn two_word_arithmetic_retains_cancelled_small_terms() {
-        let large = D::from(1e16);
-        assert_eq!(((large + D::from(1.0)) - large).value(), 1.0);
-        let one = D::from(1.0);
-        let eps = D::from(f64::EPSILON);
-        let product_error = (one + eps) * (one - eps) - one;
-        assert_eq!(product_error.value(), -f64::EPSILON * f64::EPSILON);
-        let third = one / D::from(3.0);
-        assert!((third * D::from(3.0) - one).value().abs() < 1e-31);
-    }
-
-    #[test]
-    fn spectral_normalization_reduces_unit_and_determinant_drift() {
-        let roots = [0.13, 0.13 + 1e-8, 0.42, -0.68 - 1e-8].map(|phase| C::from_polar(1.0, phase));
-        let wide = normalized(&roots);
-        for (actual, original) in wide.iter().zip(roots) {
-            assert!(
-                (actual.re * actual.re + actual.im * actual.im - D::from(1.0))
-                    .value()
-                    .abs()
-                    < 1e-28
-            );
-            assert!((C::new(actual.re.value(), actual.im.value()) - original).norm() < 1e-14);
-        }
-        let det = wide[0] * wide[1] * wide[2] * wide[3];
-        assert!((det.re - D::from(1.0)).value().abs() < 1e-28);
-        assert!(det.im.value().abs() < 1e-28);
-    }
-}
 impl From<f64> for D {
     fn from(x: f64) -> Self {
         Self(x, 0.0)

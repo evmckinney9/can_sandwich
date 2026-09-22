@@ -461,23 +461,17 @@ pub(super) fn compiler_solution(
     None
 }
 
-/// Recover the right endpoint gauge `R` in `D_C O D_G = L D_M R`.
-#[cfg(test)]
-pub(super) fn right_endpoint_gauge(problem: &PreparedSandwich, o: &Mat4) -> Option<Mat4> {
-    endpoint_factorization(problem, o).map(|(_, right)| right)
-}
-
 /// Recover both endpoint frames in
 /// `D_C O D_G = L D_T R`.  The left frame is needed when a factorized
 /// `B V B` witness is collapsed back to the original canonical gate `G`.
-#[cfg(any(test, feature = "diagnostics"))]
+#[cfg(feature = "diagnostics")]
 pub(super) fn endpoint_factorization(problem: &PreparedSandwich, o: &Mat4) -> Option<(Mat4, Mat4)> {
     endpoint_factorization_branch(problem, o, 0)
         .or_else(|| endpoint_factorization_branch(problem, o, 1))
 }
 
 /// Endpoint factorization on one explicit target representative branch.
-#[cfg(any(test, feature = "diagnostics"))]
+#[cfg(feature = "diagnostics")]
 pub(super) fn endpoint_factorization_branch(
     problem: &PreparedSandwich,
     o: &Mat4,
@@ -589,7 +583,7 @@ pub(super) fn endpoint_factorization_residual(problem: &PreparedSandwich, o: &Ma
 /// Fixed real factors for the central-rho identity
 /// `D_rho = i (S P) D (P^T)`. The discarded scalar phase is irrelevant to a
 /// local-frame certificate.
-#[cfg(any(test, feature = "diagnostics"))]
+#[cfg(feature = "diagnostics")]
 fn rho_transport() -> (Mat4, Mat4) {
     let rows = [2usize, 3, 0, 1];
     let signs = [1.0, 1.0, -1.0, -1.0];
@@ -610,7 +604,7 @@ fn rho_transport() -> (Mat4, Mat4) {
     (sp, p.transpose())
 }
 
-#[cfg(any(test, feature = "diagnostics"))]
+#[cfg(feature = "diagnostics")]
 pub(super) fn rho_transport_for_collapse() -> (Mat4, Mat4) {
     rho_transport()
 }
@@ -619,7 +613,7 @@ pub(super) fn rho_transport_for_collapse() -> (Mat4, Mat4) {
 /// direct target branch was used.  `endpoint_factorization` intentionally uses
 /// principal square roots because it serves both rho branches; a factorized
 /// middle gate must use the caller's canonical `D_T` before multiplying by V.
-#[cfg(any(test, feature = "diagnostics"))]
+#[cfg(feature = "diagnostics")]
 pub(super) fn canonical_right_endpoint_gauge(problem: &PreparedSandwich, o: &Mat4) -> Option<Mat4> {
     // `u = D_C O D_G`; the canonical middle diagonal is `D_T`, not `D_G`.
     // The old implementation accidentally used `right_phases` for both, which
@@ -676,71 +670,10 @@ pub(super) fn canonical_right_endpoint_gauge(problem: &PreparedSandwich, o: &Mat
     None
 }
 
-/// Residual of the exact two-child composition constraint for a factorization
-/// `G = B V B`.  If the first child has certificate frame `O_L`, its endpoint
-/// gauge `R_L` is defined by `D_C O_L D_B = L D_M R_L`.  The second child must
-/// use `O_R = R_L V`; independently realizing both children and comparing only
-/// their Weyl points loses this equation.
-#[cfg(test)]
-pub(super) fn factorized_middle_residual(
-    first: &PreparedSandwich,
-    first_frame: &Mat4,
-    second_frame: &Mat4,
-    middle: &Mat4,
-) -> Option<f64> {
-    let endpoint = canonical_right_endpoint_gauge(first, first_frame)?;
-    Some(
-        (second_frame - endpoint * middle)
-            .iter()
-            .map(|entry| entry.norm())
-            .fold(0.0, f64::max),
-    )
-}
-
-/// Grassmannian form of the same constraint.  A final Berkeley factor has
-/// right stabilizer K_B, so a child frame is defined modulo its first two
-/// columns' oriented 2-plane.  Matching these planes is equivalent to the
-/// matrix constraint up to the K_B gauge (with the opposite Pluecker sign
-/// representing the same unoriented plane).
-#[cfg(test)]
-pub(super) fn factorized_middle_plane_residual(
-    first: &PreparedSandwich,
-    first_frame: &Mat4,
-    second_frame: &Mat4,
-    middle: &Mat4,
-) -> Option<f64> {
-    let endpoint = canonical_right_endpoint_gauge(first, first_frame)?;
-    let expected = endpoint * middle;
-    let pluecker = |frame: &Mat4, columns: (usize, usize)| {
-        let (a, b) = columns;
-        [
-            (frame[(0, a)] * frame[(1, b)] - frame[(1, a)] * frame[(0, b)]).re,
-            (frame[(0, a)] * frame[(2, b)] - frame[(2, a)] * frame[(0, b)]).re,
-            (frame[(0, a)] * frame[(3, b)] - frame[(3, a)] * frame[(0, b)]).re,
-            (frame[(1, a)] * frame[(2, b)] - frame[(2, a)] * frame[(1, b)]).re,
-            (frame[(1, a)] * frame[(3, b)] - frame[(3, a)] * frame[(1, b)]).re,
-            (frame[(2, a)] * frame[(3, b)] - frame[(3, a)] * frame[(2, b)]).re,
-        ]
-    };
-    let lhs = pluecker(&expected, (0, 1));
-    let rhs = pluecker(second_frame, (0, 1));
-    let plus = lhs
-        .iter()
-        .zip(rhs.iter())
-        .map(|(a, b)| (a - b).abs())
-        .fold(0.0, f64::max);
-    let minus = lhs
-        .iter()
-        .zip(rhs.iter())
-        .map(|(a, b)| (a + b).abs())
-        .fold(0.0, f64::max);
-    Some(plus.min(minus))
-}
-
 /// Compare an already-gauged expected endpoint frame against a child frame.
 /// Kept separate so generic waypoint code can enumerate finite K_M lifts
 /// without recomputing the endpoint gauge.
-#[cfg(any(test, feature = "diagnostics"))]
+#[cfg(feature = "diagnostics")]
 pub(super) fn endpoint_plane_residual(expected: &Mat4, second_frame: &Mat4) -> f64 {
     let pluecker = |frame: &Mat4| {
         [

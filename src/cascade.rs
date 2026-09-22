@@ -22,6 +22,8 @@ mod charts;
 mod interior;
 #[path = "klein.rs"]
 mod klein;
+#[path = "numerical.rs"]
+mod numerical;
 #[path = "one_plus_three.rs"]
 mod one_plus_three;
 #[path = "problem.rs"]
@@ -44,8 +46,6 @@ pub type Mat4 = Matrix4<C>;
 /// One accepted interior chart: frame, residual, row permutation, plane word.
 type InteriorHit = (Mat4, f64, [usize; 4], [(usize, usize); 3]);
 
-#[cfg(test)]
-use problem::spectrum_kind;
 use problem::{PreparedSandwich, SpectrumKind, StratumSignature};
 
 /// PROF=1 instrumentation: per-stage aggregate ns/calls across a corpus run.
@@ -236,7 +236,7 @@ fn c(re: f64, im: f64) -> C {
 /// The diagonal phase matrix `D = mb(Can(w))` (canonical gates are diagonal in the
 /// magic basis). Built directly as `diag(exp(i*eigphases(w)))` in the ordering
 /// documented by [`eigphases`].
-#[cfg(any(test, feature = "diagnostics"))]
+#[cfg(feature = "diagnostics")]
 pub(super) fn dphase(w: [f64; 3]) -> Mat4 {
     let ph = eigphases(w);
     let d: [C; 4] = std::array::from_fn(|k| C::from_polar(1.0, ph[k]));
@@ -433,19 +433,9 @@ pub(super) fn mmat(dc: &Mat4, lam: &Mat4, o: &Mat4) -> Mat4 {
     dc * o * lam * o.transpose() * dc
 }
 
-#[cfg(test)]
-/// Smooth (non-flooring) residual: `‖symfn(M(O)) − symfn(target)‖∞`. The reach
-/// certificate; near degeneracy this is the metric, not weyl coords.
-pub(super) fn smooth_residual(dc: &Mat4, lam: &Mat4, o: &Mat4, target: &[C; 4]) -> f64 {
-    let got = symfn(&mmat(dc, lam, o));
-    (0..4)
-        .map(|i| (got[i] - target[i]).norm())
-        .fold(0.0, f64::max)
-}
-
 /// Cauchy-Binet compound-moment residual `max(|Δe₁|, |Re(Δe₂/s)|)` with
 /// `s = √e₄(target)`, evaluated without forming `M` or any matrix power (16 + 36
-/// scalar terms instead of 7 matrix products). Equal to `smooth_residual` in
+/// scalar terms instead of 7 matrix products). Equivalent to direct evaluation in
 /// exact arithmetic; the numerical discrepancy is about 1e-14.
 pub(super) fn compound_residual(dc: &Mat4, lam: &Mat4, o: &Mat4, target: &[C; 4]) -> f64 {
     // a_i = dc_{ii}^2 (complex), lv_j = lam_{jj} (complex), O real (zero imag entries).
@@ -481,7 +471,7 @@ pub(super) fn compound_residual(dc: &Mat4, lam: &Mat4, o: &Mat4, target: &[C; 4]
     }
     let e2 = compensated_sum(e2_terms);
 
-    // Reduced certificate: max(|Δe1|, |Re(Δe2/s)|). Equal to smooth_residual because
+    // Reduced certificate: max(|Δe1|, |Re(Δe2/s)|). Equal to direct evaluation because
     // |e4|=1 forces |De3|=|De1| and De4=0, and e2/s ∈ R so |Re(De2/s)| = |De2| exactly.
     let de1 = e1 - target[0];
     let s = target[3].sqrt();
@@ -523,7 +513,7 @@ pub(super) fn chart_o_sqrt(xyz: [f64; 3], planes: [(usize, usize); 3], perm: [us
 /// Berkeley (2+2) CS masses of an orthogonal frame.  These are the squared
 /// singular-value invariants of the leading 2x2 block; unlike a frame gauge,
 /// they survive the left/right O(2)xO(2) actions.
-#[cfg(any(test, feature = "diagnostics"))]
+#[cfg(feature = "diagnostics")]
 pub(super) fn cs_masses(o: &Mat4) -> (f64, f64) {
     let a00 = o[(0, 0)].re;
     let a01 = o[(0, 1)].re;
@@ -532,40 +522,6 @@ pub(super) fn cs_masses(o: &Mat4) -> (f64, f64) {
     let s = a00 * a00 + a01 * a01 + a10 * a10 + a11 * a11;
     let det = a00 * a11 - a01 * a10;
     (s, det * det)
-}
-
-/// Multilinear coefficient table for the lifted CS masses on an atlas word.
-/// Coefficients are indexed by the 3-bit corner `(x=1,y=1,z=1)` mask.  The
-/// table is an exact algebraic representation of the corner interpolant; the
-/// atlas test below certifies that it equals the completed-frame masses.
-#[cfg(test)]
-pub(super) fn cs_mass_coeffs(planes: [(usize, usize); 3], perm: [usize; 4]) -> [[f64; 8]; 2] {
-    let mut coeffs = [[0.0; 8]; 2];
-    for mask in 0..8 {
-        let q = [
-            if mask & 1 != 0 { 1.0 } else { 0.0 },
-            if mask & 2 != 0 { 1.0 } else { 0.0 },
-            if mask & 4 != 0 { 1.0 } else { 0.0 },
-        ];
-        let (s, d) = cs_masses(&chart_o(q, planes, perm));
-        coeffs[0][mask] = s;
-        coeffs[1][mask] = d;
-    }
-    coeffs
-}
-
-#[inline]
-#[cfg(test)]
-fn eval_multilinear(coeffs: &[f64; 8], p: [f64; 3]) -> f64 {
-    (0..8)
-        .map(|mask| {
-            let weight = (0..3).fold(1.0, |acc, k| {
-                let bit = (mask >> k) & 1;
-                acc * if bit == 1 { p[k] } else { 1.0 - p[k] }
-            });
-            weight * coeffs[mask]
-        })
-        .sum()
 }
 
 /// All complex roots of a real polynomial via companion-matrix eigenvalues
@@ -607,23 +563,6 @@ pub(super) fn poly_roots(coeffs: &[f64]) -> Vec<C> {
     (0..n).map(|i| C::new(ev[i].re, ev[i].im)).collect()
 }
 
-/// Eigenvalues of a 4×4 (faer). Test-only: the solver gets the target spectrum in closed
-/// form (`exp(2i·eigphases)`) and matches via `symfn`.
-#[cfg(test)]
-pub(super) fn eig4(m: &Mat4) -> [C; 4] {
-    let fm = faer::Mat::<C>::from_fn(4, 4, |i, j| m[(i, j)]);
-    let ev = fm.eigenvalues().expect("eig4");
-    std::array::from_fn(|i| ev[i])
-}
-
-/// Evaluate a trilinear form (coeffs in monomial order) at `(x,y,z)`. Test-only: the solver
-/// uses `ev_ml` (the multilinear+Y chart); this is the roundtrip harness's reference form.
-#[cfg(test)]
-pub(super) fn ev_trilinear(co: &[C; 8], x: f64, y: f64, z: f64) -> C {
-    let m = [1.0, x, y, z, x * y, x * z, y * z, x * y * z];
-    (0..8).map(|k| co[k] * m[k]).sum()
-}
-
 // ---- polynomial helpers for the interior elimination (real coeffs, low→high) ----
 
 /// Which bounded construction produced the certified frame.
@@ -660,6 +599,8 @@ pub enum Rung {
     /// inner solve a line cut by the Heron quartic, `t'` from the chart's own
     /// discriminant. Closed-form frames only.
     Chart,
+    /// Certified result from bounded Levenberg–Marquardt refinement or restarts.
+    Numerical,
     Unsolved,
 }
 
@@ -703,15 +644,6 @@ pub(super) const ACCEPT: f64 = 1e-9;
 const FRAME_ACCEPT: f64 = 2e-10;
 
 #[inline]
-#[cfg(test)]
-fn certified_solution(o: Mat4, rung: Rung, residual: f64) -> Option<Solution> {
-    if residual > ACCEPT {
-        return None;
-    }
-    framed_solution(o, rung, residual)
-}
-
-#[inline]
 fn unsolved_solution() -> Solution {
     Solution {
         o: Mat4::identity(),
@@ -721,7 +653,7 @@ fn unsolved_solution() -> Solution {
 }
 
 /// Fast-accept threshold for the reduced trilinear score. Candidates with
-/// `rs < FAST_ACCEPT` have `smooth_residual` below `FAST_ACCEPT` plus the score
+/// `rs < FAST_ACCEPT` have direct residual below `FAST_ACCEPT` plus the score
 /// discrepancy (about 6e-15 over the full corpora), so they sit well below
 /// `ACCEPT`, which is 100x larger. The reduced score also rejects candidates at
 /// or above `ACCEPT` before frame construction; shadow gates over the full Haar
@@ -745,14 +677,48 @@ pub fn init_tables() {
 }
 
 pub fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solution {
-    solve_inner(c, g, t)
+    if c.iter().chain(&g).chain(&t).any(|x| !x.is_finite()) {
+        return unsolved_solution();
+    }
+    let result = solve_inner(c, g, t);
+    let frame = std::array::from_fn(|i| std::array::from_fn(|j| result.o[(i, j)].re));
+    if result.rung != Rung::Unsolved
+        && result.o.iter().all(|z| z.im == 0.0)
+        && numerical::verify(c, g, t, frame)
+    {
+        return result;
+    }
+    let certify = |o: [[f64; 4]; 4]| {
+        compiler_solution(
+            &PreparedSandwich::new(c, g, t),
+            Mat4::from_fn(|i, j| C::new(o[i][j], 0.0)),
+            Rung::Numerical,
+            0.0,
+        )
+        .filter(|solution| {
+            numerical::verify(
+                c,
+                g,
+                t,
+                std::array::from_fn(|i| std::array::from_fn(|j| solution.o[(i, j)].re)),
+            )
+        })
+    };
+    if result.rung != Rung::Unsolved
+        && let Some(solution) = numerical::refine(c, g, t, frame).and_then(certify)
+    {
+        return solution;
+    }
+    numerical::solve(c, g, t)
+        .and_then(certify)
+        .unwrap_or_else(unsolved_solution)
 }
 
 /// Enumerate the finite ordered interior chart witnesses.  A generic child
 /// realization has a continuous fiber; these are distinct closed-form
 /// transversal witnesses exposed by the atlas, rather than repeated calls to
 /// the first-hit production selector.
-#[cfg(any(test, feature = "diagnostics"))]
+#[cfg(feature = "diagnostics")]
 pub fn ordered_chart_solutions(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Vec<Solution> {
     let problem = PreparedSandwich::new(c, g, t);
     let mut out = Vec::new();
@@ -797,7 +763,7 @@ pub fn ordered_chart_solutions(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Vec<Sol
 /// `B * V * B ~ target`, where the returned frame is the local middle gate
 /// `V` in the magic basis.  Since both outer factors are 2+2, this dispatches
 /// directly to the Pair22/Heron selector rather than the generic tail.
-#[cfg(any(test, feature = "diagnostics"))]
+#[cfg(feature = "diagnostics")]
 pub fn factor_through_berkeley(target: [f64; 3]) -> Option<Mat4> {
     // Berkeley canonical coordinates are (1/2,1/4,0); convert through the
     // package's monodromy convention c=(m0+m1,m0+m2,m1+m2).
@@ -867,7 +833,7 @@ pub fn certify_frame(
 /// intersection); this routine realizes both B-children and applies the exact
 /// endpoint-Grassmannian compatibility test. A small residual means the two
 /// child certificates can be stitched with the fixed middle local `V`.
-#[cfg(any(test, feature = "diagnostics"))]
+#[cfg(feature = "diagnostics")]
 pub fn solve_factorized_waypoint(
     c: [f64; 3],
     g: [f64; 3],
@@ -1526,1128 +1492,17 @@ fn solve_prefix(problem: &PreparedSandwich) -> Option<Solution> {
     None
 }
 
-// =================== RANK RUNG: the degenerate-w spectral inverse (symmetric_horn s13/s16) ===================
-// A symmetric unitary S = O·Λ·Oᵀ has REAL eigenvectors, so U₁ = O·Λ·Oᵀ = V diag(spec) Vᵀ with V real.
-// A DEGENERATE target w (the sliver) collapses the unknown V to a diagonal-plus-low-rank inverse-
-// eigenvalue problem (rank 4−m₀, m₀ = top w-multiplicity); the Givens "fold" was a chart artifact.
-// Closed form per multiplicity pattern -- no GN, no search. Proven in symmetric_horn s12-s16
-// ([[sliver-rank-structured-inverse-solved]]). Tried after the cheap chart cascade declines.
-
-// Test-only refinement counter for the bracketed real-root solver.
-#[cfg(test)]
-thread_local! {
-    static REFINE_ITERS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-// ===================== SLIVER RUNG: the peel ('none'-gauge) =====================
-// For a 'none'-gauge 4-Givens word the gauge γ=cos(2φ_g) is slaved (degree 1) and the exact-
-// degenerate sliver is the fold of a 1-dim family, located by root conditions (eliminant double
-// root + e3-invariant tangent). Construction = companion-eigenvalue roots + linear
-// back-substitution + a small parabola fit.
-
-#[cfg(test)]
-mod tests {
-    #![allow(clippy::print_stderr)]
-    use super::*;
-    include!("sparse_candidate_tests.rs");
-
-    #[test]
-    fn clustered_chart_conditioning_retains_original_input_roots() {
-        // Exact constructor triples, including corpus roundoff. The first
-        // exercises a narrow feasible quartic interval; the others exercise
-        // cancellation of the unit/determinant relations.
-        let cases = [
-            (
-                [
-                    0.22275108585431175,
-                    0.034783033435165096,
-                    -0.034783033434665094,
-                ],
-                [
-                    3.940164785237606e-5,
-                    3.719643390931126e-5,
-                    -1.5999729614063347e-5,
-                ],
-                [0.465164848419121, 0.27726681794701724, -0.2772149763792984],
-            ),
-            (
-                [0.2500000203855839, 0.24999997790254228, 0.24999997209745775],
-                [
-                    3.162039039450218e-5,
-                    2.875089443661313e-5,
-                    8.008324774382537e-6,
-                ],
-                [
-                    0.25002876924039463,
-                    0.25000799499260795,
-                    0.24993161651888982,
-                ],
-            ),
-            (
-                [0.2500000125082198, 0.24999999305716747, 0.24999995694283256],
-                [0.2500061412329326, 0.2500036050596355, 0.24994639494036455],
-                [
-                    4.387932868452071e-5,
-                    6.155433609517091e-6,
-                    3.6078516658932802e-6,
-                ],
-            ),
-            (
-                [0.46986120830703, 0.46986120819175, -0.40958362757526],
-                [0.24787741830247, 0.24762903238808998, 0.24737096761191002],
-                [0.226980135397151, 0.21769777836797044, 0.2174181051570272],
-            ),
-        ];
-        for (index, (c, g, t)) in cases.into_iter().enumerate() {
-            let problem = PreparedSandwich::new(c, g, t);
-            let solution = solve(c, g, t);
-            assert_ne!(solution.rung, Rung::Unsolved, "case {index}");
-            assert!(frame_metrics(&solution.o).unwrap().within(1e-8));
-            assert!(solution.o.determinant().re > 0.0);
-            // Independent direct diagonalization against the ORIGINAL roots,
-            // not the normalized candidate-generation coefficients.
-            let actual = eig4(&sandwich_master(&problem, &solution.o));
-            let error = problem
-                .target_roots
-                .iter()
-                .flat_map(|target| {
-                    PERMS24.iter().map(move |permutation| {
-                        (0..4)
-                            .map(|i| (actual[i] - target[permutation[i]]).norm())
-                            .fold(0.0f64, f64::max)
-                    })
-                })
-                .fold(f64::INFINITY, f64::min);
-            assert!(error < 1e-8, "case {index}: original root error {error:e}");
-        }
+#[test]
+fn rejects_invalid_solutions() {
+    let problem = PreparedSandwich::new([0.0; 3], [0.0; 3], [0.0; 3]);
+    let mut nonorthogonal = Mat4::identity();
+    nonorthogonal[(0, 0)].re += 1e-6;
+    let mut complex = Mat4::identity();
+    complex[(0, 0)].im = 1e-6;
+    for frame in [nonorthogonal, complex, Mat4::repeat(C::new(f64::NAN, 0.0))] {
+        assert!(compiler_solution(&problem, frame, Rung::Interior, 0.0).is_none());
     }
-
-    #[test]
-    fn eighth_cx_structured_vertex_returns_without_the_dense_tail() {
-        let solution = solve(
-            [0.03125, 0.03125, -0.03125],
-            [0.34375, -0.09375, -0.09375],
-            [0.375, -0.125, -0.125],
-        );
-        assert_eq!(solution.rung, Rung::Vertex);
-        assert!(solution.residual < 1e-12);
-    }
-
-    #[test]
-    fn near_swap_repeated_gate_witness_is_realized() {
-        // Public-pipeline regression: the fast atlas declines this feasible
-        // sandwich because C is near SWAP and G has an exact repeated Weyl
-        // coordinate.  The target was formed by an explicit local sandwich.
-        let solution = solve(
-            [
-                0.251_567_175_907_25,
-                0.248_432_824_092_75,
-                0.246_902_391_208_76,
-            ],
-            [
-                0.033_635_662_418_36,
-                0.026_914_048_264_11,
-                0.026_914_048_264_11,
-            ],
-            [
-                0.278_977_270_160_45,
-                0.277_417_719_732_49,
-                0.160_565_542_174_26,
-            ],
-        );
-        assert_ne!(solution.rung, Rung::Unsolved);
-        assert!(
-            solution.residual < 1e-8,
-            "residual={:.3e}",
-            solution.residual
-        );
-    }
-
-    #[test]
-    fn near_identity_gate_roundoff_is_realized() {
-        let c = [
-            0.423_503_315_564_57,
-            0.290_670_418_709_1,
-            -0.137_677_049_838_24,
-        ];
-        let g = [3.8e-13, 1.5e-13, 1.0e-13];
-        let t = [
-            0.423_503_315_564_27,
-            0.290_670_418_709_24,
-            -0.137_677_049_838_22,
-        ];
-        let problem = PreparedSandwich::new(c, g, t);
-        let mut minimum = f64::INFINITY;
-        let mut certified = 0usize;
-        for permutation in *PERMS24 {
-            let residual = perm_vertex_residual(
-                &problem.left,
-                &problem.right,
-                &problem.targets,
-                &permutation,
-            );
-            minimum = minimum.min(residual);
-            certified += usize::from(
-                compiler_solution(&problem, signed_perm(permutation), Rung::Vertex, residual)
-                    .is_some(),
-            );
-        }
-        let solution = solve(c, g, t);
-        assert_ne!(
-            solution.rung,
-            Rung::Unsolved,
-            "minimum vertex residual={minimum:.3e}, certified={certified}",
-        );
-    }
-
-    #[test]
-    fn near_scalar_triple_collision_uses_verified_takagi_fallback() {
-        // A projector frame built from the known target eigenvalues can be
-        // nonzero but wrong at this near-triple collision. Takagi extraction
-        // must verify that frame and continue to the eigensolver fallback.
-        let solution = solve(
-            [
-                0.076_301_851_551_263_62,
-                0.076_301_851_551_263_62,
-                0.076_301_851_551_263_62,
-            ],
-            [
-                4.853_548_865_645_266_6e-8,
-                8.227_351_897_810_43e-9,
-                -5.298_329_210_715_759e-9,
-            ],
-            [
-                0.076_301_900_013_802_94,
-                0.076_301_850_032_083_01,
-                0.076_301_803_530_515_3,
-            ],
-        );
-        assert_ne!(solution.rung, Rung::Unsolved);
-        assert!(solution.residual < 1e-8);
-    }
-
-    #[test]
-    fn public_solution_gate_rejects_nonframes() {
-        let mut nonorthogonal = Mat4::identity();
-        nonorthogonal[(0, 0)] = C::new(1.0 + 1e-6, 0.0);
-        assert!(certified_solution(nonorthogonal, Rung::Interior, 0.0).is_none());
-
-        let mut complex = Mat4::identity();
-        complex[(0, 0)].im = 1e-6;
-        assert!(certified_solution(complex, Rung::Interior, 0.0).is_none());
-
-        assert!(certified_solution(Mat4::identity(), Rung::Interior, ACCEPT * 2.0).is_none());
-        let accepted = certified_solution(Mat4::identity(), Rung::Interior, 0.0)
-            .expect("a real SO(4) frame with zero residual must pass");
-        assert_eq!(accepted.rung, Rung::Interior);
-    }
-
-    #[test]
-    fn identity_right_factor_is_exact_edge() {
-        let c = [0.17, 0.04, -0.09];
-        let hit = solve(c, [0.0, 0.0, 0.0], c);
-        assert_eq!(hit.rung, Rung::Vertex);
-        assert!(hit.residual < 1e-12);
-        let miss = solve(c, [0.0, 0.0, 0.0], [0.21, 0.03, -0.08]);
-        assert_eq!(miss.rung, Rung::Unsolved);
-    }
-
-    #[test]
-    fn berkeley_factorization_routes_generic_targets_through_pair22() {
-        let targets = [
-            [0.25, 0.25, -0.25],
-            [0.31, 0.17, -0.09],
-            [0.22, 0.08, 0.03],
-            [0.41, 0.19, -0.12],
-        ];
-        for target in targets {
-            let middle = factor_through_berkeley(target)
-                .expect("B-V-B factorization should have a Pair22 witness");
-            let problem =
-                PreparedSandwich::new([0.375, 0.125, -0.125], [0.375, 0.125, -0.125], target);
-            let residual =
-                compound_residual(&problem.dc, &problem.lam, &middle, &problem.targets[0]).min(
-                    compound_residual(&problem.dc, &problem.lam, &middle, &problem.targets[1]),
-                );
-            assert!(residual < 1e-8, "target={target:?}, residual={residual:e}");
-        }
-    }
-
-    #[test]
-    fn berkeley_factorization_grid_has_no_generic_pair22_holes() {
-        // Valid Weyl points sampled in the interior and near all three walls,
-        // converted to the package's monodromy coordinates.
-        let weyl_points = [
-            [0.10, 0.07, 0.02],
-            [0.20, 0.13, 0.04],
-            [0.31, 0.17, 0.09],
-            [0.42, 0.21, 0.08],
-            [0.49, 0.24, 0.01],
-            [0.26, 0.26, 0.12],
-            [0.38, 0.30, 0.18],
-            [0.50, 0.25, 0.20],
-        ];
-        for c in weyl_points {
-            let target = [
-                0.5 * (c[0] + c[1] - c[2]),
-                0.5 * (c[0] + c[2] - c[1]),
-                0.5 * (c[1] + c[2] - c[0]),
-            ];
-            let middle = factor_through_berkeley(target)
-                .expect("interior Weyl target should factor through Berkeley B");
-            let problem =
-                PreparedSandwich::new([0.375, 0.125, -0.125], [0.375, 0.125, -0.125], target);
-            let residual = problem
-                .targets
-                .iter()
-                .map(|tau| compound_residual(&problem.dc, &problem.lam, &middle, tau))
-                .fold(f64::INFINITY, f64::min);
-            assert!(residual < 1e-8, "weyl={c:?}, residual={residual:e}");
-        }
-    }
-
-    #[test]
-    fn right_endpoint_gauge_reconstructs_an_orthogonal_frame() {
-        let c = [0.5, 0.25, -0.25];
-        let b = [0.375, 0.125, -0.125];
-        let m = [0.25, 0.25, -0.25];
-        let solution = solve(c, b, m);
-        let problem = PreparedSandwich::new(c, b, m);
-        let gauge = certificate::right_endpoint_gauge(&problem, &solution.o)
-            .expect("certified child must expose its endpoint gauge");
-        let real = gauge.map(|z| z.re);
-        assert!((real.transpose() * real - nalgebra::Matrix4::<f64>::identity()).norm() < 1e-8);
-        assert!((real.determinant().abs() - 1.0).abs() < 1e-8);
-    }
-
-    #[test]
-    fn factorized_middle_constraint_is_exact_after_endpoint_gauge() {
-        let c = [0.5, 0.25, -0.25];
-        let b = [0.375, 0.125, -0.125];
-        let m = [0.25, 0.25, -0.25];
-        let first = PreparedSandwich::new(c, b, m);
-        let first_solution = solve(c, b, m);
-        let endpoint = certificate::canonical_right_endpoint_gauge(&first, &first_solution.o)
-            .expect("first child must expose endpoint gauge");
-        let middle = Mat4::identity();
-        let second_frame = endpoint * middle;
-        let residual = certificate::factorized_middle_residual(
-            &first,
-            &first_solution.o,
-            &second_frame,
-            &middle,
-        )
-        .expect("gauge extraction must succeed");
-        assert!(residual < 1e-8, "residual={residual:e}");
-        let plane_residual = certificate::factorized_middle_plane_residual(
-            &first,
-            &first_solution.o,
-            &second_frame,
-            &middle,
-        )
-        .expect("gauge extraction must succeed");
-        assert!(plane_residual < 1e-8, "plane residual={plane_residual:e}");
-    }
-
-    #[test]
-    fn factorized_waypoint_api_evaluates_a_proposed_point() {
-        let b = [0.375, 0.125, -0.125];
-        let candidate = solve_factorized_waypoint(b, b, b, b)
-            .expect("the B-B-B waypoint is inside the Pair22 child domains");
-        assert!(candidate.3.is_finite());
-        let middle = factor_through_berkeley(b).unwrap();
-        let fp = PreparedSandwich::new(b, b, b);
-        let (left, right) = certificate::endpoint_factorization(&fp, &middle).unwrap();
-        let db = dphase(weyl_from_monodromy(b));
-        let h = db * middle * db;
-        let factor_error = (h - left * db * right)
-            .iter()
-            .map(|z| z.norm())
-            .fold(0.0, f64::max);
-        assert!(factor_error < 1e-8);
-
-        let first_problem = PreparedSandwich::new(b, b, b);
-        let endpoint = certificate::canonical_right_endpoint_gauge(&first_problem, &candidate.0.o)
-            .expect("canonical endpoint gauge");
-        let second_frame = endpoint * middle;
-        let virtual_master = mmat(&db, &(db * db), &second_frame);
-        let direct_master = mmat(&db, &(db * db), &(candidate.0.o * left));
-        let error = symfn(&virtual_master)
-            .iter()
-            .zip(symfn(&direct_master).iter())
-            .map(|(a, b)| (a - b).norm())
-            .fold(0.0, f64::max);
-        assert!(error < 1e-8, "collapse error={error:e}");
-    }
-
-    #[test]
-    fn rho_transport_identity_matches_canonical_diagonals() {
-        let w = [0.41, 0.17, 0.06];
-        let (sp, ps) = certificate::rho_transport_for_collapse();
-        let lhs = dphase(rho_weyl(w));
-        let rhs = (sp * dphase(w) * ps).map(|entry| C::new(0.0, 1.0) * entry);
-        let error = (lhs - rhs)
-            .iter()
-            .map(|entry| entry.norm())
-            .fold(0.0, f64::max);
-        assert!(error < 1e-12, "rho transport error={error:e}");
-    }
-
-    #[test]
-    fn scalar_left_factor_is_exact_edge() {
-        let g = [0.17, 0.04, -0.09];
-        let hit = solve([0.0, 0.0, 0.0], g, g);
-        assert_eq!(hit.rung, Rung::Vertex);
-        assert!(hit.residual < 1e-12);
-        let miss = solve([0.0, 0.0, 0.0], g, [0.21, 0.03, -0.08]);
-        assert_eq!(miss.rung, Rung::Unsolved);
-    }
-
-    #[test]
-    fn exact_right_triple31_has_a_certified_identity_witness() {
-        // g=(1/10,1/10,1/10) maps to Weyl (1/5,1/5,1/5), whose magic-basis
-        // spectrum has multiplicity 3+1.  The target is the diagonal product
-        // of c=(1/20,1/50,-1/100) and this g, so O=I is a known witness.
-        let problem =
-            PreparedSandwich::new([0.05, 0.02, -0.01], [0.1, 0.1, 0.1], [0.15, 0.12, 0.09]);
-        assert_eq!(problem.strata.g, SpectrumKind::Triple31);
-        let solution = solve([0.05, 0.02, -0.01], [0.1, 0.1, 0.1], [0.15, 0.12, 0.09]);
-        assert_ne!(solution.rung, Rung::Unsolved);
-        assert!(
-            solution.residual < 1e-12,
-            "residual {:.3e}",
-            solution.residual
-        );
-    }
-
-    #[test]
-    fn rank_one_selector_recovers_a_nontrivial_right_triple31_frame() {
-        // Build the target from a genuine noncommuting frame, then replace the
-        // dummy target in PreparedSandwich by its exact known spectrum.  This
-        // isolates the new selector from Weyl-coordinate inversion and tests
-        // the mass inverse, Householder completion, right-side transpose, and
-        // public characteristic certificate together.
-        let mut problem =
-            PreparedSandwich::new([0.05, 0.02, -0.01], [0.1, 0.1, 0.1], [0.0, 0.0, 0.0]);
-        assert_eq!(problem.strata.g, SpectrumKind::Triple31);
-        let mut planted = Mat4::identity();
-        let theta = 0.37f64;
-        let (s, c) = theta.sin_cos();
-        planted[(0, 0)] = C::new(c, 0.0);
-        planted[(0, 2)] = C::new(-s, 0.0);
-        planted[(2, 0)] = C::new(s, 0.0);
-        planted[(2, 2)] = C::new(c, 0.0);
-        let target_matrix = sandwich_master(&problem, &planted);
-        let roots = eig4(&target_matrix);
-        let coefficients = esym4(roots);
-        problem.target_roots = [roots, roots];
-        problem.targets = [coefficients, coefficients];
-        let solution = solve_rank_one_31(&problem).expect("rank-one 3+1 selector");
-        assert_eq!(solution.rung, Rung::RankOne31);
-        assert!(
-            solution.residual < 1e-10,
-            "residual {:.3e}",
-            solution.residual
-        );
-    }
-
-    #[test]
-    fn rank_one_selector_recovers_a_nontrivial_left_triple31_frame() {
-        let mut problem =
-            PreparedSandwich::new([0.1, 0.1, 0.1], [0.05, 0.02, -0.01], [0.0, 0.0, 0.0]);
-        assert_eq!(problem.strata.c, SpectrumKind::Triple31);
-        let mut planted = Mat4::identity();
-        let theta = 0.29f64;
-        let (s, c) = theta.sin_cos();
-        planted[(0, 0)] = C::new(c, 0.0);
-        planted[(0, 2)] = C::new(-s, 0.0);
-        planted[(2, 0)] = C::new(s, 0.0);
-        planted[(2, 2)] = C::new(c, 0.0);
-        let target_matrix = sandwich_master(&problem, &planted);
-        let roots = eig4(&target_matrix);
-        let coefficients = esym4(roots);
-        problem.target_roots = [roots, roots];
-        problem.targets = [coefficients, coefficients];
-        let solution = solve_rank_one_31(&problem).expect("rank-one 3+1 selector");
-        assert_eq!(solution.rung, Rung::RankOne31);
-        assert!(
-            solution.residual < 1e-10,
-            "residual {:.3e}",
-            solution.residual
-        );
-    }
-
-    #[test]
-    fn exact_dense_rational_counterexample_requires_complete_fallback() {
-        // This is the exact fixture from
-        // realization_problem/docs/exact_finite_axis_counterexample.md, encoded with one
-        // consistent monodromy convention and then projected into the production alcove.
-        // The older disabled regression accidentally conjugated C and G but not T; folding
-        // that malformed triple produced an unrelated easy Interior case.
-        let solution = solve(
-            [
-                0.320_387_857_027_5,
-                0.265_146_172_188_37,
-                -0.066_006_359_790_49,
-            ],
-            [
-                0.293_629_518_344_32,
-                0.236_744_755_386_73,
-                -0.151_493_215_321_9,
-            ],
-            [
-                0.455_019_768_623_71,
-                0.049_468_366_219_53,
-                0.029_722_997_536_99,
-            ],
-        );
-        assert_ne!(solution.rung, Rung::Unsolved);
-        assert!(solution.residual < ACCEPT);
-    }
-
-    #[test]
-    fn exact_dense_rational_counterexample_is_never_falsely_accepted() {
-        let solution = solve(
-            [
-                0.320_387_857_027_5,
-                0.265_146_172_188_37,
-                -0.066_006_359_790_49,
-            ],
-            [
-                0.293_629_518_344_32,
-                0.236_744_755_386_73,
-                -0.151_493_215_321_9,
-            ],
-            [
-                0.455_019_768_623_71,
-                0.049_468_366_219_53,
-                0.029_722_997_536_99,
-            ],
-        );
-        if solution.rung == Rung::Unsolved {
-            assert!(solution.residual.is_infinite());
-            return;
-        }
-        assert!(solution.residual < ACCEPT);
-        let gram = solution.o.transpose() * solution.o - Mat4::identity();
-        assert!(gram.norm() < 1e-10);
-        assert!((solution.o.determinant().re - 1.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn radical_residue_frame_is_orthogonal_before_public_acceptance() {
-        // This exact dyadic corpus row used to return a nominal Radical frame
-        // with Gram residual 8.27e-6.  Its compound spectral residual looked
-        // small only because that formula assumes orthogonality.  The radical
-        // callback must reject the raw residue columns and recover the real
-        // eigenframe of the already-constructed symmetric sandwich matrix.
-        let solution = solve(
-            [0.40625, 0.34375, -0.28125],
-            [0.5, 0.25, -0.25],
-            [0.21875, 0.03125, 0.03125],
-        );
-        assert_eq!(solution.rung, Rung::Radical);
-        assert!(solution.residual < ACCEPT);
-        let real = solution.o.map(|value| value.re);
-        let gram = real.transpose() * real - nalgebra::Matrix4::identity();
-        let gram_residual = gram
-            .iter()
-            .fold(0.0f64, |maximum, value| maximum.max(value.abs()));
-        assert!(gram_residual < 2e-10, "Gram residual={gram_residual:.3e}");
-        assert!((real.determinant() - 1.0).abs() < 1e-10);
-    }
-
-    #[test]
-    #[ignore = "tail benchmark for the consistently folded exact dense fixture"]
-    fn benchmark_exact_dense_rational_fixture() {
-        let input = (
-            [
-                0.320_387_857_027_5,
-                0.265_146_172_188_37,
-                -0.066_006_359_790_49,
-            ],
-            [
-                0.293_629_518_344_32,
-                0.236_744_755_386_73,
-                -0.151_493_215_321_9,
-            ],
-            [
-                0.455_019_768_623_71,
-                0.049_468_366_219_53,
-                0.029_722_997_536_99,
-            ],
-        );
-        let cold_started = std::time::Instant::now();
-        std::hint::black_box(solve(input.0, input.1, input.2));
-        let cold = cold_started.elapsed().as_nanos() as f64 / 1000.0;
-        let mut samples = Vec::with_capacity(31);
-        for _ in 0..31 {
-            let started = std::time::Instant::now();
-            let solution = solve(input.0, input.1, input.2);
-            std::hint::black_box(solution);
-            samples.push(started.elapsed().as_nanos() as f64 / 1000.0);
-        }
-        samples.sort_by(f64::total_cmp);
-        let average = samples.iter().sum::<f64>() / samples.len() as f64;
-        eprintln!(
-            "exact dense production: cold={cold:.3} us average={average:.3} us slowest={:.3} us median={:.3} us",
-            samples[samples.len() - 1],
-            samples[samples.len() / 2],
-        );
-    }
-
-    #[test]
-    fn hardened_resonance_owns_the_retired_selector_unique_rows() {
-        // The three rows whose unique coverage once justified the 1+3 dense
-        // selector (feasible_linspace 107415/117216/619511): doubled-input x
-        // doubled-target pairs served by the conic-pencil sections, and the
-        // C = G tripled-target row served by the dual rank-one construction.
-        for (c, g, t) in [
-            (
-                [0.21875, 0.21875, -0.03125],
-                [0.40625, 0.28125, -0.21875],
-                [0.375, -0.0625, -0.0625],
-            ),
-            (
-                [0.25, 0.0625, -0.0625],
-                [0.25, 0.0625, -0.0625],
-                [0.375, -0.125, -0.125],
-            ),
-            (
-                [0.40625, 0.28125, -0.21875],
-                [0.21875, 0.21875, -0.03125],
-                [0.375, -0.0625, -0.0625],
-            ),
-        ] {
-            let solution = solve(c, g, t);
-            assert_ne!(solution.rung, Rung::Unsolved, "{c:?} {g:?} {t:?}");
-            assert!(
-                solution.residual < 1e-12,
-                "residual {:.3e}",
-                solution.residual
-            );
-        }
-    }
-
-    #[test]
-    fn routed_zero_wall_row_survives_the_retired_dense_selector() {
-        // feasible_linspace row 329583: one routed eigenvalue splits off and
-        // the remaining dense SO(3) block lies on a two-Givens wall.  The
-        // retired 1+3 dense selector once owned this row; the hardened
-        // resonance/secular dispatch must keep it machine-precise.
-        let solution = solve(
-            [0.3125, 0.1875, -0.1875],
-            [0.375, 0.3125, -0.1875],
-            [0.375, 0.125, 0.0],
-        );
-        assert_ne!(solution.rung, Rung::Unsolved);
-        assert!(solution.residual < 1e-12);
-    }
-
-    #[test]
-    fn every_weyl_vertex_passes_the_routed_support_gate() {
-        let a2 = std::array::from_fn(|k| C::from_polar(1.0, [0.13, 0.47, 1.01, 1.73][k]));
-        let g2 = std::array::from_fn(|k| C::from_polar(1.0, [0.22, 0.61, 1.19, 2.03][k]));
-        let routed = std::array::from_fn(|i| std::array::from_fn(|j| a2[i] * g2[j]));
-        for p in PERMS24.iter() {
-            let spec = std::array::from_fn(|k| a2[k] * g2[p[k]]);
-            let targets = [spec, spec];
-            let support = support_strata::edge_gate(&routed, &targets);
-            let viable = support.edge.expect("a vertex is a special edge");
-            assert_ne!((0..4).fold(0b11u8, |mask, k| mask & viable[k][p[k]]), 0);
-            assert!(perm_vertex_residual(&a2, &g2, &[esym4(spec), esym4(spec)], p) < 1e-12);
-        }
-    }
-
-    #[test]
-    fn radical_dispatch_distinguishes_multiplicity_from_near_degeneracy() {
-        let exact = [
-            c(1.0, 0.0),
-            c(1.0, 0.0),
-            C::from_polar(1.0, 0.7),
-            C::from_polar(1.0, 1.4),
-        ];
-        let near = [
-            c(1.0, 0.0),
-            C::from_polar(1.0, 1e-3),
-            C::from_polar(1.0, 0.7),
-            C::from_polar(1.0, 1.4),
-        ];
-        assert_eq!(spectrum_kind(&exact), SpectrumKind::Pair211);
-        assert_eq!(spectrum_kind(&near), SpectrumKind::Distinct);
-    }
-
-    /// The master object `M = D_C·O·Λ·Oᵀ·D_C` reduces (conjugate by D_C⁻¹) to the multiplicative-Horn
-    /// product `U₁·U₂`, with `U₁ = O·Λ·Oᵀ` a SYMMETRIC unitary (the Takagi / U(4)/O(4) locus) and
-    /// `U₂ = D_C²` diagonal. spec(U₁)=spec(Λ) (G data), spec(U₂)=spec(D_C²) (C data), spec(U₁U₂)=target.
-    /// This pins the problem's real home: the symmetric-space multiplicative Horn -- not generic SO(4).
-    #[test]
-    fn master_object_is_symmetric_unitary_product() {
-        let dc = dphase([0.31, 0.19, 0.11]); // D_C
-        let lam = {
-            let dg = dphase([0.37, 0.23, 0.13]);
-            dg * dg
-        }; // Λ = D_G²
-        let o = givens(0, 1, 0.7) * givens(2, 3, 1.1) * givens(1, 2, 0.4) * givens(0, 3, 0.9);
-        assert!(
-            (o.map(|z| z.re).determinant() - 1.0).abs() < 1e-12,
-            "O not SO(4)"
-        );
-        assert!(o.iter().all(|z| z.im.abs() < 1e-14), "O not real");
-        let m = mmat(&dc, &lam, &o);
-        let u1 = o * lam * o.transpose(); // O Λ Oᵀ
-        let u2 = dc * dc; // D_C²
-        let sort = |mut v: [C; 4]| {
-            v.sort_by(|a, b| a.arg().partial_cmp(&b.arg()).unwrap());
-            v
-        };
-        let maxerr =
-            |a: [C; 4], b: [C; 4]| (0..4).map(|i| (a[i] - b[i]).norm()).fold(0.0, f64::max);
-        // (1) the reduction: spec(M) == spec(U₁U₂).
-        let d = maxerr(sort(eig4(&m)), sort(eig4(&(u1 * u2))));
-        assert!(d < 1e-10, "spec(M) != spec(U₁U₂): {d:.2e}");
-        // (2) U₁ is a SYMMETRIC unitary (the real-structure constraint -- the open part of the construction).
-        let sym = (u1 - u1.transpose()).norm();
-        let uni = (u1.adjoint() * u1 - Mat4::identity()).norm();
-        assert!(
-            sym < 1e-12 && uni < 1e-12,
-            "U₁ not symmetric-unitary: sym={sym:.2e} uni={uni:.2e}"
-        );
-        // (3) spec(U₁) == diag(Λ): U₁ is the SO(4)-orbit of Λ (eigenvalues preserved by real conjugation).
-        let dl = maxerr(sort(std::array::from_fn(|i| lam[(i, i)])), sort(eig4(&u1)));
-        assert!(dl < 1e-10, "spec(U₁) != diag(Λ): {dl:.2e}");
-    }
-
-    #[test]
-    fn reanchor_inverse_recovers_original_sandwich() {
-        let dc = dphase([0.31, 0.19, 0.11]);
-        let dg = dphase([0.37, 0.23, 0.13]);
-        let a = dc * dc;
-        let g = dg * dg;
-        let s = givens(0, 1, 0.7) * givens(2, 3, 1.1) * givens(1, 2, 0.4) * givens(0, 3, 0.9);
-        let diagonalize = |m: &Mat4| {
-            let v = extract_o(m);
-            let w: [C; 4] = std::array::from_fn(|k| {
-                let mut z = C::new(0.0, 0.0);
-                for i in 0..4 {
-                    for j in 0..4 {
-                        z += C::new(v[(i, k)] * v[(j, k)], 0.0) * m[(i, j)];
-                    }
-                }
-                z
-            });
-            (v.map(|x| C::new(x, 0.0)), w)
-        };
-
-        // X_g=D_g V W^-1 V^T D_g has spectrum A^-1.  Its matched real
-        // eigenframe S gives the original orientation as O=S^T.
-        let n = dg * s * a * s.transpose() * dg;
-        let (vg, wg) = diagonalize(&n);
-        let wgi: [C; 4] = std::array::from_fn(|k| C::new(1.0, 0.0) / wg[k]);
-        let wrg = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(&wgi));
-        let xg = dg * vg * wrg * vg.transpose() * dg;
-        let av: [C; 4] = std::array::from_fn(|k| C::new(1.0, 0.0) / a[(k, k)]);
-        let ai = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(&av));
-        let og = recover_frame(&xg, &ai).transpose();
-        assert!(smooth_residual(&dc, &g, &og, &esym4(wg)) < 1e-10);
-
-        // X_c=D_c V W^-1 V^T D_c has spectrum G^-1.  This reanchor is
-        // already in the original orientation, so O=S.
-        let m = dc * s * g * s.transpose() * dc;
-        let (vc, wc) = diagonalize(&m);
-        let wci: [C; 4] = std::array::from_fn(|k| C::new(1.0, 0.0) / wc[k]);
-        let wrc = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(&wci));
-        let xc = dc * vc * wrc * vc.transpose() * dc;
-        let gv: [C; 4] = std::array::from_fn(|k| C::new(1.0, 0.0) / g[(k, k)]);
-        let gi = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(&gv));
-        let oc = recover_frame(&xc, &gi);
-        assert!(smooth_residual(&dc, &g, &oc, &esym4(wc)) < 1e-10);
-    }
-
-    #[test]
-    fn reanchored_charts_close_former_generic_tail() {
-        // These were the only two misses in the complete fast-only census.
-        // Before target reanchoring they entered cl3/peel3 for seconds to
-        // minutes; each is a regular 3-Givens point from another vertex of
-        // the spectral triangle.
-        let rows = [
-            (
-                [0.34375, 0.09375, -0.03125],
-                [0.3125, 0.25, -0.125],
-                [0.25, 0.1875, -0.1875],
-            ),
-            (
-                [0.40625, 0.15625, -0.09375],
-                [0.25, 0.1875, -0.0625],
-                [0.3125, 0.25, -0.25],
-            ),
-        ];
-        for (c, g, t) in rows {
-            let problem = PreparedSandwich::new(c, g, t);
-            let (o, residual) = CyclicThreeGivens::new(&problem)
-                .and_then(|atlas| atlas.solve_planes(0, 16, false))
-                .expect("reanchored chart witness");
-            assert!(residual < 1e-12, "residual={residual:.3e}");
-            assert!((o.map(|z| z.re).determinant() - 1.0).abs() < 1e-10);
-        }
-    }
-
-    /// Isolated micro-benchmark for the interior per-chart kernel (ignored;
-    /// run with --ignored --nocapture). WSL wall-clock noise swamps stride
-    /// benches at the 10% level; this loop gives a clean per-call number on
-    /// REAL detx polynomials from the actual elimination.
-    #[test]
-    #[ignore = "micro-benchmark; run with --ignored --nocapture"]
-    fn bench_interior_kernel() {
-        let eb = eigphases([0.31, 0.19, 0.11]);
-        let ep = eigphases([0.37, 0.23, 0.13]);
-        let et = eigphases([0.41, 0.17, 0.05]);
-        let prefix_diag: [C; 4] = std::array::from_fn(|j| C::from_polar(1.0, 2.0 * eb[j]));
-        let gate: [C; 4] = std::array::from_fn(|k| C::from_polar(1.0, 2.0 * ep[k]));
-        let w: [C; 4] = std::array::from_fn(|k| C::from_polar(1.0, 2.0 * et[k]));
-        let w1: C = w.iter().copied().sum();
-        let w2 = w[0] * w[1] + w[0] * w[2] + w[0] * w[3] + w[1] * w[2] + w[1] * w[3] + w[2] * w[3];
-        let sq = (w[0] * w[1] * w[2] * w[3]).sqrt();
-        let mut polys: Vec<Vec<f64>> = vec![];
-        for &planes in INTERIOR_PLANES.iter() {
-            for &perm in PERMS24.iter() {
-                let (a1, a2) = chart_coeffs_diag(&prefix_diag, &gate, planes, perm);
-                let mut r1: [f64; 8] = std::array::from_fn(|i| a1[i].re);
-                r1[0] -= w1.re;
-                let mut r2: [f64; 8] = std::array::from_fn(|i| a1[i].im);
-                r2[0] -= w1.im;
-                let a2n: [C; 8] = std::array::from_fn(|i| a2[i] / sq);
-                let mut r3: [f64; 8] = std::array::from_fn(|i| a2n[i].re);
-                r3[0] -= (w2 / sq).re;
-                let split = |r: &[f64; 8]| ([r[0], r[1], r[2], r[4]], [r[3], r[5], r[6], r[7]]);
-                let (p1, q1) = split(&r1);
-                let (p2, q2) = split(&r2);
-                let (p3, q3) = split(&r3);
-                let sub = |a: [[f64; 3]; 3], b: [[f64; 3]; 3]| -> [[f64; 3]; 3] {
-                    std::array::from_fn(|i| std::array::from_fn(|j| a[i][j] - b[i][j]))
-                };
-                let f: [[f64; 3]; 3] = sub(prod_bil(p2, q1), prod_bil(p1, q2));
-                let g: [[f64; 3]; 3] = sub(prod_bil(p3, q1), prod_bil(p1, q3));
-                let col = |m: &[[f64; 3]; 3], k: usize| vec![m[0][k], m[1][k], m[2][k]];
-                let fy = [col(&f, 0), col(&f, 1), col(&f, 2)];
-                let gy = [col(&g, 0), col(&g, 1), col(&g, 2)];
-                polys.push(resultant_y(&fy, &gy));
-            }
-        }
-        eprintln!("polys: {}", polys.len());
-        let reps = 300;
-        let t0 = std::time::Instant::now();
-        let mut sink = 0usize;
-        for _ in 0..reps {
-            for p in &polys {
-                sink += real_roots_unit(p).len();
-            }
-        }
-        let el = t0.elapsed().as_nanos() as f64;
-        eprintln!(
-            "real_roots_unit: {:.1} ns/call (sink {sink}, refine iters/call {:.2})",
-            el / (reps * polys.len()) as f64,
-            refine_iters() as f64 / (reps * polys.len()) as f64
-        );
-        // component timings: bernstein alone, scan-only floor
-        let t2 = std::time::Instant::now();
-        let mut se = 0usize;
-        for _ in 0..reps {
-            for p in &polys {
-                se += bernstein_excludes_unit(p) as usize;
-            }
-        }
-        eprintln!(
-            "bernstein alone: {:.1} ns/call ({se})",
-            t2.elapsed().as_nanos() as f64 / (reps * polys.len()) as f64
-        );
-        let t3 = std::time::Instant::now();
-        let mut sv = 0.0f64;
-        for _ in 0..reps {
-            for p in &polys {
-                const N: usize = 64;
-                let mut vals = [0.0f64; N + 1];
-                let mut xs = [0.0f64; N + 1];
-                for (k, x) in xs.iter_mut().enumerate() {
-                    *x = k as f64 / N as f64;
-                }
-                for &c in p.iter().rev() {
-                    for k in 0..=N {
-                        vals[k] = vals[k] * xs[k] + c;
-                    }
-                }
-                sv += vals[37];
-            }
-        }
-        eprintln!(
-            "scan alone: {:.1} ns/call ({sv:.2})",
-            t3.elapsed().as_nanos() as f64 / (reps * polys.len()) as f64
-        );
-        // and the excluded/scanned split
-        let excl = polys.iter().filter(|p| bernstein_excludes_unit(p)).count();
-        eprintln!("bernstein-excluded: {excl}/{}", polys.len());
-        // elimination kernel cost (chart_coeffs + resultant), same loop
-        let t1 = std::time::Instant::now();
-        let mut sink2 = 0.0f64;
-        for _ in 0..reps {
-            for &planes in INTERIOR_PLANES.iter() {
-                for &perm in PERMS24.iter() {
-                    let (a1, _a2) = chart_coeffs_diag(&prefix_diag, &gate, planes, perm);
-                    sink2 += a1[0].re;
-                }
-            }
-        }
-        let el1 = t1.elapsed().as_nanos() as f64;
-        eprintln!(
-            "chart_coeffs_diag: {:.1} ns/call (sink {sink2})",
-            el1 / (reps * polys.len()) as f64
-        );
-    }
-
-    #[test]
-    fn poly_roots_recovers_known_roots() {
-        let roots = [0.1, 0.3, 0.5, 0.7, 0.9, 0.95];
-        // build the monic polynomial Π(x − r) as coeffs (low→high)
-        let mut co = vec![1.0];
-        for r in roots {
-            let mut next = vec![0.0; co.len() + 1];
-            for (i, &cv) in co.iter().enumerate() {
-                next[i] += -r * cv;
-                next[i + 1] += cv;
-            }
-            co = next;
-        }
-        let got = poly_roots(&co);
-        // each true root must be matched by some computed root
-        for r in roots {
-            let best = got
-                .iter()
-                .map(|z| (z - C::new(r, 0.0)).norm())
-                .fold(f64::INFINITY, f64::min);
-            assert!(best < 1e-9, "root {r} not recovered (best {best})");
-        }
-    }
-
-    #[test]
-    fn interior_elimination_roundtrip() {
-        // Manufacture a target from a known chart point; the elimination must recover an
-        // O reaching that spectrum (verified in symfn, exact -- the deg-6 companion path).
-        let dc = dphase([0.31, 0.19, 0.07]);
-        let lam = {
-            let dg = dphase([0.27, 0.13, 0.05]);
-            dg * dg
-        };
-        let planes = [(0, 1), (1, 2), (2, 3)];
-        let perm = [0, 1, 2, 3];
-        let o_true = chart_o([0.4137, 0.6291, 0.1733], planes, perm); // off any scan grid
-        let m = mmat(&dc, &lam, &o_true);
-        let target = symfn(&m);
-        let w = eig4(&m);
-        let et: [f64; 4] = std::array::from_fn(|k| w[k].arg() / 2.0);
-        let eb = eigphases([0.31, 0.19, 0.07]);
-        let ep = eigphases([0.27, 0.13, 0.05]);
-        let (_o, r_cf, _, _) = solve_interior(&eb, &ep, &dc, &lam, &[et], &[target], &PERMS24[..])
-            .expect("interior found no root");
-
-        // Exact-vs-scan gate: the companion solve must hit a true root (machine
-        // precision), unreachable by a fine grid scan, proving it is not a bisection
-        // in disguise. A 40³ scan's best is orders of magnitude worse.
-        let planes_s = planes;
-        let mut best_scan = f64::INFINITY;
-        let n = 40;
-        for ix in 0..=n {
-            for iy in 0..=n {
-                for iz in 0..=n {
-                    let p = [
-                        ix as f64 / n as f64,
-                        iy as f64 / n as f64,
-                        iz as f64 / n as f64,
-                    ];
-                    let o = chart_o(p, planes_s, perm);
-                    best_scan = best_scan.min(smooth_residual(&dc, &lam, &o, &target));
-                }
-            }
-        }
-        assert!(r_cf < 1e-9, "interior not a true root: r_cf={r_cf}");
-        assert!(
-            r_cf < best_scan / 1e4,
-            "closed-form not beating scan (would be a scan-in-disguise): r_cf={r_cf} best_scan={best_scan}"
-        );
-    }
-
-    #[test]
-    fn e1_e2_are_trilinear_in_the_chart() {
-        // The corner-extracted trilinear model must reproduce e1,e2 of M at interior
-        // points (s12: e1,e2,e3 are multilinear in x,y,z = cos² of the 3 Givens angles).
-        let dc = dphase([0.31, 0.19, 0.07]);
-        let lam = {
-            let dg = dphase([0.27, 0.13, 0.05]);
-            dg * dg
-        };
-        let planes = [(0, 1), (1, 2), (2, 3)];
-        let perm = [0, 1, 2, 3];
-        let eb = eigphases([0.31, 0.19, 0.07]);
-        let ep = eigphases([0.27, 0.13, 0.05]);
-        let (a1, a2) = chart_coeffs(&eb, &ep, planes, perm);
-        // a few deterministic interior points
-        let pts = [[0.3, 0.6, 0.1], [0.8, 0.2, 0.5], [0.15, 0.95, 0.42]];
-        let mut worst = 0.0f64;
-        for p in pts {
-            let m = mmat(&dc, &lam, &chart_o(p, planes, perm));
-            let s = symfn(&m);
-            let d1 = (ev_trilinear(&a1, p[0], p[1], p[2]) - s[0]).norm();
-            let d2 = (ev_trilinear(&a2, p[0], p[1], p[2]) - s[1]).norm();
-            worst = worst.max(d1).max(d2);
-        }
-        assert!(worst < 1e-11, "e1/e2 not trilinear in chart: worst={worst}");
-    }
-
-    #[test]
-    fn identity_frame_reproduces_canonical_spectrum() {
-        // O = I  =>  M = D_C·Λ·D_C = D_C²·Λ, and for C=G=T it must match target_symfn(T).
-        let w = [0.31, 0.21, 0.11];
-        let dc = dphase(w);
-        let lam = {
-            let dg = dphase(w);
-            dg * dg
-        };
-        let o = Mat4::identity();
-        // Sandwich Can(w)·I·Can(w) has weyl 2w folded; instead check the bare identity-frame
-        // matches the C=I sandwich: with C=identity weyl, M = Λ and symfn = target of G's square.
-        let res = smooth_residual(&dc, &lam, &o, &symfn(&mmat(&dc, &lam, &o)));
-        assert!(res < 1e-12, "self-consistency: {res}");
-    }
-
-    #[test]
-    fn compound_residual_matches_smooth_residual() {
-        // The Cauchy-Binet compound evaluator must equal smooth_residual within 1e-12
-        // on several (dc, lam, o) triples, including interior chart points and identity.
-        let dc = dphase([0.31, 0.19, 0.07]);
-        let lam = {
-            let dg = dphase([0.27, 0.13, 0.05]);
-            dg * dg
-        };
-        let planes = [(0, 1), (1, 2), (2, 3)];
-        let perm = [0, 1, 2, 3];
-        // Target from the same dc/lam at a known interior point.
-        let o_ref = chart_o([0.4137, 0.6291, 0.1733], planes, perm);
-        let target = symfn(&mmat(&dc, &lam, &o_ref));
-        let pts = [
-            [0.3, 0.6, 0.1],
-            [0.8, 0.2, 0.5],
-            [0.15, 0.95, 0.42],
-            [0.4137, 0.6291, 0.1733], // the exact root: both should be ~0
-        ];
-        let mut worst = 0.0f64;
-        for p in pts {
-            let o = chart_o(p, planes, perm);
-            let sr = smooth_residual(&dc, &lam, &o, &target);
-            let cr = compound_residual(&dc, &lam, &o, &target);
-            worst = worst.max((sr - cr).abs());
-        }
-        // Identity frame: target = its own spectrum, so residual = 0.
-        let o_id = Mat4::identity();
-        let target_id = symfn(&mmat(&dc, &lam, &o_id));
-        let sr_id = smooth_residual(&dc, &lam, &o_id, &target_id);
-        let cr_id = compound_residual(&dc, &lam, &o_id, &target_id);
-        worst = worst.max((sr_id - cr_id).abs()).max(cr_id);
-        assert!(
-            worst < 1e-12,
-            "compound_residual mismatch: worst={worst:.3e}"
-        );
-    }
-
-    #[test]
-    fn chart_lifted_masses_are_affine_on_two_givens() {
-        // Shared planes: G01(x)G12(y) has s=1+y and d=y exactly.
-        for &(x, y) in &[(0.13, 0.27), (0.41, 0.82), (0.93, 0.06)] {
-            let o = chart_o([x, y, 1.0], [(0, 1), (1, 2), (2, 3)], [0, 1, 2, 3]);
-            let (s, d) = cs_masses(&o);
-            assert!((s - (1.0 + y)).abs() < 2e-12, "s={s}, y={y}");
-            assert!((d - y).abs() < 2e-12, "d={d}, y={y}");
-        }
-
-        // Disjoint planes: the first rotation is entirely inside the leading
-        // block, so that block remains orthogonal; hence s=2 and d=1.
-        for &(x, y) in &[(0.13, 0.27), (0.41, 0.82), (0.93, 0.06)] {
-            let o = chart_o([x, y, 1.0], [(0, 1), (2, 3), (1, 2)], [0, 1, 2, 3]);
-            let (s, d) = cs_masses(&o);
-            assert!((s - 2.0).abs() < 2e-12, "s={s}, x={x}");
-            assert!((d - 1.0).abs() < 2e-12, "d={d}, s={s}, x={x}");
-        }
-    }
-
-    #[test]
-    fn chart_lifted_masses_are_trilinear_on_three_givens() {
-        // The production three-Givens chart uses squared cosines.  Test the
-        // stronger statement needed by the selector: s and d are recovered by
-        // multilinear interpolation from the eight chart corners, with no
-        // residual square-root dependence.
-        let planes = [(0, 1), (1, 2), (2, 3)];
-        let interp = |which: usize, p: [f64; 3]| -> f64 {
-            let mut out = 0.0;
-            for mask in 0..8 {
-                let q = [
-                    if mask & 1 != 0 { 1.0 } else { 0.0 },
-                    if mask & 2 != 0 { 1.0 } else { 0.0 },
-                    if mask & 4 != 0 { 1.0 } else { 0.0 },
-                ];
-                let w = (0..3).fold(1.0, |acc, k| {
-                    acc * if q[k] == 1.0 { p[k] } else { 1.0 - p[k] }
-                });
-                let o = chart_o(q, planes, [0, 1, 2, 3]);
-                let v = cs_masses(&o);
-                out += w * if which == 0 { v.0 } else { v.1 };
-            }
-            out
-        };
-        for p in [[0.17, 0.43, 0.79], [0.61, 0.22, 0.36], [0.93, 0.08, 0.54]] {
-            let o = chart_o(p, planes, [0, 1, 2, 3]);
-            let (s, d) = cs_masses(&o);
-            assert!(
-                (s - interp(0, p)).abs() < 2e-11,
-                "s={s}, fit={}",
-                interp(0, p)
-            );
-            assert!(
-                (d - interp(1, p)).abs() < 2e-11,
-                "d={d}, fit={}",
-                interp(1, p)
-            );
-        }
-    }
-
-    #[test]
-    fn lifted_masses_are_multilinear_on_entire_interior_atlas() {
-        // Exhaust the actual 16 plane words and 24 SO(4) permutations used by
-        // the exact interior solver.  Corner interpolation is an exact test
-        // for a multilinear polynomial in x=cos²(theta), not a numerical fit.
-        let points = [[0.173, 0.431, 0.792], [0.614, 0.227, 0.361]];
-        let mut worst = 0.0;
-        let mut worst_label = ([0usize; 4], [(0usize, 0usize); 3]);
-        for &planes in INTERIOR_PLANES.iter() {
-            for &perm in PERMS24.iter() {
-                let coeffs = cs_mass_coeffs(planes, perm);
-                for p in points {
-                    let o = chart_o(p, planes, perm);
-                    let actual = cs_masses(&o);
-                    let fit = [
-                        eval_multilinear(&coeffs[0], p),
-                        eval_multilinear(&coeffs[1], p),
-                    ];
-                    let err = (actual.0 - fit[0]).abs().max((actual.1 - fit[1]).abs());
-                    if err > worst {
-                        worst = err;
-                        worst_label = (perm, planes);
-                    }
-                }
-            }
-        }
-        assert!(
-            worst < 3e-10,
-            "non-multilinear lifted mass: err={worst:.3e}, perm={:?}, planes={:?}",
-            worst_label.0,
-            worst_label.1
-        );
-    }
+    assert!(compiler_solution(&problem, Mat4::identity(), Rung::Interior, 0.0).is_some());
+    let wrong_target = PreparedSandwich::new([0.0; 3], [0.0; 3], [0.125, 0.0, 0.0]);
+    assert!(compiler_solution(&wrong_target, Mat4::identity(), Rung::Interior, 0.0).is_none());
 }

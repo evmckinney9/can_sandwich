@@ -15,33 +15,6 @@ pub(crate) const CORNERS: [[f64; 3]; 8] = [
     [1., 1., 1.],
 ];
 
-#[cfg(test)]
-/// Trilinear coeffs of `(e₁, e₂)` of `M` over the chart, extracted from the 8 corners.
-/// At a corner every Givens is 0 (`x=cos²θ=1`) or π/2 (`x=0` → a signed swap), so `O` is a
-/// signed perm and `M` is DIAGONAL: the corner spectrum is `{a²_j·λ_{c(j)}}` with `c` the
-/// composed permutation -- pure scalar, no matmul (same trick as the vertex rung).
-pub(super) fn chart_coeffs(
-    eb: &[f64; 4],
-    ep: &[f64; 4],
-    planes: [(usize, usize); 3],
-    perm: [usize; 4],
-) -> ([C; 8], [C; 8]) {
-    let prefix_diag: [C; 4] = std::array::from_fn(|j| C::from_polar(1.0, 2.0 * eb[j]));
-    let lam: [C; 4] = std::array::from_fn(|k| C::from_polar(1.0, 2.0 * ep[k]));
-    chart_coeffs_diag(&prefix_diag, &lam, planes, perm)
-}
-
-#[cfg(test)]
-pub(crate) fn chart_coeffs_diag(
-    a2: &[C; 4],
-    lam: &[C; 4],
-    planes: [(usize, usize); 3],
-    perm: [usize; 4],
-) -> ([C; 8], [C; 8]) {
-    let (e1c, e2c) = chart_corners(a2, lam, planes, perm);
-    (mobius8(&e1c), mobius8(&e2c))
-}
-
 /// Certified separation test: is `t` at distance > `margin` from
 /// conv(corners)? A few Frank-Wolfe steps toward the closest hull point
 /// propose a separating direction d; exclusion is declared only on the
@@ -95,19 +68,6 @@ pub(crate) fn hull_excludes(corners: &[[f64; 3]], t: [f64; 3], margin: f64) -> b
     false
 }
 
-/// The chart's 8 corner values of (e1, e2) (the raw material of both the
-/// multilinear coefficients and the hull gate).
-#[cfg(test)]
-pub(crate) fn chart_corners(
-    a2: &[C; 4],
-    lam: &[C; 4],
-    planes: [(usize, usize); 3],
-    perm: [usize; 4],
-) -> ([C; 8], [C; 8]) {
-    let mut vertices = [None; 256];
-    chart_corners_cached(a2, lam, planes, perm, &mut vertices)
-}
-
 /// The eight corners of every three-Givens chart lie in the same 24-point
 /// Weyl orbit. Cache that orbit lazily by the packed permutation itself: a
 /// short successful scan pays exactly for the vertices it visits, while an
@@ -154,56 +114,6 @@ pub(crate) fn mobius8(vals: &[C; 8]) -> [C; 8] {
         vals[6] - vals[2] - vals[3] + vals[0],
         vals[7] - vals[4] - vals[5] - vals[6] + vals[1] + vals[2] + vals[3] - vals[0],
     ]
-}
-
-#[cfg(test)]
-pub(crate) fn poly_mul(a: &[f64], b: &[f64]) -> Vec<f64> {
-    let mut out = vec![0.0; a.len() + b.len() - 1];
-    for (i, &ai) in a.iter().enumerate() {
-        for (j, &bj) in b.iter().enumerate() {
-            out[i + j] += ai * bj;
-        }
-    }
-    out
-}
-
-#[cfg(test)]
-pub(crate) fn poly_sub(a: &[f64], b: &[f64]) -> Vec<f64> {
-    let mut out = vec![0.0; a.len().max(b.len())];
-    for (i, &x) in a.iter().enumerate() {
-        out[i] += x;
-    }
-    for (i, &x) in b.iter().enumerate() {
-        out[i] -= x;
-    }
-    out
-}
-
-#[cfg(test)]
-/// Resultant in `y` of two quadratics `a₂y²+a₁y+a₀` and `b₂y²+b₁y+b₀` whose coefficients
-/// are polynomials in `x` (`fy=[a₀,a₁,a₂]`, `gy=[b₀,b₁,b₂]`): closed form
-/// `(a₂b₀−a₀b₂)² − (a₂b₁−a₁b₂)(a₁b₀−a₀b₁)`. Replaces the 4×4 Sylvester-Leibniz det
-/// (~8 poly-mults vs ~96). A constant scale/sign is irrelevant -- only the roots matter.
-pub(crate) fn resultant_y(fy: &[Vec<f64>; 3], gy: &[Vec<f64>; 3]) -> Vec<f64> {
-    let (a0, a1, a2) = (&fy[0], &fy[1], &fy[2]);
-    let (b0, b1, b2) = (&gy[0], &gy[1], &gy[2]);
-    let t1 = poly_sub(&poly_mul(a2, b0), &poly_mul(a0, b2));
-    let t2 = poly_sub(&poly_mul(a2, b1), &poly_mul(a1, b2));
-    let t3 = poly_sub(&poly_mul(a1, b0), &poly_mul(a0, b1));
-    poly_sub(&poly_mul(&t1, &t1), &poly_mul(&t2, &t3))
-}
-
-#[cfg(test)]
-/// Bilinear `[1,x,y,xy]` product -> biquadratic `[i][j] = coeff x^i y^j`, i,j ≤ 2.
-pub(crate) fn prod_bil(a: [f64; 4], b: [f64; 4]) -> [[f64; 3]; 3] {
-    let terms = |c: [f64; 4]| [(0, 0, c[0]), (1, 0, c[1]), (0, 1, c[2]), (1, 1, c[3])];
-    let mut out = [[0.0; 3]; 3];
-    for (i1, j1, c1) in terms(a) {
-        for (i2, j2, c2) in terms(b) {
-            out[i1 + i2][j1 + j2] += c1 * c2;
-        }
-    }
-    out
 }
 
 /// Real roots of a real cubic in radicals (Cardano/Viete), with exact degree
@@ -829,11 +739,6 @@ pub(crate) fn bernstein_excludes_unit(p: &[f64]) -> bool {
     pos || neg
 }
 
-#[cfg(test)]
-pub(crate) fn refine_iters() -> u64 {
-    REFINE_ITERS.with(|c| c.get())
-}
-
 /// Certified single-root extraction on a bracket, by bounded bisection.
 ///
 /// An ODD Bernstein sign count on `[lo,hi]` proves an odd number of roots there,
@@ -914,8 +819,6 @@ pub(crate) fn real_roots_unit(p: &[f64]) -> Vec<f64> {
             let mut side = 0i8;
             let mut prev = f64::NAN;
             for _it in 0..80 {
-                #[cfg(test)]
-                REFINE_ITERS.with(|c| c.set(c.get() + 1));
                 if hi - lo <= f64::EPSILON * hi.abs().max(0.5) {
                     break;
                 }
@@ -1182,39 +1085,6 @@ pub(crate) const BOUNDARY_HEAD: [(usize, usize); 16] = [
     (6, 4),
     (13, 6),
 ];
-
-#[cfg(test)]
-pub(crate) fn solve_interior(
-    eb: &[f64; 4],
-    ep: &[f64; 4],
-    dc: &Mat4,
-    lam: &Mat4,
-    et_branches: &[[f64; 4]],
-    targets: &[[C; 4]],
-    perms: &[[usize; 4]],
-) -> Option<InteriorHit> {
-    let prefix_diag: [C; 4] = std::array::from_fn(|j| C::from_polar(1.0, 2.0 * eb[j]));
-    let gate: [C; 4] = std::array::from_fn(|k| C::from_polar(1.0, 2.0 * ep[k]));
-    let target_specs: Vec<[C; 4]> = et_branches
-        .iter()
-        .map(|et| std::array::from_fn(|k| C::from_polar(1.0, 2.0 * et[k])))
-        .collect();
-    let mut spectral_vertices = [None; 256];
-    solve_interior_words(
-        &prefix_diag,
-        &gate,
-        &target_specs,
-        dc,
-        lam,
-        targets,
-        perms,
-        &INTERIOR_PLANES[..16],
-        0,
-        false,
-        None,
-        &mut spectral_vertices,
-    )
-}
 
 /// Direct interior scan in an explicit order of `(static_perm_idx, plane_idx)`
 /// classes. Production supplies `BOUNDARY_HEAD`, sorted by measured cell

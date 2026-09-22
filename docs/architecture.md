@@ -7,7 +7,8 @@ a real frame `O` in `SO(4)` (magic basis) with
     weyl(Can(C) · u · Can(G)) = weyl(T),      u = mb⁻¹(O),
 
 or declines. Every returned frame is verified before it leaves the crate. The constructions use radical formulas, bounded
-polynomial root isolation, and branch checks in binary64 arithmetic.
+polynomial root isolation, and branch checks in binary64 arithmetic, followed
+by bounded Levenberg–Marquardt refinement and restarts.
 
 `gulps-core` is the only consumer. It transports the frame through the raw
 ISA gate and prefix frames and re-verifies the invariant class; nothing in this
@@ -61,6 +62,15 @@ spectral error rather than the exact diagonalization residual. Repeated targets
 are diagonalized against the matched root blocks by real spectral projectors and
 certified at `1e-8`. A frame that fails the certificate is discarded whatever
 rung produced it.
+
+## Numerical fallback
+
+The public `solve` screens the algebraic result against the original spectrum.
+If that fails, it refines the frame with the spectral LM implementation from
+`dev/prototypes/2026-09-21-lm-sandwich/solver.rs`. A decline triggers deterministic
+restarts, swapped-factor and inverse-factor retries. Successful numerical frames
+still pass the production certificate and spectral screen and use `Rung::Numerical`.
+The finite iteration budget can be exhausted; a decline does not prove infeasibility.
 
 ## Cascade
 
@@ -122,22 +132,10 @@ same forward certificate as the other confluent constructions.
 | `chart_precision.rs` | conditioning of a chart's affine system near clustered spectra |
 | `cpoly.rs` | complex polynomial helpers, companion roots |
 
-## Build and validation
+## Validation
 
-This crate has its own Cargo workspace. From its root:
-
-```sh
-make test
-cargo test --release --test solver compare_candidate -- --ignored --nocapture
-```
-
-The test suite and prototype comparison share the same cases and independent
-checker. See [tests](../tests/README.md).
-
-## Corpora
-
-`tests/cases.bin` holds all solver inputs as little-endian binary64 triples.
-See [the fixture layout](../tests/README.md) for source row ranges.
+See the [development instructions](../README.md#development) for building,
+testing, regenerating the corpus, and comparing a prototype.
 
 Historical measurements (stride 1, WSL, 2026-09-08; timings vary between runs):
 

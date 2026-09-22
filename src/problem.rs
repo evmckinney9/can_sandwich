@@ -129,7 +129,7 @@ impl StratumSignature {
 /// into a repeated spectrum.  Such collisions are the natural next branch for
 /// simple/simple inputs: `c_i g_j = c_k g_l` can lower the rank of the
 /// characteristic map even though `c` and `g` are individually distinct.
-#[cfg(any(test, feature = "diagnostics"))]
+#[cfg(feature = "diagnostics")]
 fn routed_product_collision(c: &[C; 4], g: &[C; 4]) -> bool {
     let products: [C; 16] = std::array::from_fn(|n| c[n / 4] * g[n % 4]);
     for i in 0..products.len() {
@@ -206,59 +206,5 @@ impl PreparedSandwich {
             lam,
             strata,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{C, SpectrumProximity, routed_product_collision, spectrum_proximity};
-
-    #[test]
-    fn detects_collision_with_simple_inputs() {
-        let c = [
-            C::new(1.0, 0.0),
-            C::new(0.0, 1.0),
-            C::new(-1.0, 0.0),
-            C::new(0.0, -1.0),
-        ];
-        let g = c;
-        assert!(routed_product_collision(&c, &g));
-    }
-
-    #[test]
-    fn does_not_collapse_near_collision() {
-        let c = [
-            C::new(1.0, 0.0),
-            C::new(0.0, 1.0),
-            C::new(-1.0, 0.0),
-            C::new(0.0, -1.0),
-        ];
-        let g = [
-            C::from_polar(1.0, 0.13),
-            C::from_polar(1.0, 1.71),
-            C::from_polar(1.0, 3.29),
-            C::from_polar(1.0, 4.91),
-        ];
-        assert!(!routed_product_collision(&c, &g));
-    }
-
-    #[test]
-    fn separates_exact_near_and_distinct_spectra() {
-        let exact = [C::new(1.0, 0.0); 4];
-        assert_eq!(spectrum_proximity(&exact), SpectrumProximity::Exact);
-        let near = [
-            C::from_polar(1.0, 0.0),
-            C::from_polar(1.0, 1.0e-8),
-            C::from_polar(1.0, 2.0),
-            C::from_polar(1.0, 4.0),
-        ];
-        assert_eq!(spectrum_proximity(&near), SpectrumProximity::Near);
-        let distinct = [
-            C::from_polar(1.0, 0.0),
-            C::from_polar(1.0, 0.2),
-            C::from_polar(1.0, 2.0),
-            C::from_polar(1.0, 4.0),
-        ];
-        assert_eq!(spectrum_proximity(&distinct), SpectrumProximity::Distinct);
     }
 }

@@ -2,7 +2,8 @@
 
 The depth-two two-qubit realization solver used by `gulps-core`.
 It takes three monodromy coordinate vectors and returns a verified real
-`SO(4)` frame, or declines. It uses binary64 arithmetic and numerical certificates.
+`SO(4)` frame, or declines. It uses an algebraic cascade followed by a bounded Levenberg–Marquardt fallback.
+Every result must pass numerical certification; convergence is not guaranteed.
 
 ```rust
 pub fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solution;
@@ -23,18 +24,25 @@ make test
 make lint
 ```
 
-The tests check solver frames with an independent matrix eigenvalue calculation.
-`make test` uses release mode for the million-case fixture.
+`make test` runs the corpus and three rejection/checker checks in release mode.
+Frames must satisfy SO(4) and an independent spectral check at `1e-8`.
 
-## Compare a prototype
+Regenerate with `python3 tests/generate.py` (requires NumPy and SciPy).
+`tests/cases.bin` stores nine little-endian `f64` values per row:
+`[C0,C1,C2,G0,G1,G2,T0,T1,T2]`, without a header.
+
+To compare a prototype, replace `candidate` in `tests/solver.rs`, then run:
 
 ```sh
 cargo test --release --test solver compare_candidate -- --ignored --nocapture
 ```
 
-Replace the candidate function in `tests/solver.rs` with your prototype.
-It runs against production on the same cases and reports correctness and time.
-See [tests](tests/README.md) for the fixture format and comparison details.
+This reports solver time and fixed/regressed rows. Only regressions fail.
+
+Follow [Google’s testing guide](https://abseil.io/resources/swe-book/html/ch12.html#test_via_public_apis):
+test public behavior. Put solver regressions in the corpus generator; keep
+separate checks for impossible targets, invalid frames, and checker errors.
+Do not pin solver branches or duplicate internal formulas.
 
 GULPS uses a pinned Git submodule and compiles this crate as a path dependency.
 Solver commits do not update that pin. The former Python project remains on

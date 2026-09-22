@@ -78,7 +78,7 @@ def check(seed=20260917, cases=10, k=1, tol=0.0):
 
 def check_corpus(path="crates/can_sandwich/tests/cases.bin",
                  rows=10, k=1, tol=0.0):
-    data = np.memmap(path, dtype="<f8", mode="r").reshape(-1, 3, 3)[6:13187][:rows]
+    data = np.memmap(path, dtype="<f8", mode="r").reshape(-1, 3, 3)[:rows]
     worst = 0.0; solved = 0; count = 0
     for c, g, t in data:
         def roots(m):
