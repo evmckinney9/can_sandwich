@@ -1,184 +1,67 @@
-# can_sandwich
+# Source guide
 
-Depth-two two-qubit realization for gulps. Given the monodromy coordinates
-of a gate `C`, a prefix class `G`, and a target class `T`, the crate returns
-a real frame `O` in `SO(4)` (magic basis) with
+The [README](../README.md) describes the crate and API. The
+[research contract](research.md) defines the mathematics and conventions.
+This page describes the implementation and the redesign it needs.
 
-    weyl(Can(C) · u · Can(G)) = weyl(T),      u = mb⁻¹(O),
+## Current control flow
 
-or declines. Every returned frame is verified before it leaves the crate. The constructions use radical formulas, bounded
-polynomial root isolation, and branch checks in binary64 arithmetic, followed
-by bounded Levenberg–Marquardt refinement and restarts.
+`lib.rs` exports `solve` and `solve_with_factors` from `cascade.rs`.
+Both call `solve_using`, which prepares the problem and calls `solve_inner`.
 
-`gulps-core` is the only consumer. It transports the frame through the raw
-ISA gate and prefix frames; nothing in this crate depends on core.
+`solve_inner` tries scalar and rank-one constructions, then `solve_prefix`,
+then `charts::solve_full`. The prefix tries support patterns and specialized
+algebraic constructions. The chart search has its own dispatch over charts,
+repeated spectra, alternative factor roles, and snapped spectra.
 
-## Realization research
+Algebraic candidates pass through `certificate::compiler_solution`.
+`numerical::verify` then checks the selected result against the original spectrum.
+On rejection, `numerical::refine` tries to repair the candidate. If needed,
+`numerical::solve` tries deterministic starts, swapped factors, and inverse-factor
+problems. A successful numerical candidate goes through the same acceptance path.
 
-[Inverse Horn investigation, September 2026](inverse-horn/README.md)
-records the search for a more explanatory realization method: additive
-inverse Horn, hives, rank-three updates, signed singular values, quartic
-completion, and proposed tridiagonal normal forms. It includes the exact
-counterexamples, conditional results, independent reviews, source corrections,
-and failed prototype evidence. No generic constructor or improvement to this
-crate resulted from that investigation.
+`solve_with_factors` reuses the verification eigenbasis for endpoint factors.
+It checks their reconstruction before returning them.
 
-The separate exact-model question is settled for n=4. The reviewed R0217
-sparse selector enumerates 288 row/column support records, reduces each by its
-actual rank and pivots, and selects an algebraic sign cell before reconstructing
-an original-role `SO(4)` frame. Its scope includes multiplicities, endpoints,
-zero support, singular fibres, both target lifts, and all permitted factor
-roles. The reproducible certificate is in
-[`dev/research/attempts/2026-09-04-R217-sparse-selector/`](../../../dev/research/attempts/2026-09-04-R217-sparse-selector/)
-and returns `PASS`.
+## Where the code lives
 
-That theorem assumes effective exact ordered-field arithmetic and algebraic
-sign/root primitives. It does not provide a stable binary64 implementation;
-the production cascade remains a separate engineering artifact.
-
-## API
-
-```rust
-pub fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<nalgebra::Matrix4<f64>>;
-```
-
-Monodromy coordinates remain the input: GULPS trajectories already use them,
-and raw eigenvalues would require an ordering and square-root convention.
-`Solution`, `Rung`, and the complex `Mat4` alias require `diagnostics`.
-
-`solve_with_factors` returns `(O, L, R, phase)`, satisfying
-`D_C O D_G = exp(i phase) L D_T R`, with all three matrices in SO(4).
-The verification matrix is `M = U Uᵀ`, where `U = D_C O D_G`.
-For unitary symmetric `M`, its real and imaginary parts are commuting real
-symmetric matrices. Their common orthogonal eigenbasis gives `L`; then
-`R = exp(-i phase) D_T† Lᵀ U`. The spectral match orders that eigenbasis.
-The central sign selects phase 0 or π/2. Repeated eigenvalues permit a choice
-of basis within each eigenspace; reconstruction checks the resulting factors.
-
-This applies the magic-basis Cartan decomposition in
-[Zhang, Vala, Whaley and Sastry, Eqs. (19–20)](https://arxiv.org/pdf/quant-ph/0209120).
-GULPS converts these three SO(4) matrices to local qubit gates and propagates
-their phases. It no longer diagonalizes each solved segment again.
-
-## Master object and certificate
-
-`M = D_C · O · Λ · Oᵀ · D_C` with `D_C = mb(Can(C))` and `Λ = mb(Can(G))²`,
-both diagonal. The target fixes the elementary symmetric functions `e₁, e₂`
-of `M` (`e₄` is determined, `e₃ = conj(e₁) e₄`). Matching uses the symmetric
-functions, so routing does not degrade at repeated spectra.
-
-Acceptance is rootwise. For a simple target the annihilation bound on the
-master's own characteristic polynomial is a complete certificate: `bound < 1e-8`
-proves the master spectrum matches the target to that scale, and the frame is
-already known to be `SO(4)`, so the algebraic certificate needs no eigendecomposition.
-`solution.residual` then carries that bound, a rigorous upper bound on the
-spectral error rather than the exact diagonalization residual. Repeated targets
-are diagonalized against the matched root blocks by real spectral projectors and
-certified at `1e-8`. A frame that fails the certificate is discarded whatever
-rung produced it.
-
-## Numerical fallback
-
-The public `solve` screens the algebraic result against the original spectrum.
-If that fails, it refines the frame with the spectral LM implementation from
-`dev/prototypes/2026-09-21-lm-sandwich/solver.rs`. A decline triggers deterministic
-restarts, swapped-factor and inverse-factor retries. Successful numerical frames
-still pass the production certificate and spectral screen and use `Rung::Numerical`.
-The finite iteration budget can be exhausted; a decline does not prove infeasibility.
-
-## Cascade
-
-The rungs run in order on the input as given and the first certified frame
-returns. Exact strata first, then the two one-sided accelerators, then the
-chart atlas. Measured on the locked corpora (2026-09-07), the chart atlas
-alone solves every simple-spectrum row; `Radical` is load-bearing for 56
-rows with a `3 + 1` or `2 + 1 + 1` gate, the resonance, `OnePlusThree` and
-`Interior` rungs for one to three near-degenerate rows each, and the support
-strata, `Klein` and `Interior` for latency (2x on linspace, 1.5x on Haar).
-The `2 + 2` Plücker construction remains a separately attributed `Pair22`
-rung because it is reached directly by the production cascade; it shares the
-same forward certificate as the other confluent constructions.
-
-1. Support strata from the routed root mask: signed-permutation vertices,
-   one-Givens edges linear in `cos 2θ`, two-Givens faces as independent
-   `2 × 2` blocks (`Vertex`, `Edge`, `Face`).
-2. Klein-circulant one-sided chart: `e₁` linear in the orthostochastic
-   diagonal, `e₂` one real quadratic (`Klein`).
-3. Double confluence (repeated inner and repeated target value): the
-   resonance construction.
-4. Confluent radical strata of the genus-3 curve: skeleton and pin-pair theta
-   characteristics in all four orientations (`Radical`).
-5. Routed `1 + 3` peel: nine zero-entry walls, then the dense Heron-plane
-   selector (`OnePlusThree`).
-6. Interior three-Givens charts: the sextic eliminant of one chart, isolated
-   real roots, linear back-substitution (`Interior`).
-7. The row-in-plane chart atlas (`Chart`): one row of `O` in a coordinate
-   2-plane, the inner solve a line cut by the Heron quartic; 48 charts × 2
-   target lifts × 3 spectral roles. First the second-order wall rule: for
-   every record and block end the target root nearest the split-off product
-   `λ_a μ_b` gives the phase margin `m`; the block frames of the chart at that
-   end on the target projected onto the wall are points of the 3×3 core
-   curve, and the fibre leaves them at `t' = m/κ(R₁) − m² κ₂/κ³`, with `κ`
-   and `κ₂` the exact first- and second-order phase rates of the split-off
-   root (R0224-H2, R0227-H1, both verified) and `R₁` the first-order
-   transverse shift of the block frame; the four candidates of smallest `|m|`
-   are probed. Then the chord points, the fixed fractions, the wall pass
-   through the block frames nearest a target root, and exact selection from
-   each chart's discriminant.
-
-## Modules
-
-| file | contents |
+| Source | Current responsibility |
 |---|---|
-| `lib.rs` | the public boundary |
-| `problem.rs` | input normalization (`PreparedSandwich`), frame metrics, exact spectrum kinds |
-| `cascade.rs` | rung dispatch and the certificate gate |
-| `certificate.rs` | the rootwise certificate: annihilation bound, spectral projectors |
-| `support_strata.rs` | vertex, edge, face, and the confluence router |
-| `radical.rs` | the genus-3 curve: residue law, skeletons, pin pairs |
-| `klein.rs` | Klein-circulant chart and its real quartic |
-| `two_plus_two.rs` | `2 + 2` spectra in squared Plücker coordinates |
-| `resonance.rs` | double-confluence construction |
-| `one_plus_three.rs` | routed `1 + 3` walls and the dense selector |
-| `three_givens.rs` | the three-Givens chart eliminant |
-| `interior.rs` | the interior chart scan and its bracketed root extraction |
-| `charts.rs` | the row-in-plane atlas and its leaves |
-| `chart_precision.rs` | conditioning of a chart's affine system near clustered spectra |
-| `cpoly.rs` | complex polynomial helpers, companion roots |
+| `cascade.rs` | Public entry points, dispatch, shared math, profiling, and diagnostic routes |
+| `problem.rs` | Spectra, target branches, characteristic coefficients, and multiplicity classification |
+| `certificate.rs` | Candidate checks, spectral acceptance, and older diagnostic endpoint routines |
+| `numerical.rs` | LM, spectral verification, and production endpoint factors |
+| `support_strata.rs`, `one_plus_three.rs`, `two_plus_two.rs`, `resonance.rs`, `klein.rs` | Specialized algebraic constructions |
+| `charts.rs`, `interior.rs`, `three_givens.rs`, `chart_precision.rs` | Algebraic chart search, reconstruction, root selection, and numerical precision helpers |
+| `radical.rs`, `cpoly.rs` | Radical constructions and polynomial root machinery |
 
-## Validation
+These boundaries overlap. The table is a map of the current code, not an
+endorsement of its organization. In particular, `cascade.rs` and `charts.rs`
+both control search order, while verification spans several modules.
 
-See the [development instructions](../README.md#development) for building,
-testing, regenerating the corpus, and comparing a prototype.
+## Design direction
 
-Historical measurements (stride 1, WSL, 2026-09-08; timings vary between runs):
+The production reading path should expose preparation, candidate construction,
+refinement, acceptance, and optional factor extraction in that order.
 
-| corpus | solved | p50 | p99 | worst |
-|---|---|---|---|---|
-| stratified (13,181 exact and near-Weyl strata) | 13,179 | 2.9 µs | 0.96 ms | 152 ms (a decline) |
-| linspace (761,308) | all | 2.9 µs | 95 µs | 1.63 ms |
-| Haar (300,000) | all | 2.18 µs | 21 µs | 0.39 ms |
+- One place owns the outer search order and retry policy. Each construction
+  owns its mathematical subproblem and local enumeration.
+- One place owns final acceptance against the original input. Cheap algebraic
+  rejection tests remain distinct from that acceptance check.
+- Shared spectral and polynomial operations have explicit owners and imports.
+  A constructor does not obtain unrelated utilities through its parent.
+- A named type represents a mathematical object or a meaningful search record.
+  Avoid long positional tuples, integer modes, and wrappers around one matrix.
+- Diagnostics stay outside the production reading path.
 
-The exact `RankOne31` rung now handles the registered exact `3+1` inputs
-directly by grouped spectral-mass recovery and a Householder completion. In
-the 2026-09-10 replay it owned 1,048 stratified rows and 16,562 linspace rows.
-The two remaining stratified declines are rows 2889 and 7172. Each has one gate that is
-`3 + 1` up to a phase deviation of about 1e-8 (row 2889: the fourth phase of
-`G` sits 9e-9 from its repeated triple; row 7172: `C`, 3e-9), a repeated or
-conjugate pair on the other gate, and a generic target. That is the band
-between the exact-stratum rungs, which fire only on exact repeats, and the
-generic charts, whose inner systems lose the row at that conditioning. A
-snapped `3 + 1` frame misses the original problem by the deviation itself,
-above the certificate, and the stabilizer-orbit closure of a snapped frame is
-refuted (registry R0212-H1); a linearized correction is excluded by the
-closed-form rule. A decline costs 110 to 160 ms, all in the chart tier's
-exhaustive pass.
+Before moving every existing algorithm, measure its contribution. Disable one
+route at a time and compare coverage and runtime, including difficult boundary
+cases. Retain a specialized route for demonstrated correctness or speed benefits.
+Do not infer redundancy from similar names or equations.
 
-## Known non-closed-form steps
+Use the existing corpus for these changes. It checks actual spectra and endpoint
+reconstruction independently of the internal acceptance path. Measure GULPS
+integration as well as isolated solver time. The previous endpoint-factor change
+showed why those measurements can differ.
 
-Three bounded root-bracketing steps remain and are marked in the code: the
-interior rung refines an isolated sextic root by Illinois regula falsi with a
-QZ rescue on accepted candidates; the chart atlas's exact pass isolates sign
-changes of a chart discriminant by bisection; and the near-`3+1` leaf locates
-sign changes of a cubic along an ellipse by sampling and bisection. All three
-are certificate-gated and bounded; none is a Newton or descent step.
+This is a design target. The source has not yet been reorganized to satisfy it.

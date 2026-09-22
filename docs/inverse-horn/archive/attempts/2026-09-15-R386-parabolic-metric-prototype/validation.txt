@@ -1,2 +1,0 @@
-python3 dev/research/scripts/check_research_integrity.py
-research integrity passed
