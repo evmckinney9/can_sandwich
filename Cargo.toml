@@ -26,24 +26,11 @@ strip = "symbols"
 
 [features]
 default = []
-# Profiler counters and the corpus driver. Default builds compile them out.
+# Internal diagnostic routes and profiler counters.
 diagnostics = []
-# JSON-lines adapter for the independent public competition runner.
-benchmark = ["dep:serde_json"]
 
 [dependencies]
 nalgebra = "0.35"
 # Companion-matrix eigenvalues for the polynomial root primitives.
 faer = { version = "0.24", default-features = false, features = ["std"] }
 dyn-stack = "0.13"
-serde_json = { version = "1", optional = true, features = ["float_roundtrip"] }
-
-[[bin]]
-name = "can_sandwich"
-path = "benchmark/diagnostics.rs"
-required-features = ["diagnostics"]
-
-[[bin]]
-name = "can_sandwich_server"
-path = "benchmark/production_server.rs"
-required-features = ["benchmark"]

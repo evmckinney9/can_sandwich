@@ -121,39 +121,25 @@ same forward certificate as the other confluent constructions.
 | `charts.rs` | the row-in-plane atlas and its leaves |
 | `chart_precision.rs` | conditioning of a chart's affine system near clustered spectra |
 | `cpoly.rs` | complex polynomial helpers, companion roots |
-| `../benchmark/diagnostics.rs` | corpus driver (`diagnostics` feature) |
 
 ## Build and validation
 
-The crate is a member of the `crates/` workspace.
+This crate has its own Cargo workspace. From its root:
 
 ```sh
-cd crates
-cargo test -p can_sandwich
-cargo run --release -p can_sandwich --features diagnostics -- bench-npy corpus.npy [stride]
-cargo run --release -p can_sandwich --features diagnostics -- bench-row corpus.npy ROW [reps]
+make test
+cargo test --release --test solver compare_candidate -- --ignored --nocapture
 ```
 
-A corpus is a little-endian C-order `(N, 3, 3)` f64 array of `[C, G, T]`
-monodromy triples. `PROF=1` prints per-stage timings from the driver.
+The test suite and prototype comparison share the same cases and independent
+checker. See [tests](../tests/README.md).
 
 ## Corpora
 
-`corpus/` holds the locked realization corpora.
+`tests/cases.bin` holds all solver inputs as little-endian binary64 triples.
+See [the fixture layout](../tests/README.md) for source row ranges.
 
-| file | rows | tracked | what it is |
-|---|---|---|---|
-| `feasible_stratified.npy` | 13,181 | yes | `[C, G, T]` triples on exact and near Weyl strata, the fixture every realization change is measured against |
-| `feasible_stratified.strata.npy` | 13,181 | yes | family and section code per row (`-1` known regression, `0` explicit witness, `1` target stratum) |
-| `feasible_stratified.pipeline.npz` | 10,935 | yes | explicit-witness targets as full two-qubit unitaries, replayed through the public `GulpsDecomposer` |
-| `feasible_stratified.json` | | yes | generation parameters and the sha256 of the three artifacts |
-| `feasible_linspace.npy` | 761,308 | no | linspace corpus |
-| `feasible_haar.npy` | 300,000 | no | Haar corpus |
-
-The two untracked corpora are 76 MB; copy them into `corpus/` from the archive.
-`corpus/.gitignore` excludes them.
-
-Current locked numbers (stride 1, WSL, 2026-09-08; timings vary between runs):
+Historical measurements (stride 1, WSL, 2026-09-08; timings vary between runs):
 
 | corpus | solved | p50 | p99 | worst |
 |---|---|---|---|---|

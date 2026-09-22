@@ -1,24 +1,47 @@
-# Solver regression tests
+# Solver tests
 
-Run `python -m pytest tests` with NumPy, pytest, and Rust installed. The tests
-build the production JSON-lines adapter in release mode. The witness checker
-in `benchmark/run.py` verifies real SO(4) frames and the full eigenvalue
-multiset independently of the solver certificate. No GULPS or Qiskit import
-is needed. A known decline is a strict expected failure; an invalid frame,
-protocol error, or unexpected success fails the test.
+`cargo test --release` runs the Rust tests, including all 1,077,823 fixture cases.
+The checker verifies SO(4) and the actual product eigenvalues at `1e-8`, using
+faer independently of the solver's certificate. Declines and invalid frames fail.
+Production still has known failures.
 
-`fixtures/gulps_segments.json` preserves 1,873 solver calls from GULPS commit
-`38014b5`, with solver commit `af4e5ea`. Inputs were captured directly at
-`gulps-core::solver::solve` before removing the original coverage sweeps:
+To compare a prototype, replace the local `candidate` function in `solver.rs`
+(or call your own module from it), then run:
 
-- `strata/`: 38 dressed chamber points under nine native gate sets.
-- `wall/`: five near-wall points under those gate sets, including 27 declines.
-- `property/`: 12 seeded dressed targets under each gate set.
-- `forward/`: 512 physically generated depth-two segments from the Rust test.
+```sh
+cargo test --release --test solver compare_candidate -- --ignored --nocapture
+```
 
-Each row preserves binary64 coordinates as round-trippable decimal numbers,
-the source case, and its observed solved/declined status. Segment numbers count
-calls within a source case. `forward/` numbers follow the original nested
-C-class, G-class, local-frame iteration order. Zero- and one-gate decompositions
-made no solver call. Failed decompositions contributed calls up to and including
-the first decline. These fixtures do not depend on current GULPS planning.
+Both algorithms use the same cases and checker. The output shows passes,
+solver time excluding verification, and fixed/regressed row indices.
+The candidate initially calls production so the comparison can be checked.
+
+`cases.bin` is the only data file: 1,077,823 records of nine little-endian IEEE-754
+binary64 values, ordered `[C0,C1,C2,G0,G1,G2,T0,T1,T2]`. No header or padding;
+72 bytes per record, 77,603,256 bytes total. Rust reads it with `f64::from_le_bytes`.
+SHA-256: `7624f29bbe40cab22bef69ffc8c0e3c31b73b867b76a85ded94f8ca10c67eac1`.
+
+Rows preserve the original bits, order, and duplicates. Half-open ranges:
+
+| Source | Rows |
+| --- | --- |
+| Basic | 0–6 |
+| Stratified | 6–13,187 |
+| Linspace | 13,187–774,495 |
+| Haar | 774,495–1,074,495 |
+| Targeted | 1,074,495–1,075,950 |
+| GULPS calls (`38014b5`, solver `af4e5ea`) | 1,075,950–1,077,823 |
+
+`generate.py` contains the original grid/Haar, stratified, and targeted
+construction recipes. Basic examples and captured GULPS calls are fixed
+regression literals in that script. Generation uses NumPy, SciPy, and GULPS;
+Rust tests need none of them. No old arrays or Git checkout are read as inputs.
+
+```sh
+python3 tests/generate.py /tmp/cases.bin
+```
+
+Omit the output path to replace `tests/cases.bin`. Seeds and sample counts are
+fixed. Numerical results depend on NumPy/SciPy/GULPS versions: the current GULPS
+coordinate routines change some stratified and Haar values compared with the
+historical fixture. The checked-in fixture retains its original float bits.

@@ -111,9 +111,9 @@ def check(trials=1000, seed=20260916, starts=32):
            "failed_rows": failed_rows})
 
 
-def check_monodromy_corpus(path="crates/can_sandwich/corpus/feasible_stratified.npy",
+def check_monodromy_corpus(path="crates/can_sandwich/tests/cases.bin",
                            rows=1000, starts=8, exponential=False):
-    data = np.load(path, mmap_mode="r")[:rows]
+    data = np.memmap(path, dtype="<f8", mode="r").reshape(-1, 3, 3)[6:13187][:rows]
     failures = 0; worst = 0.0; worst_coeff = 0.0; failed_rows = []
     for n, (c, g, t) in enumerate(data):
         lam, mu = roots_from_mono(c), roots_from_mono(g)

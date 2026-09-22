@@ -56,9 +56,7 @@ PYTHONPATH=crates/can_sandwich/docs/inverse-horn \
   python crates/can_sandwich/docs/inverse-horn/multiplicative-generic-selector.py \
   --corpus --rows 100 --starts 2
 
-cargo run --release --manifest-path crates/can_sandwich/Cargo.toml \
-  --features diagnostics -- bench-npy \
-  crates/can_sandwich/corpus/feasible_stratified.npy 1000
+cargo test --release --manifest-path crates/can_sandwich/Cargo.toml --test solver production_cases
 ```
 
 The result answers a narrow implementation question: generic six-angle
