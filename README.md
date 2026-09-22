@@ -1,35 +1,34 @@
 # can_sandwich
 
-GULPS depends on what is, to the best of my knowledge, an open problem in
-mathematics. We can solve it numerically. I think current AI models may be close
-to an exact construction.
+GULPS needs to construct two-qubit circuits with a specified nonlocal action.
+This leads to an inverse multiplicative Horn problem: given feasible spectra
+for $A,B,C\in SU(4)$, construct matrices with those spectra such that $AB=C$.
 
-The research changes quickly, so we moved the solver into its own Rust crate
-and Git repository. This is a good problem for models because we can check
-the matrices they produce.
+Numerical methods already let us do this for GULPS. We also want a practical
+exact construction with a proof that covers every feasible input, including
+boundary cases and repeated eigenvalues. To the best of my knowledge, that
+remains an open research problem. I think current AI models may be close to
+finding such a construction. We can check the matrices they produce directly,
+which makes it possible to test their proposals against a large corpus.
 
-For now, we let this be extremely vibe-coded. The algorithm needs to be fast
-and correct over the corpus. That is sufficient for GULPS. We want to keep
-improving it, so this project includes the corpus and tools to compare a
-proposed algorithm with the production solver.
+We moved the solver into its own Rust crate and Git repository because the
+research changes quickly. Much of the implementation is model-generated and
+still experimental. For GULPS, we require it to be fast and correct over the
+corpus. This project contains the corpus and comparison tools so we can test
+proposed algorithms against the production solver as the research develops.
 
-## Problem
+The [research page](docs/research.md) gives the formal problem, the exact input
+model, and the proof requirements. It also explains what general algebraic
+methods already provide and what we hope to improve for dimension four.
 
-Given three feasible spectra, construct matrices $A,B,C\in SU(4)$ with those
-spectra such that $AB=C$. We want a practical exact construction for dimension
-four that also covers boundary points and repeated eigenvalues.
+## GULPS interface
 
-The [formulation](docs/research.md#the-unrestricted-problem) states the problem.
-The [research requirements](docs/research.md#exact-input-and-output) specify the
-input model, known algebraic methods, and what a new construction must prove.
-
-GULPS needs a local gate between two canonical two-qubit gates. Its solver must
-return a real SO(4) matrix in the magic basis, with global phase tracked separately.
-The unrestricted research problem allows any SU(4) witness. The
+GULPS needs a local gate between two canonical two-qubit gates. In the magic
+basis, this is a real SO(4) matrix. The unrestricted research problem allows
+any SU(4) witness. GULPS also tracks global phase separately and permits either
+central-sign branch of the target spectrum. The
 [coordinate conventions](docs/research.md#gulps-coordinates-and-endpoint-factors)
-explain the difference and define the API inputs and outputs.
-
-## Solver
+define this application and the API inputs and outputs.
 
 ```rust
 use nalgebra::Matrix4;
