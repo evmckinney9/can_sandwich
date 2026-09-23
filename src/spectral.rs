@@ -1,7 +1,7 @@
 //! Spectral verification and endpoint factors from the same real eigenbasis.
 use crate::{
     C as Z,
-    problem::{PERMS24, Problem, eigphases, weyl_from_monodromy},
+    problem::{PERMS24, Problem, phases},
 };
 use nalgebra::{Matrix4, SymmetricEigen};
 use std::f64::consts::PI;
@@ -67,8 +67,9 @@ impl Problem {
                 continue;
             };
             let v = eigen.eigenvectors;
-            let cv = v.map(|x| Z::new(x, 0.0));
-            let diag = cv.transpose() * s * cv;
+            let re = v.transpose() * s.map(|z| z.re) * v;
+            let im = v.transpose() * s.map(|z| z.im) * v;
+            let diag = Matrix4::from_fn(|i, j| Z::new(re[(i, j)], im[(i, j)]));
             let mut err: f64 = 0.0;
             for i in 0..4 {
                 for j in 0..4 {
@@ -151,7 +152,7 @@ impl State {
     /// parts of U U^T commute, so its real eigenbasis supplies L.
     pub(crate) fn factors(&self, p: &Problem, t: [f64; 3], o: R4) -> Option<(R4, R4, R4, f64)> {
         let left = self.ordered_basis();
-        let dt = eigphases(weyl_from_monodromy(t)).map(|v| Z::from_polar(1.0, v));
+        let dt = phases(t).map(|v| Z::from_polar(1.0, v));
         let dg = p.right_phases.map(|v| Z::from_polar(1.0, v));
         let u = Matrix4::from_fn(|i, j| p.dc[(i, i)] * o[(i, j)] * dg[j]);
         let phase = if self.sign < 0.0 { PI / 2.0 } else { 0.0 };

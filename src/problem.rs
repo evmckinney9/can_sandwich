@@ -139,9 +139,8 @@ fn routed_product_collision(c: &[C; 4], g: &[C; 4]) -> bool {
 
 /// Canonical spectral form of one depth-two sandwich.
 ///
-/// The Weyl fold, central `rho` lift, unit-circle roots, characteristic
-/// coefficients, and diagonal master-object factors are constructed exactly
-/// once here.
+/// Input phases, both target lifts, unit-circle roots, characteristic
+/// coefficients, and diagonal factors are constructed once here.
 #[derive(Clone, Copy)]
 pub(crate) struct Problem {
     pub(crate) left_phases: [f64; 4],
@@ -158,9 +157,9 @@ pub(crate) struct Problem {
 
 impl Problem {
     pub(crate) fn new(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Self {
-        let left_phases = eigphases(weyl_from_monodromy(c));
-        let right_phases = eigphases(weyl_from_monodromy(g));
-        let target_phases = eigphases(weyl_from_monodromy(t));
+        let left_phases = phases(c);
+        let right_phases = phases(g);
+        let target_phases = phases(t);
 
         let left = left_phases.map(|phase| C::from_polar(1.0, 2.0 * phase));
         let right = right_phases.map(|phase| C::from_polar(1.0, 2.0 * phase));
@@ -203,22 +202,9 @@ impl Problem {
     }
 }
 
-/// Monodromy triple -> Weyl coords (gulps convention `[m₀+m₁, m₀+m₂, m₁+m₂]`).
-pub(crate) fn weyl_from_monodromy(m: [f64; 3]) -> [f64; 3] {
-    [m[0] + m[1], m[0] + m[2], m[1] + m[2]]
-}
-
-#[inline]
-/// The 4 magic-basis eigenphases of `Can(w)` in closed form (no matrix): the diagonal
-/// of `mb(Can(w))`, i.e. `D_C = diag(exp(i·eigphases))`. Same order as `dphase`.
-pub(crate) fn eigphases(w: [f64; 3]) -> [f64; 4] {
-    let h = PI / 2.0;
-    [
-        h * (w[0] - w[1] + w[2]),
-        h * (w[0] + w[1] - w[2]),
-        h * (-w[0] - w[1] - w[2]),
-        h * (-w[0] + w[1] + w[2]),
-    ]
+/// Magic-basis phases directly from the API's monodromy coordinates.
+pub(crate) fn phases(m: [f64; 3]) -> [f64; 4] {
+    [m[1], m[0], -m[0] - m[1] - m[2], m[2]].map(|x| PI * x)
 }
 
 /// Elementary symmetric functions `e₁..e₄` of four scalars (the diagonal-spectrum

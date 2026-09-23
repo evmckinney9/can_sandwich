@@ -3,7 +3,7 @@
 //! Vertex/edge/face are block-support strata of the same spectral update.
 //! `edge_gate` proves, before support-incidence enumeration, whether a vertex or edge
 //! can meet the acceptance contract. The dispatcher then calls the linear
-//! edge/face formulas here. Exact multiplicities enter `solve_confluent` only
+//! edge/face formulas here. Repeated spectra enter `solve_radical` only
 //! after those cheaper strata and the Klein section have declined.
 
 use super::{
@@ -237,19 +237,24 @@ fn solve_radical_orientation(
     targets: &[[C; 4]; 2],
     cap: usize,
 ) -> Option<(Mat4, f64)> {
-    let mut accept = |candidate: crate::algebraic::radical::Solved| match orientation.reconstruction
+    let mut accept = |candidate: crate::algebraic::radical::Frame| match orientation.reconstruction
     {
         RadicalReconstruction::Sandwich { transpose } => {
-            if let Some(frame) = candidate.frame.as_ref() {
-                let started = super::prof::start();
-                let hit = frame_to_o(frame, dc, lam, targets, &orientation.eigenvalues, transpose);
-                super::prof::rec(super::prof::RADICAL_FRAME, started);
-                if hit.is_some() {
-                    return hit;
-                }
+            let started = super::prof::start();
+            let hit = frame_to_o(
+                &candidate,
+                dc,
+                lam,
+                targets,
+                &orientation.eigenvalues,
+                transpose,
+            );
+            super::prof::rec(super::prof::RADICAL_FRAME, started);
+            if hit.is_some() {
+                return hit;
             }
             matrix_to_o(
-                &candidate.m,
+                &candidate.matrix(&orientation.prefix),
                 dc,
                 lam,
                 targets,
@@ -260,7 +265,7 @@ fn solve_radical_orientation(
         RadicalReconstruction::Reanchor { transpose } => {
             let spectrum =
                 Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(&orientation.eigenvalues));
-            let recovered = recover_frame(&candidate.m, &spectrum);
+            let recovered = recover_frame(&candidate.matrix(&orientation.prefix), &spectrum);
             let o = super::apply_transpose(recovered, transpose);
             super::certify_frame_against_targets(o, dc, lam, targets)
         }
@@ -386,13 +391,6 @@ pub(crate) fn solve_radical(
             [0, 1]
         }
     };
-    // The compiler boundary demands a machine-scale (< 1e-12) certificate at a
-    // repeated target.  A first-branch hit below that bar must not end the
-    // branch/orientation search -- it would mask a machine-precise candidate in
-    // the other lift (the orbit census traced every "rho-unique" Radical win to
-    // exactly this short-circuit).  Hold it as the fallback instead.
-    let boundary_exact = strata.target.iter().any(|kind| kind.is_repeated());
-    let mut held: Option<(Mat4, f64)> = None;
     for bi in branch_order {
         let w = &target_specs[bi];
         if (pcg - w.iter().product::<C>()).norm() > 1e-8 {
@@ -446,16 +444,9 @@ pub(crate) fn solve_radical(
                 reconstruction: RadicalReconstruction::Reanchor { transpose: false },
             },
         ];
-        // The hyperelliptic characteristic set is already exhausted by the
-        // 36 even skeletons and 28 odd pin pairs. The old split quartic is an
-        // alternate boundary representation, not an additional characteristic;
-        // after vertex/edge/face decline it has no independent ownership. Thus
-        // production needs only the shallow pin-pair family: six hot cells,
-        // followed by the remaining odd characteristics.
-        // The unbounded second pass owns only 0.49% of the rows, but removing
-        // it drops coverage (14 unsolved on the locked corpus), degrades the
-        // worst residual by 6x, and costs 4x mean latency as the fallthrough
-        // hits the interior rungs.
+        // Search six pin cells in each orientation before the remaining
+        // characteristics. Keep the complete pass: shallow-only search sends
+        // more rows to slower numerical recovery.
         const PASS_MAJOR: [(usize, usize); 8] = [
             (0, 0),
             (0, 1),
@@ -474,7 +465,6 @@ pub(crate) fn solve_radical(
         } else {
             &PASS_MAJOR
         };
-        let mut deferred_target: Option<(Mat4, f64)> = None;
         for &(pass, action) in schedule {
             let cap = if pass == 0 { 6 } else { usize::MAX };
             // Scalar and rank-one spectra have one closed formula. Repeating
@@ -486,37 +476,12 @@ pub(crate) fn solve_radical(
             if !active(orientation.owner) {
                 continue;
             }
-            if let Some(mut hit) = solve_radical_orientation(orientation, dc, lam, targets, cap) {
-                if action == 2 && target_only && pass == 1 && hit.1 >= 1e-12 {
-                    deferred_target = Some(hit);
-                    continue;
-                }
-                if action == 3 {
-                    hit = deferred_target
-                        .take()
-                        .filter(|old| old.1 < hit.1)
-                        .unwrap_or(hit);
-                }
-                if boundary_exact && hit.1 >= 1e-12 {
-                    if held.as_ref().is_none_or(|old| hit.1 < old.1) {
-                        held = Some(hit);
-                    }
-                    break; // this lift's best is boundary-doomed; try the other lift
-                }
+            if let Some(hit) = solve_radical_orientation(orientation, dc, lam, targets, cap) {
                 return Some(hit);
             }
         }
-        if let Some(hit) = deferred_target {
-            if boundary_exact && hit.1 >= 1e-12 {
-                if held.as_ref().is_none_or(|old| hit.1 < old.1) {
-                    held = Some(hit);
-                }
-                continue;
-            }
-            return Some(hit);
-        }
     }
-    held
+    None
 }
 
 /// Recover the physical frame from the symmetric sandwich matrix already
@@ -668,125 +633,4 @@ fn frame_to_o(
             k += 1;
         }
     }
-}
-
-/// The multiplicity recursion, split out so the CHEAP exact charts (Klein and
-/// its dual) get a look at the confluent rows first. Routing those rows to the
-/// interior chart scans instead costs 525 machine-precise rows; Klein
-/// behind the same FAST_ACCEPT gate, so precision is protected by construction
-/// and only the ordering changes.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn solve_confluent(
-    c_in: &[C; 4],
-    g_in: &[C; 4],
-    target_specs: &[[C; 4]; 2],
-    dc: &Mat4,
-    lam: &Mat4,
-    targets: &[[C; 4]; 2],
-    strata: StratumSignature,
-) -> Option<(Mat4, f64, super::Rung)> {
-    if strata.g == SpectrumKind::Pair22 || strata.c == SpectrumKind::Pair22 {
-        let tp = super::prof::start();
-        let hit = super::two_plus_two::solve(
-            c_in,
-            g_in,
-            target_specs,
-            dc,
-            lam,
-            targets,
-            strata.g == SpectrumKind::Pair22,
-            strata.c == SpectrumKind::Pair22,
-            [false; 2],
-            true,
-            false,
-        );
-        super::prof::rec(super::prof::RADICAL_TOTAL, tp);
-        if let Some((o, r)) = hit {
-            return Some((o, r, super::Rung::Pair22));
-        }
-    }
-    let tp = super::prof::start();
-    let rad_hit = if strata.has_confluence() {
-        solve_radical(c_in, g_in, target_specs, dc, lam, targets, strata)
-    } else {
-        None
-    };
-    super::prof::rec(super::prof::RADICAL_TOTAL, tp);
-    let target_repeated = strata.target.iter().any(|kind| kind.is_repeated());
-    if let Some((o, r)) = rad_hit {
-        // At a repeated target the compiler boundary demands a machine-scale
-        // certificate; a looser radical hit can never pass it, so it must not
-        // mask the degenerate-limit formula below.
-        if !target_repeated || r < 1e-12 {
-            return Some((o, r, super::Rung::Radical));
-        }
-    }
-    // Double confluence (a repeated inner value AND a repeated target value):
-    // a doubled target value collides two branch points of the radical
-    // machinery's curve, degenerating its pin-pair characteristics -- and the
-    // same collision forces a rank-two kernel whose vanishing interaction
-    // matrix turns the spectral conditions linear.  The resonance construction
-    // is that degenerate limit; it runs exactly on the radical decline set, so
-    // the population the curve formulas own pays nothing.
-    let target_deep = strata.target.iter().any(|kind| {
-        matches!(
-            kind,
-            super::SpectrumKind::Triple31 | super::SpectrumKind::Scalar4
-        )
-    });
-    if (strata.c.is_repeated() || strata.g.is_repeated() || target_deep) && target_repeated {
-        let tp = super::prof::start();
-        let hit = super::resonance::solve(c_in, g_in, target_specs, dc, lam, targets);
-        super::prof::rec(super::prof::RADICAL_TOTAL, tp);
-        if let Some((o, r)) = hit
-            && r < 1e-12
-        {
-            return Some((o, r, super::Rung::Radical));
-        }
-    }
-    if let Some((o, r)) = rad_hit {
-        // Preserve the pre-resonance fall-through: the boundary will judge it.
-        return Some((o, r, super::Rung::Radical));
-    }
-    if strata.g == SpectrumKind::Pair22 || strata.c == SpectrumKind::Pair22 {
-        let tp = super::prof::start();
-        let hit = super::two_plus_two::solve(
-            c_in,
-            g_in,
-            target_specs,
-            dc,
-            lam,
-            targets,
-            strata.g == SpectrumKind::Pair22,
-            strata.c == SpectrumKind::Pair22,
-            [false; 2],
-            false,
-            true,
-        );
-        super::prof::rec(super::prof::RADICAL_TOTAL, tp);
-        if let Some((o, r)) = hit {
-            return Some((o, r, super::Rung::Pair22));
-        }
-    }
-    if strata.target.contains(&SpectrumKind::Pair22) {
-        let tp = super::prof::start();
-        let hit = super::two_plus_two::solve(
-            c_in,
-            g_in,
-            target_specs,
-            dc,
-            lam,
-            targets,
-            false,
-            false,
-            strata.target.map(|kind| kind == SpectrumKind::Pair22),
-            true,
-            true,
-        );
-        super::prof::rec(super::prof::RADICAL_TOTAL, tp);
-        if let Some((o, r)) = hit {
-            return Some((o, r, super::Rung::Pair22));
-        }
-    }
-    None
 }

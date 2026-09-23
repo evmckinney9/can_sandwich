@@ -60,7 +60,7 @@ pub mod prof {
     #[cfg(feature = "diagnostics")]
     use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
     #[cfg(feature = "diagnostics")]
-    pub const N: usize = 50;
+    pub const N: usize = 49;
     /// Slot indices, one per stage or event counter.
     pub const EDGE: usize = 0;
     pub const CHART_COEFFS: usize = 1;
@@ -76,42 +76,41 @@ pub mod prof {
     pub const SW_RANK1: usize = 11;
     pub const SW_TWO_STEP: usize = 12;
     pub const SW_MIRROR: usize = 13;
-    pub const SW_VERIFY: usize = 14;
-    pub const SW_PAIR_ROOTS: usize = 15;
-    pub const SW_WORD_GATE: usize = 16;
-    pub const GATE_BOX: usize = 17;
-    pub const GATE_HULL: usize = 18;
-    pub const GATE_PASS: usize = 19;
-    pub const TIER_REANCHOR_FAST: usize = 20;
-    pub const N_TRY_MU: usize = 21;
-    pub const RJ_BASE: usize = 22;
-    pub const RJ_SKEL: usize = 23;
-    pub const RJ_UREAL: usize = 24;
-    pub const RJ_USUM: usize = 25;
-    pub const N_ACCEPT: usize = 26;
-    pub const RJ_V_IMAG: usize = 27;
-    pub const RJ_V_NEG: usize = 28;
-    pub const RJ_V_SUM: usize = 29;
-    pub const SW_BASE: usize = 30;
-    pub const ARC_PAIR_SKIP: usize = 31;
-    pub const ARC_CAND_SKIP: usize = 32;
-    pub const URAY_SKIP: usize = 33;
-    pub const SKEL_SKIP: usize = 34;
-    pub const BASE_FAIL_FORCED: usize = 35;
-    pub const BASE_FAIL_SKEL: usize = 36;
-    pub const BASE_FAIL_PAIR: usize = 37;
-    pub const DEV_LT_1EM6: usize = 38;
-    pub const DEV_MID: usize = 39;
-    pub const DEV_GT_1EM2: usize = 40;
-    pub const PAIR_GATE_SOME: usize = 41;
-    pub const PAIR_GATE_NONE: usize = 42;
-    pub const INH_SKIP: usize = 43;
-    pub const RED_SKIP: usize = 44;
-    pub const SW_HEADER: usize = 45;
-    pub const KLEIN_TOTAL: usize = 46;
-    pub const SEG_PREPARE: usize = 47;
-    pub const SEG_EDGEGATE: usize = 48;
-    pub const SEG_VERTEX: usize = 49;
+    pub const SW_PAIR_ROOTS: usize = 14;
+    pub const SW_WORD_GATE: usize = 15;
+    pub const GATE_BOX: usize = 16;
+    pub const GATE_HULL: usize = 17;
+    pub const GATE_PASS: usize = 18;
+    pub const TIER_REANCHOR_FAST: usize = 19;
+    pub const N_TRY_MU: usize = 20;
+    pub const RJ_BASE: usize = 21;
+    pub const RJ_SKEL: usize = 22;
+    pub const RJ_UREAL: usize = 23;
+    pub const RJ_USUM: usize = 24;
+    pub const N_CONSTRUCTED: usize = 25;
+    pub const RJ_V_IMAG: usize = 26;
+    pub const RJ_V_NEG: usize = 27;
+    pub const RJ_V_SUM: usize = 28;
+    pub const SW_BASE: usize = 29;
+    pub const ARC_PAIR_SKIP: usize = 30;
+    pub const ARC_CAND_SKIP: usize = 31;
+    pub const URAY_SKIP: usize = 32;
+    pub const SKEL_SKIP: usize = 33;
+    pub const BASE_FAIL_FORCED: usize = 34;
+    pub const BASE_FAIL_SKEL: usize = 35;
+    pub const BASE_FAIL_PAIR: usize = 36;
+    pub const DEV_LT_1EM6: usize = 37;
+    pub const DEV_MID: usize = 38;
+    pub const DEV_GT_1EM2: usize = 39;
+    pub const PAIR_GATE_SOME: usize = 40;
+    pub const PAIR_GATE_NONE: usize = 41;
+    pub const INH_SKIP: usize = 42;
+    pub const RED_SKIP: usize = 43;
+    pub const SW_HEADER: usize = 44;
+    pub const KLEIN_TOTAL: usize = 45;
+    pub const SEG_PREPARE: usize = 46;
+    pub const SEG_EDGEGATE: usize = 47;
+    pub const SEG_VERTEX: usize = 48;
     #[cfg(feature = "diagnostics")]
     pub const NAMES: [&str; N] = [
         "edge",
@@ -128,7 +127,6 @@ pub mod prof {
         "sw_rank1",
         "sw_two_step",
         "sw_mirror",
-        "sw_verify",
         "sw_pair_roots",
         "sw_word_gate",
         "gate_box",
@@ -140,7 +138,7 @@ pub mod prof {
         "rj_skel",
         "rj_ureal",
         "rj_usum",
-        "n_accept",
+        "n_constructed",
         "rj_v_imag",
         "rj_v_neg",
         "rj_v_sum",

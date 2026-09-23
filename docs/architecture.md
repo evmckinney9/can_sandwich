@@ -22,9 +22,9 @@ explains how to compare a separate algorithm with the corpus runner.
 | `corpus.rs` | Independent checks, candidate comparison, and accuracy and latency reports |
 | `algebraic/mod.rs` | Scalar and rank-one formulas, dispatch, and shared frame operations |
 | `algebraic/certificate.rs` | Candidate checks, repeated-root repair, and calls to the verifier |
-| `algebraic/support_strata.rs` | Vertex, edge, face, and confluence dispatch |
+| `algebraic/support_strata.rs` | Vertex, edge, face, and radical orientation search |
 | `algebraic/klein.rs` | Quaternion section and eigenframe recovery |
-| `algebraic/two_plus_two.rs`, `radical.rs`, `resonance.rs` | Repeated-spectrum constructions |
+| `algebraic/radical.rs` | Repeated-spectrum constructions |
 | `algebraic/interior.rs`, `three_givens.rs` | Three-Givens charts and their polynomial equations |
 
 The search tries scalar and rank-one formulas, vertices, edges, faces, the
@@ -45,8 +45,8 @@ classifies the inputs, `init_tables` prepares the three-Givens lookup table,
 and `certify_frame` checks a proposed complex frame through the production
 acceptance path. Set `PROF=1` and call `prof::dump()` for stage timings.
 
-The retired row-in-plane chart solver, waypoint experiments, and paired-edge
-ablation APIs remain in the source snapshot at commit `b3dbb7f`.
+The retired row-in-plane, resonance, and two-pair solvers, waypoint experiments,
+and paired-edge ablation APIs remain in the source snapshot at commit `b3dbb7f`.
 They are no longer part of the diagnostic interface. The two public solver
 function signatures are unchanged.
 
@@ -57,8 +57,8 @@ and latency before and after a change. Entire constructions may be removed
 when simpler remaining paths cover their cases. Keep the checker and its
 thresholds independent of the experiment. Record rejected approaches as well
 as improvements so later work can build on the measurements.
-The [September 2026 simplification](optimization.md) records the first set of
-stage-removal experiments and their measured results.
+The [September 2026 simplification](optimization.md) records the
+stage-removal experiments, numerical search changes, and measured results.
 
 Changes to factor extraction also need measurements in GULPS, where different
 valid endpoint choices can affect later decompositions and synthesis time.

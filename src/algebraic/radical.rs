@@ -1,26 +1,16 @@
 //! Candidate constructions for degenerate spectra using polynomial roots
 //! and residue identities. Each candidate is checked against the original problem.
-use nalgebra::{Complex, Matrix4};
-
-pub(crate) type C = Complex<f64>;
-pub(crate) type Mat4 = Matrix4<C>;
+use super::{C, Mat4};
 
 pub(crate) const CTOL: f64 = 2e-3;
 pub(crate) const XTOL: f64 = 1e-9;
 
-/// Frame ingredients of a radical-stratum solution: `m = assemble(c, a,
-/// &peels)`, so the realizing orthogonal frame has the peel vectors as
-/// columns (gate values `c + rho`) completed orthonormally on the
-/// c-eigenspace. `None` for the certified pass-through, whose `m` is
-/// already a production frame.
+/// Candidate peel vectors, with gate values `c + rho`. Complete their span
+/// in the c-eigenspace to obtain a frame. Build the symmetric matrix only
+/// when an inverse orientation or eigenframe reconstruction needs it.
 pub(crate) struct Frame {
     pub(crate) c: C,
     pub(crate) peels: Vec<([f64; 4], C)>,
-}
-
-pub(crate) struct Solved {
-    pub(crate) m: Mat4,
-    pub(crate) frame: Option<Frame>,
 }
 
 /// Stack-allocated partition of exactly 4 indices into non-empty clusters.
@@ -87,50 +77,21 @@ fn inherits_clusters(mu: &[C; 4], delta: &[C; 4], dcl: &Clusters4) -> bool {
     })
 }
 
-pub(crate) fn sdist(x: &[C; 4], y: &[C; 4]) -> f64 {
-    fn heap(k: usize, idx: &mut [usize; 4], x: &[C; 4], y: &[C; 4], best: &mut f64) {
-        if k == 1 {
-            let d = (0..4)
-                .map(|i| (x[i] - y[idx[i]]).norm())
-                .fold(0.0f64, f64::max);
-            *best = best.min(d);
-            return;
-        }
-        for i in 0..k {
-            heap(k - 1, idx, x, y, best);
-            if k.is_multiple_of(2) {
-                idx.swap(i, k - 1)
-            } else {
-                idx.swap(0, k - 1)
+impl Frame {
+    pub(crate) fn matrix(&self, a: &[C; 4]) -> Mat4 {
+        let c = self.c;
+        let peels = &self.peels;
+        let d: [C; 4] = std::array::from_fn(|j| C::from_polar(1.0, a[j].arg() / 2.0));
+        let mut m = Mat4::from_fn(|i, j| if i == j { c * a[i] } else { C::default() });
+        for (vec, rho) in peels {
+            for i in 0..4 {
+                for j in 0..4 {
+                    m[(i, j)] += *rho * d[i] * d[j] * C::new(vec[i] * vec[j], 0.0);
+                }
             }
         }
+        m
     }
-    let mut idx = [0usize, 1, 2, 3];
-    let mut best = f64::INFINITY;
-    heap(4, &mut idx, x, y, &mut best);
-    best
-}
-
-fn eig4(m: &Mat4) -> Option<[C; 4]> {
-    if (0..4).any(|i| (0..4).any(|j| !m[(i, j)].re.is_finite() || !m[(i, j)].im.is_finite())) {
-        return None;
-    }
-    let fm = faer::Mat::<C>::from_fn(4, 4, |i, j| m[(i, j)]);
-    let ev = fm.eigenvalues().ok()?;
-    Some(std::array::from_fn(|i| ev[i]))
-}
-
-fn assemble(c: C, a: &[C; 4], peels: &[([f64; 4], C)]) -> Mat4 {
-    let d: [C; 4] = std::array::from_fn(|j| C::from_polar(1.0, a[j].arg() / 2.0));
-    let mut m = Mat4::from_fn(|i, j| if i == j { c * a[i] } else { C::default() });
-    for (vec, rho) in peels {
-        for i in 0..4 {
-            for j in 0..4 {
-                m[(i, j)] += *rho * d[i] * d[j] * C::new(vec[i] * vec[j], 0.0);
-            }
-        }
-    }
-    m
 }
 
 /// Monic quartic from four roots, highest-first, no allocation.
@@ -542,14 +503,6 @@ fn poly_from_roots(scale: C, rs: &[C]) -> [C; 9] {
         }
     }
     p
-}
-
-/// The pairing quadratic q of a candidate, in the two forms the rungs
-/// produce it: the corner root form gamma (z - t1)(z - t2) (pins stay
-/// exact under the R-removal) or a general coefficient quadratic (the
-/// sign-class fiber; declines confluent data).
-enum Ghat {
-    Corner { g2: C, t1: C, t2: C },
 }
 
 /// The V-side admissibility of a pin-pair candidate, exactly. For unit-
@@ -1208,70 +1161,61 @@ fn mirror_base(
 fn mirror_completion(
     base: &MirrorBase,
     pb: &ProblemBase,
-    gh: Ghat,
+    (g2, t1, t2): (C, C, C),
     c: C,
     rho1: C,
     rho2: C,
-    a: &[C; 4],
+    w: &[C; 4],
     delta: &[C; 4],
     dcl: &Clusters4,
-    w: &[C; 4],
     pre_rho2_ac: &[C; 4],
     pre_ac: &[C; 4],
-    _method: &'static str,
-) -> Option<Solved> {
+) -> Option<Frame> {
     let (muhat, nm, vv) = (&base.muhat, base.nm, base.vv);
     let (ph, np) = (&pb.ph, pb.np);
-    // g-hat = g / R: the corner form removes the R-copies of its pair
-    // roots exactly (R | g is a theorem: a candidate whose pair roots
-    // miss a repeated data value has no completion); the fiber's
-    // coefficient form declines confluent data (its interpolation
-    // assumes separated nodes)
+    // g-hat = g / R: remove inherited copies from the pair roots.
+    // A candidate missing a required repeated value has no completion.
     let mut gam = C::default();
     let mut gr = [C::default(); 3];
     let mut ng = 0;
     let mut gcoef = [C::default(); 9];
     let mut ghlen = 0;
     let mut skeleton = false;
-    match gh {
-        Ghat::Corner { g2, t1, t2 } => {
-            if g2 == C::default() {
-                skeleton = true;
-            } else {
-                gam = g2.sqrt();
-                ng = 1; // the root at z = 0 (v-u orthogonality)
-                let ts = [t1, t2];
-                let mut tused = [false; 2];
-                for c_ in 0..dcl.k {
-                    let clen = dcl.cluster_len(c_);
-                    let k0 = dcl.cluster_rep(c_);
-                    for _ in 1..clen {
-                        let (mut ti, mut td) = (usize::MAX, f64::INFINITY);
-                        for (j, &t) in ts.iter().enumerate() {
-                            if !tused[j] {
-                                let dd = (t - delta[k0]).norm();
-                                if dd < td {
-                                    td = dd;
-                                    ti = j;
-                                }
-                            }
-                        }
-                        if ti == usize::MAX || td > XTOL {
-                            return None;
-                        }
-                        tused[ti] = true;
-                    }
-                }
+    if g2 == C::default() {
+        skeleton = true;
+    } else {
+        gam = g2.sqrt();
+        ng = 1; // the root at z = 0 (v-u orthogonality)
+        let ts = [t1, t2];
+        let mut tused = [false; 2];
+        for c_ in 0..dcl.k {
+            let clen = dcl.cluster_len(c_);
+            let k0 = dcl.cluster_rep(c_);
+            for _ in 1..clen {
+                let (mut ti, mut td) = (usize::MAX, f64::INFINITY);
                 for (j, &t) in ts.iter().enumerate() {
                     if !tused[j] {
-                        gr[ng] = t;
-                        ng += 1;
+                        let dd = (t - delta[k0]).norm();
+                        if dd < td {
+                            td = dd;
+                            ti = j;
+                        }
                     }
                 }
-                gcoef = poly_from_roots(gam, &gr[..ng]);
-                ghlen = ng + 1;
+                if ti == usize::MAX || td > XTOL {
+                    return None;
+                }
+                tused[ti] = true;
             }
         }
+        for (j, &t) in ts.iter().enumerate() {
+            if !tused[j] {
+                gr[ng] = t;
+                ng += 1;
+            }
+        }
+        gcoef = poly_from_roots(gam, &gr[..ng]);
+        ghlen = ng + 1;
     }
     // THE SYMMETRIC LAW: both factors of N-hat = B B* in root form.
     // mu' = roots(B*) is the swapped-peel-order intermediate spectrum
@@ -1386,7 +1330,7 @@ fn mirror_completion(
         crate::algebraic::prof::hit(crate::algebraic::prof::RJ_USUM);
         return None;
     }
-    // canonical-gauge reconstruction: one u, one verify, no enumeration
+    // Reconstruct one second peel in the canonical gauge.
     let mut uc = [0.0f64; 4];
     for c_ in 0..dcl.k {
         let k0 = dcl.cluster_rep(c_);
@@ -1412,16 +1356,15 @@ fn mirror_completion(
             };
         }
     }
-    let out = verify(c, a, &vv, &uc, rho1, rho2, w);
-    if out.is_some() {
-        crate::algebraic::prof::hit(crate::algebraic::prof::N_ACCEPT);
-    }
-    out
+    crate::algebraic::prof::hit(crate::algebraic::prof::N_CONSTRUCTED);
+    Some(Frame {
+        c,
+        peels: vec![(vv, rho1), (uc, rho2)],
+    })
 }
 
-/// One candidate: mu (+ gamma^2 and the pair roots) -> v by residues ->
-/// u by the reduced mirror law -> det gate -> one eigensolve; then the
-/// sign-class fiber over mu (kernel-selector replacement pending).
+/// Reconstruct both peel vectors from a candidate intermediate spectrum.
+/// The caller checks their frame against the original spectral problem.
 #[allow(clippy::too_many_arguments)]
 fn try_mu(
     mu: &[C; 4],
@@ -1429,17 +1372,15 @@ fn try_mu(
     c: C,
     rho1: C,
     rho2: C,
-    a: &[C; 4],
+    w: &[C; 4],
     delta: &[C; 4],
     dcl: &Clusters4,
     pb: &ProblemBase,
-    _p_poly: &[C],
-    w: &[C; 4],
     pre_rho1_ac: &[C; 4],
     pre_rho2_ac: &[C; 4],
     pre_ac: &[C; 4],
     method: &'static str,
-) -> Option<Solved> {
+) -> Option<Frame> {
     let (g2, t1, t2) = gq?;
     crate::algebraic::prof::hit(crate::algebraic::prof::N_TRY_MU);
     let tb = crate::algebraic::prof::start();
@@ -1468,100 +1409,18 @@ fn try_mu(
     let mc = mirror_completion(
         &mb,
         pb,
-        Ghat::Corner { g2, t1, t2 },
+        (g2, t1, t2),
         c,
         rho1,
         rho2,
-        a,
+        w,
         delta,
         dcl,
-        w,
         pre_rho2_ac,
         pre_ac,
-        method,
     );
     crate::algebraic::prof::rec(crate::algebraic::prof::SW_MIRROR, tp);
-    if let Some(s) = mc {
-        return Some(s);
-    }
-    if g2 == C::default() {
-        return None;
-    }
-    // The sign-class fiber over mu (the old 4-class eps loop) is gone:
-    // sign bits are gauge (reduced-mirror-law ledger), corpus-confirmed --
-    // with the fiber disabled both complete corpora stay 100% with
-    // bit-identical rung ownership and residuals (its 2 accepts in 423,432
-    // evaluations were independently owned by later candidates).
-    None
-}
-
-fn verify(
-    c: C,
-    a: &[C; 4],
-    vv: &[f64; 4],
-    uc: &[f64; 4],
-    rho1: C,
-    rho2: C,
-    w: &[C; 4],
-) -> Option<Solved> {
-    let tp = crate::algebraic::prof::start();
-    let r = verify_inner(c, a, vv, uc, rho1, rho2, w);
-    crate::algebraic::prof::rec(crate::algebraic::prof::SW_VERIFY, tp);
-    r
-}
-
-#[allow(clippy::too_many_arguments)]
-fn verify_inner(
-    c: C,
-    a: &[C; 4],
-    vv: &[f64; 4],
-    uc: &[f64; 4],
-    rho1: C,
-    rho2: C,
-    w: &[C; 4],
-) -> Option<Solved> {
-    let m = assemble(c, a, &[(*vv, rho1), (*uc, rho2)]);
-    // spectrum match via Newton's identities on traces -- the crate's
-    // master metric (no eigensolve; does not floor at degeneracy). This
-    // removes the last eigensolve from the radical accept path; the
-    // final frame_to_o / smooth_residual re-gate is unchanged.
-    let m2 = m * m;
-    let m3 = m2 * m;
-    let m4 = m2 * m2;
-    let tr = |x: &Mat4| (0..4).map(|i| x[(i, i)]).sum::<C>();
-    let (p1, p2, p3, p4) = (tr(&m), tr(&m2), tr(&m3), tr(&m4));
-    let e1 = p1;
-    let e2 = (e1 * p1 - p2) / 2.0;
-    let e3 = (e2 * p1 - e1 * p2 + p3) / 3.0;
-    let e4 = (e3 * p1 - e2 * p2 + e1 * p3 - p4) / 4.0;
-    // det(wj*I - m) = chi_m(wj) = wj^4 - e1*wj^3 + e2*wj^2 - e3*wj + e4;
-    // Horner evaluation costs 4 muls per point (vs ~40 for a 4x4 determinant).
-    let chi_max = w
-        .iter()
-        .map(|&wj| ((((wj - e1) * wj + e2) * wj - e3) * wj + e4).norm())
-        .fold(0.0f64, f64::max);
-    if chi_max > 1e-7 {
-        return None;
-    }
-    let ew1 = w[0] + w[1] + w[2] + w[3];
-    let ew2 = w[0] * w[1] + w[0] * w[2] + w[0] * w[3] + w[1] * w[2] + w[1] * w[3] + w[2] * w[3];
-    let ew3 = w[0] * w[1] * w[2] + w[0] * w[1] * w[3] + w[0] * w[2] * w[3] + w[1] * w[2] * w[3];
-    let ew4 = w[0] * w[1] * w[2] * w[3];
-    let r = [
-        (e1 - ew1).norm(),
-        (e2 - ew2).norm(),
-        (e3 - ew3).norm(),
-        (e4 - ew4).norm(),
-    ]
-    .into_iter()
-    .fold(0.0f64, f64::max);
-    (r <= 1e-9).then_some(Solved {
-        m,
-        frame: Some(Frame {
-            c,
-            peels: vec![(*vv, rho1), (*uc, rho2)],
-        }),
-    })
+    mc
 }
 
 /// The strict cyclic T4 word shared by every pin characteristic of one
@@ -1825,7 +1684,7 @@ pub(crate) fn two_step<R>(
     a: &[C; 4],
     w: &[C; 4],
     cap: usize,
-    accept: &mut impl FnMut(Solved) -> Option<R>,
+    accept: &mut impl FnMut(Frame) -> Option<R>,
 ) -> Option<R> {
     let th = crate::algebraic::prof::start();
     let (rho1v, rho2v) = (d1 - c, d2 - c);
@@ -1987,9 +1846,10 @@ pub(crate) fn two_step<R>(
             if !ok {
                 continue;
             }
-            if let Some(s) = verify(c, a, &vv, &uc, rho1, rho2, w)
-                && let Some(hit) = accept(s)
-            {
+            if let Some(hit) = accept(Frame {
+                c,
+                peels: vec![(vv, rho1), (uc, rho2)],
+            }) {
                 return Some(hit);
             }
         }
@@ -2017,12 +1877,10 @@ pub(crate) fn two_step<R>(
                             c,
                             rho1,
                             rho2,
-                            a,
+                            w,
                             &delta,
                             &dcl,
                             &pb,
-                            &p_poly,
-                            w,
                             &pre_rho1_ac,
                             &pre_rho2_ac,
                             &pre_ac,
@@ -2131,12 +1989,10 @@ pub(crate) fn two_step<R>(
                                         c,
                                         rho1,
                                         rho2,
-                                        a,
+                                        w,
                                         &delta,
                                         &dcl,
                                         &pb,
-                                        &p_poly,
-                                        w,
                                         &pre_rho1_ac,
                                         &pre_rho2_ac,
                                         &pre_ac,
@@ -2391,12 +2247,10 @@ pub(crate) fn two_step<R>(
                         c,
                         rho1,
                         rho2,
-                        a,
+                        w,
                         &delta,
                         &dcl,
                         &pb,
-                        &p_poly,
-                        w,
                         &pre_rho1_ac,
                         &pre_rho2_ac,
                         &pre_ac,
@@ -2412,21 +2266,15 @@ pub(crate) fn two_step<R>(
     None
 }
 
-fn rank_one(c: C, d: C, a: &[C; 4], w: &[C; 4]) -> Option<Solved> {
+fn rank_one(c: C, d: C, a: &[C; 4], w: &[C; 4]) -> Option<Frame> {
     let rho = d - c;
     let delta: [C; 4] = std::array::from_fn(|k| c * a[k]);
     let dcl = clusters4(&delta, CTOL);
     let v = residues_v(w, &delta, &dcl, rho, a);
     let v = v?;
-    let m = assemble(c, a, &[(v, rho)]);
-    let spec = eig4(&m)?;
-    let r = sdist(&spec, w);
-    (r <= 1e-9).then_some(Solved {
-        m,
-        frame: Some(Frame {
-            c,
-            peels: vec![(v, rho)],
-        }),
+    Some(Frame {
+        c,
+        peels: vec![(v, rho)],
     })
 }
 
@@ -2435,7 +2283,7 @@ pub(crate) fn solve_oriented<R>(
     a: &[C; 4],
     w: &[C; 4],
     cap: usize,
-    accept: &mut impl FnMut(Solved) -> Option<R>,
+    accept: &mut impl FnMut(Frame) -> Option<R>,
 ) -> Option<R> {
     let cls = clusters4(gate, CTOL);
     let k = cls.k as usize;

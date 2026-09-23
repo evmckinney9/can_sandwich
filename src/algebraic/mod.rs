@@ -8,14 +8,9 @@ pub(crate) mod certificate;
 pub(crate) mod interior;
 mod klein;
 mod radical;
-mod resonance;
 mod support_strata;
 mod three_givens;
-pub(crate) mod two_plus_two;
-pub(crate) use certificate::{
-    apply_transpose, certify_frame_against_targets, certify_frame_candidate,
-    certify_frame_candidate_with_limit, compiler_solution,
-};
+pub(crate) use certificate::{apply_transpose, certify_frame_against_targets, compiler_solution};
 pub(crate) use interior::{
     bernstein_variations, perm_vertex_residual, recover_frame, solve_boundary_accelerators,
 };
@@ -221,10 +216,7 @@ pub enum Rung {
     /// Klein-circulant one-sided chart: `e₁` linear in the orthostochastic
     /// diagonal pins a line in the simplex, `e₂` collapses to one real quadratic.
     Klein,
-    /// One factor has multiplicity `2 + 2`: linear target matching in six
-    /// squared Pluecker coordinates followed by one Heron plane quartic.
-    Pair22,
-    /// Confluent spectrum solved by rank-secular or resonance formulas.
+    /// Repeated spectrum solved by rank-secular formulas.
     Radical,
     /// Certified result from bounded Levenberg–Marquardt refinement or restarts.
     Numerical,
@@ -552,17 +544,23 @@ fn solve_prefix(problem: &Problem) -> Option<Solution> {
         return Some(solution);
     }
     // Try multiplicity formulas after the cheaper support and Klein sections.
-    if let Some((o, r, rung)) = support_strata::solve_confluent(
-        &problem.left,
-        &problem.right,
-        &problem.target_roots,
-        &problem.dc,
-        &problem.lam,
-        &problem.targets,
-        problem.strata,
-    ) && let Some(solution) = compiler_solution(problem, o, rung, r)
-    {
-        return Some(solution);
+    if problem.strata.has_confluence() {
+        let started = prof::start();
+        let hit = support_strata::solve_radical(
+            &problem.left,
+            &problem.right,
+            &problem.target_roots,
+            &problem.dc,
+            &problem.lam,
+            &problem.targets,
+            problem.strata,
+        );
+        prof::rec(prof::RADICAL_TOTAL, started);
+        if let Some((o, r)) = hit
+            && let Some(solution) = compiler_solution(problem, o, Rung::Radical, r)
+        {
+            return Some(solution);
+        }
     }
     if let Some((o, residual, rung)) = solve_boundary_accelerators(problem)
         && let Some(solution) = compiler_solution(problem, o, rung, residual)

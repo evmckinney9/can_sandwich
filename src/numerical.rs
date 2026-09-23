@@ -64,7 +64,7 @@ impl Problem {
         let mut state = self.state(&o, branch);
         let mut damping = 1e-3;
         let mut stalled = 0;
-        for _ in 0..120 {
+        for _ in 0..40 {
             if state.cost.is_finite() && state.error < ACCEPT {
                 return Some(o);
             }
@@ -173,7 +173,9 @@ fn random(state: &mut u64) -> f64 {
     ((z ^ (z >> 31)) >> 11) as f64 / (1u64 << 53) as f64
 }
 fn random_starts(problem: &Problem, seed: &mut u64, branches: &[f64]) -> Option<R4> {
-    for attempt in 0..24 {
+    // Try another orientation after four starts instead of exhausting one
+    // parameterization. Each start has its own bounded refinement budget.
+    for attempt in 0..4 {
         let mut o = R4::identity();
         for (p, q) in PLANES {
             rotate(&mut o, p, q, (2.0 * random(seed) - 1.0) * PI);
