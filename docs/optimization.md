@@ -329,6 +329,72 @@ verification already used `1e-12`. They now use the independent checker's
 passes all five tests, including the full corpus and these stricter endpoint
 assertions. `make lint` passes.
 
+## Refinement below the acceptance ceiling
+
+Baseline: `8e10ac9`. The spectral acceptance ceiling is tightened from
+`1e-12` to `1e-13`. Construction refinement keeps its existing `1e-13`
+stopping criterion. Final polishing aims for root distances below `1e-14`
+and can retain partial progress when it cannot reach that target. It replaces
+a frame only when the new root-error estimate, plus its eigenbasis residual
+allowance, is below the old estimate minus that allowance. This avoids
+replacing a witness on the strength of a difference within basis uncertainty.
+
+Requiring every construction search to reach `1e-14` was rejected. It improved
+the aggregate distribution but abandoned intermediate witnesses and produced
+four confirmed error increases of about `1.5e-14` to `3.2e-14`. Separating
+construction acceptance from final polishing preserves those four witnesses.
+Tightening the basis projection's stopping condition did not repair them and
+added runtime. Reducing random starts to four also changed witnesses without
+a sufficient measured benefit; the 24-start budgets remain.
+
+The checker now tries a third Schur rotation, `0.6 + 0.8i`, when both existing
+paths exhaust their iteration budgets. It keeps the same iteration limit,
+convergence setting, and acceptance threshold. Independent LAPACK and
+80-decimal-digit calculations confirmed that the motivating frame has error
+about `6.8e-15`; a fixed regression test covers that checker failure. Both
+baseline and candidate use the same updated checker in the comparisons below.
+
+All rows pass: 1,093,687 witnesses and four infeasible rejections. The full
+comparison records 59,924 smaller, 1,033,751 equal, and 12 larger spectral
+errors. An independent 80-digit eigensolve checked all 12 apparent increases:
+the largest actual increase was `9.24e-19`; the two largest reported increases
+were instead actual improvements of `2.97e-14` and `4.16e-14`. This audit checks
+those individual differences; it is not a general error proof.
+
+| Spectral metric | Baseline | Revised solver |
+|---|---|---|
+| p50 | `1.047e-15` | `1.024e-15` |
+| p99 | `4.591e-14` | `1.224e-14` |
+| p99.9 | `9.170e-14` | `3.418e-14` |
+| Maximum | `9.762e-13` | `1.216e-13` |
+| Count above `1e-13` | 645 | 2 |
+
+These are the independent corpus checker's readings, including its rounding
+error. Both remaining readings above `1e-13` are Schur artifacts: high-precision
+checks of rows 1,071,777 and 1,071,780 give `6.62e-15` and `6.83e-15`.
+The report retains the original readings rather than substituting special
+results for those rows. Maximum orthogonality defect falls from `1.334e-13`
+to `1.033e-13`; maximum determinant error falls from `1.041e-13` to `1.910e-14`.
+
+Three sequential paired runs used release mode, fat LTO, one codegen unit,
+CPU 2 affinity, and no diagnostics or concurrent builds, tests, or benchmarks.
+The stronger precision target costs 7.1–7.4% more total solver time.
+
+| Metric | Baseline | Revised solver |
+|---|---|---|
+| Total solver time (s) | 6.915–7.570 | 7.425–8.109 |
+| Mean (µs) | 6.323–6.921 | 6.789–7.414 |
+| Median (µs) | 2.420–2.660 | 2.510–2.770 |
+| p95 (µs) | 18.080–20.150 | 18.750–20.990 |
+| p99 (µs) | 37.890–42.610 | 40.840–45.870 |
+| p99.9 (µs) | 365.690–385.989 | 395.260–429.100 |
+| Maximum (ms) | 17.517–20.390 | 17.503–17.602 |
+
+Row 1,075,377 is slowest for both solvers in all three runs. These timings do
+not establish a consistent improvement in maximum latency. `make test` passes
+all five tests, including the full corpus and endpoint reconstruction;
+`make lint` passes. The corpus bytes and SHA-256 are unchanged.
+
 ## Validation
 
 The full corpus test checks spectral matching, orthogonality, determinant,

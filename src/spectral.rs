@@ -8,11 +8,12 @@ use std::f64::consts::PI;
 type R4 = Matrix4<f64>;
 /// Maximum accepted root error, including the eigenbasis residual. This is
 /// an acceptance ceiling; numerical refinement aims for substantially less.
-pub(crate) const SPECTRAL_TOLERANCE: f64 = 1e-12;
+pub(crate) const SPECTRAL_TOLERANCE: f64 = 1e-13;
 #[derive(Clone, Copy)]
 pub(crate) struct State {
     pub(crate) cost: f64,
     pub(crate) error: f64,
+    pub(crate) root_error: f64,
     pub(crate) roots: [Z; 4],
     pub(crate) target: [Z; 4],
     pub(crate) eigenvectors: R4,
@@ -111,14 +112,15 @@ impl Problem {
             }
         }
         let chosen: [Z; 4] = std::array::from_fn(|i| self.target_roots[0][order[i]] * chosen_sign);
-        let error = (0..4)
+        let root_error = (0..4)
             .map(|i| (roots[i] - chosen[i]).norm_sqr())
             .fold(0.0, f64::max)
-            .sqrt()
-            + 4.0 * off;
+            .sqrt();
+        let error = root_error + 4.0 * off;
         State {
             cost: best,
             error,
+            root_error,
             roots,
             target: chosen,
             eigenvectors,

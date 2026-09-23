@@ -160,8 +160,12 @@ Both algorithms receive the same inputs. The checker measures:
 
 A returned matrix passes only if it meets all three bounds. The independent
 complex Schur calculation shifts and scales the matrix before computing its
-roots; a quarter-turn supplies an alternate QR path if convergence stalls.
-Neither transform changes the eigenvalue problem or its acceptance threshold.
+roots. If convergence stalls, multiplication by `i`, then by `0.6 + 0.8i`,
+supplies alternate QR paths. The rotation is undone before matching roots.
+These transforms preserve the eigenvalue problem and acceptance threshold.
+Near repeated roots, Schur rounding errors can distort individual error
+measurements even when iteration converges. Investigate apparent regressions
+with an independent eigensolver or higher precision before changing the solver.
 
 The corpus retains four historical near-feasible inputs that violate necessary
 rank-two Horn inequalities. For ordered alcove coordinates, let

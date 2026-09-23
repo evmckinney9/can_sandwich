@@ -95,14 +95,19 @@ fn errors([c, g, t]: Case, o: &Frame) -> [f64; 3] {
         nalgebra::Vector4::repeat(center)
     } else {
         let normalized = shifted / Complex::new(scale, 0.0);
-        let Some(roots) = [Complex::new(1.0, 0.0), Complex::new(0.0, 1.0)]
-            .into_iter()
-            .find_map(|phase| {
-                nalgebra::linalg::Schur::try_new(normalized * phase, 1e-14, 1000)
-                    .and_then(|schur| schur.eigenvalues())
-                    .map(|roots| roots.map(|z| z / phase))
-            })
-        else {
+        // An oblique rotation also changes the QR path when swapping real
+        // and imaginary parts is insufficient near a repeated root.
+        let Some(roots) = [
+            Complex::new(1.0, 0.0),
+            Complex::new(0.0, 1.0),
+            Complex::new(0.6, 0.8),
+        ]
+        .into_iter()
+        .find_map(|phase| {
+            nalgebra::linalg::Schur::try_new(normalized * phase, 1e-14, 1000)
+                .and_then(|schur| schur.eigenvalues())
+                .map(|roots| roots.map(|z| z / phase))
+        }) else {
             return result;
         };
         roots.map(|z| z * scale + center)
@@ -488,6 +493,37 @@ mod tests {
             -a, 0.0, b, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, b, 0.0, a, 0.0,
         ]);
         assert!(check(case, &frame));
+        // Independent LAPACK verification gives a 6.7e-15 spectral error.
+        // The first two Schur phases exhaust their iteration budgets here.
+        assert!(check(
+            [
+                [
+                    0.4999999999998125,
+                    0.49999999999968747,
+                    -0.49999999999956246
+                ],
+                [0.13619345023463234, 0.13619345023450732, 0.1361934502342573],
+                [0.13619345023472765, 0.1361934502344448, 0.13619345023416196]
+            ],
+            &Frame::from_column_slice(&[
+                -0.5440939537008301,
+                0.40100367204652826,
+                -0.33248713478895436,
+                0.6577310466681887,
+                0.6962930678850977,
+                0.5431705545411705,
+                0.27197803806683357,
+                0.38232140811614473,
+                0.2125518471778125,
+                -0.7376324064276074,
+                0.029021196984141157,
+                0.6402170845695422,
+                -0.41708445838062264,
+                0.007761228797976285,
+                0.9025730010003377,
+                0.10650021488303599
+            ]),
+        ));
         assert!(!check([[0.0; 3], [0.0; 3], [0.125, 0.0, 0.0]], &identity));
         assert!(!check([[0.0; 3]; 3], &(identity * 2.0)));
         let mut reflection = identity;

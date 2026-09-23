@@ -39,11 +39,16 @@ only direct dependency. Runtime chart deduplication was removed because the
 production schedules contain distinct classes. Removing the root rescue,
 transported charts, and repeated-root repair was rejected on accuracy grounds.
 
-The spectral and endpoint acceptance limits are `1e-12`; numerical and
-polynomial residual limits are `1e-13`. Block rotations use a sine-product
-formula to avoid cancellation of nearly equal traces. Numerical refinement
-solves the damped least-squares system with QR instead of normal equations
-and removes accumulated orthogonality drift with a polar Newton step.
+The spectral acceptance ceiling and polynomial residual limit are `1e-13`;
+frame and endpoint checks use `1e-12`. Numerical construction stops at the
+spectral ceiling. Final polishing aims for root distances below `1e-14`,
+retains useful partial progress, and replaces a frame only when the estimated
+improvement exceeds both eigenbasis residuals.
+
+Block rotations use a sine-product formula to avoid cancellation of nearly
+equal traces. Numerical refinement solves the damped least-squares system
+with QR instead of normal equations and removes accumulated orthogonality
+drift with a polar Newton step.
 
 Every accepted frame passes `spectral.rs` against the original spectrum.
 `Solution` stores the real frame and its verification state together, so

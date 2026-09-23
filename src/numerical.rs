@@ -2,11 +2,18 @@
 use crate::{
     C as Z,
     problem::{PERMS24, PLANES, Problem},
+    spectral::{SPECTRAL_TOLERANCE, State},
 };
 use nalgebra::{Matrix4, SMatrix, SVector};
 use std::f64::consts::PI;
 type R4 = Matrix4<f64>;
-pub(crate) const ACCEPT: f64 = 1e-13;
+/// Refinement target for root distances; the spectral verifier separately
+/// bounds error from the computed eigenbasis.
+pub(crate) const ROOT_TOLERANCE: f64 = 1e-14;
+
+fn converged(state: &State, root_tolerance: f64) -> bool {
+    state.cost.is_finite() && state.root_error < root_tolerance && state.error < SPECTRAL_TOLERANCE
+}
 fn rotate(o: &mut R4, p: usize, q: usize, angle: f64) {
     let (s, c) = angle.sin_cos();
     for j in 0..4 {
@@ -32,7 +39,7 @@ impl Problem {
                 }
             }
             if ((sum - trace).norm() < 1e-7 || (sum + trace).norm() < 1e-7)
-                && self.match_roots(roots) < ACCEPT
+                && self.match_roots(roots) < SPECTRAL_TOLERANCE
             {
                 return Some(o);
             }
@@ -52,7 +59,7 @@ impl Problem {
                         let mut candidate = o;
                         rotate(&mut candidate, p, q, angle);
                         let state = self.state(&candidate, 0.0);
-                        if state.cost.is_finite() && state.error < ACCEPT {
+                        if converged(&state, SPECTRAL_TOLERANCE) {
                             return Some(candidate);
                         }
                     }
@@ -65,15 +72,32 @@ impl Problem {
         self.iterate_fixed(o, branch, None)
     }
 
-    fn iterate_fixed(&self, mut o: R4, branch: f64, fixed: Option<usize>) -> Option<R4> {
+    /// Keep useful progress even when refinement cannot reach its target.
+    pub(crate) fn refine(&self, o: R4) -> R4 {
+        self.refine_fixed(o, 0.0, None, ROOT_TOLERANCE).0
+    }
+
+    fn iterate_fixed(&self, o: R4, branch: f64, fixed: Option<usize>) -> Option<R4> {
+        let (o, state) = self.refine_fixed(o, branch, fixed, SPECTRAL_TOLERANCE);
+        converged(&state, SPECTRAL_TOLERANCE).then_some(o)
+    }
+
+    fn refine_fixed(
+        &self,
+        mut o: R4,
+        branch: f64,
+        fixed: Option<usize>,
+        root_tolerance: f64,
+    ) -> (R4, State) {
         let ratios: [Z; 6] = PLANES.map(|(p, q)| self.dc[(p, p)] * self.dc[(q, q)].conj());
         o = orthogonalize(o);
         let mut state = self.state(&o, branch);
+        let mut best = (o, state);
         let mut damping = 1e-3;
         let mut stalled = 0;
         for _ in 0..120 {
-            if state.cost.is_finite() && state.error < ACCEPT {
-                return Some(o);
+            if converged(&state, root_tolerance) {
+                return (o, state);
             }
             if !state.cost.is_finite() || state.off_diagonal_error > 1e-10 {
                 break;
@@ -176,6 +200,9 @@ impl Problem {
                     }
                     o = candidate;
                     state = next;
+                    if state.error < best.1.error && state.root_error < best.1.root_error {
+                        best = (o, state);
+                    }
                     damping = (damping * 0.25).max(1e-30);
                     accepted = true;
                     break;
@@ -187,10 +214,10 @@ impl Problem {
                 break;
             }
         }
-        if state.cost.is_finite() && state.error < ACCEPT {
-            Some(o)
+        if converged(&state, root_tolerance) {
+            (o, state)
         } else {
-            None
+            best
         }
     }
 }
@@ -282,7 +309,7 @@ fn inverse_factor(original: &Problem, c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> 
     let state = dual.state(&frame, 0.0);
     let o = state.ordered_basis();
     let check = original.state(&o, 0.0);
-    if check.cost.is_finite() && check.error < ACCEPT {
+    if converged(&check, SPECTRAL_TOLERANCE) {
         Some(o)
     } else {
         original.iterate(o, 0.0)

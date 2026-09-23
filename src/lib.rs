@@ -84,14 +84,17 @@ fn solve_using<T>(
             state,
         })
     })?;
-    if solution.state.error > numerical::ACCEPT
-        && let Some(o) = problem.iterate(solution.o, 0.0)
-        && let Some(state) = spectral::verify(&problem, &o)
-        && state.error < solution.state.error
-    {
-        solution.o = o;
-        solution.residual = state.error;
-        solution.state = state;
+    // Require improvement beyond both eigenbasis residuals.
+    let lower_error = solution.state.root_error - 4.0 * solution.state.off_diagonal_error;
+    if lower_error > 0.0 && solution.state.root_error > numerical::ROOT_TOLERANCE {
+        let o = problem.refine(solution.o);
+        if let Some(state) = spectral::verify(&problem, &o)
+            && state.error < lower_error
+        {
+            solution.o = o;
+            solution.residual = state.error;
+            solution.state = state;
+        }
     }
     finish(&problem, solution)
 }
