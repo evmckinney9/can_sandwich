@@ -16,9 +16,8 @@
 //! Every proposed frame receives both an explicit Gram check and the original
 //! forward spectral certificate.
 
-use super::{C, Mat4, c, poly_roots};
+use super::{C, Mat4, PLANES, c, poly_roots};
 
-const PAIRS: [(usize, usize); 6] = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];
 type Affine = [f64; 3];
 type Bi2 = [[f64; 3]; 3];
 type Bi4 = [[f64; 5]; 5];
@@ -451,159 +450,6 @@ fn pair22_groups(values: &[C; 4]) -> Option<(C, C, [usize; 2], [usize; 2])> {
     ((other - anchor).norm() > 1e-14).then_some((anchor, other, first, second))
 }
 
-/// Representation gap of a nonscalar paired input recognized by this module.
-#[cfg(feature = "diagnostics")]
-pub(crate) fn paired_gap(values: &[C; 4]) -> Option<f64> {
-    let (_, _, first, second) = pair22_groups(values)?;
-    Some(
-        (values[first[0]] - values[first[1]])
-            .norm()
-            .max((values[second[0]] - values[second[1]]).norm()),
-    )
-}
-
-/// R0266's two paired roles, restricted to the existing rank-four wall
-/// implementation. Unsupported affine ranks decline; no dense selector runs.
-#[cfg(feature = "diagnostics")]
-pub(crate) fn solve_paired_edges_with<R>(
-    problem: &super::Problem,
-    backward: bool,
-    mut finalize: impl FnMut(Mat4, f64) -> Option<R>,
-) -> Option<R> {
-    let left_paired = paired_gap(&problem.left).is_some();
-    let right_paired = paired_gap(&problem.right).is_some();
-    if !left_paired && !right_paired {
-        return None;
-    }
-    // These coordinate-support frames have Pluecker zeros directly, including
-    // scalar/3+1 other factors where the affine rank-four solver declines.
-    // Keep the same support leaves in the forward-only ablation.
-    if let Some(hit) = solve_paired_support_with(problem, &mut finalize) {
-        return Some(hit);
-    }
-    // The existing two-pair CS support formula is finite and quadratic.
-    // Disable target-paired roles to keep this an input-paired diagnostic.
-    if let Some(hit) = solve_with(
-        &problem.left,
-        &problem.right,
-        &problem.target_roots,
-        &problem.dc,
-        &problem.lam,
-        &problem.targets,
-        right_paired,
-        left_paired,
-        [false; 2],
-        true,
-        false,
-        &mut finalize,
-    ) {
-        return Some(hit);
-    }
-    if !backward {
-        return None;
-    }
-    solve_paired_backward_with(problem, finalize)
-}
-
-#[cfg(feature = "diagnostics")]
-fn solve_paired_support_with<R>(
-    problem: &super::Problem,
-    finalize: &mut impl FnMut(Mat4, f64) -> Option<R>,
-) -> Option<R> {
-    let support = super::support_strata::edge_gate(&problem.routed, &problem.target_roots);
-    if let Some(viable) = support.edge.as_ref() {
-        for permutation in *super::PERMS24 {
-            // A direct root gate remains stable for scalar/repeated spectra.
-            for (branch, roots) in problem.target_roots.iter().enumerate() {
-                if (0..4).any(|i| support.exact[i][permutation[i]] & (1 << branch) == 0) {
-                    continue;
-                }
-                let routed = std::array::from_fn::<_, 4, _>(|i| problem.routed[i][permutation[i]]);
-                let error = super::PERMS24
-                    .iter()
-                    .map(|matching| {
-                        (0..4)
-                            .map(|i| (routed[i] - roots[matching[i]]).norm())
-                            .fold(0.0f64, f64::max)
-                    })
-                    .fold(f64::INFINITY, f64::min);
-                if error < 1e-8 {
-                    let o = super::signed_perm(permutation);
-                    let residual = super::compound_residual(
-                        &problem.dc,
-                        &problem.lam,
-                        &o,
-                        &problem.targets[branch],
-                    );
-                    if let Some(hit) = finalize(o, residual) {
-                        return Some(hit);
-                    }
-                }
-            }
-            // A failed public certificate must allow the next permutation.
-            if let Some((o, residual)) = super::support_strata::solve_edge(
-                &problem.left,
-                &problem.right,
-                &problem.dc,
-                &problem.lam,
-                &problem.targets,
-                &problem.routed,
-                viable,
-                &[permutation],
-            ) && let Some(hit) = finalize(o, residual)
-            {
-                return Some(hit);
-            }
-        }
-    }
-    if let Some((o, residual)) = super::support_strata::solve_face(
-        &problem.left,
-        &problem.right,
-        &problem.dc,
-        &problem.lam,
-        &problem.target_roots,
-        &problem.targets,
-    ) {
-        return finalize(o, residual);
-    }
-    None
-}
-
-#[cfg(feature = "diagnostics")]
-fn solve_paired_backward_with<R>(
-    problem: &super::Problem,
-    mut finalize: impl FnMut(Mat4, f64) -> Option<R>,
-) -> Option<R> {
-    for (paired, other, transpose) in [
-        (&problem.left, &problem.right, false),
-        (&problem.right, &problem.left, true),
-    ] {
-        if paired_gap(paired).is_none() {
-            continue;
-        }
-        let inverse_paired = paired.map(|value| value.conj());
-        let other_diagonal = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(other));
-        for (branch, target) in problem.target_roots.iter().enumerate() {
-            let mut accept = |v: Mat4| {
-                // solve_oriented places the paired factor on the right.
-                // Transpose its frame to obtain R in (A^-1,T;B), then
-                // recover S with A^-1/2 R T R^T A^-1/2 = S B S^T.
-                let e = oriented_matrix(&inverse_paired, target, &v.transpose());
-                let s = super::recover_frame(&e, &other_diagonal);
-                let o = super::apply_transpose(s, transpose);
-                certify(o, &problem.dc, &problem.lam, &problem.targets[branch])
-                    .and_then(|(o, residual)| finalize(o, residual))
-            };
-            if let Some(hit) =
-                solve_oriented(&inverse_paired, target, other, true, false, &mut accept)
-            {
-                return Some(hit);
-            }
-        }
-    }
-    None
-}
-
 /// Solve with `repeated` in the gate position and `other=D^2` in the prefix
 /// position.  The callback performs role-swap conversion and certification.
 fn solve_oriented<R>(
@@ -622,7 +468,7 @@ fn solve_oriented<R>(
     let chi_target = polynomial_from_roots(&target_dd);
 
     let mut columns = [[CDd::default(); 4]; 6];
-    for (edge, &(i, j)) in PAIRS.iter().enumerate() {
+    for (edge, &(i, j)) in PLANES.iter().enumerate() {
         let left = polynomial_excluding(&delta, i, usize::MAX);
         let right = polynomial_excluding(&delta, j, usize::MAX);
         let pair = polynomial_excluding(&delta, i, j);
@@ -1444,7 +1290,7 @@ fn plucker_frame(
     }
 
     let mut k = [[0.0f64; 4]; 4];
-    for (edge, &(i, j)) in PAIRS.iter().enumerate() {
+    for (edge, &(i, j)) in PLANES.iter().enumerate() {
         k[i][j] = p[edge];
         k[j][i] = -p[edge];
     }
@@ -1474,11 +1320,11 @@ fn plucker_frame(
         (f64::from(row == kernel_pivot) - projector[row][kernel_pivot]) / kernel_norm
     });
     // The Hodge-dual bivector rotates the orthogonal complement exactly as
-    // K rotates the image plane. In PAIRS order 01,02,03,12,13,23 its upper
+    // K rotates the image plane. In PLANES order 01,02,03,12,13,23 its upper
     // triangle is 23,-13,12,03,-02,01.
     let dual_coordinates = [p[5], -p[4], p[3], p[2], -p[1], p[0]];
     let mut dual = [[0.0f64; 4]; 4];
-    for (edge, &(i, j)) in PAIRS.iter().enumerate() {
+    for (edge, &(i, j)) in PLANES.iter().enumerate() {
         dual[i][j] = dual_coordinates[edge];
         dual[j][i] = -dual_coordinates[edge];
     }

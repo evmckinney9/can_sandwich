@@ -7,11 +7,9 @@
 //! after those cheaper strata and the Klein section have declined.
 
 use super::{
-    ACCEPT, C, Mat4, PLANES, SpectrumKind, StratumSignature, compound_residual, givens,
-    recover_frame, signed_perm,
+    ACCEPT, C, Mat4, PLANES, SpectrumKind, StratumSignature, compound_residual, recover_frame,
+    rotate_rows, signed_perm,
 };
-
-const PAIR6: [(usize, usize); 6] = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];
 
 fn complement(i: usize, j: usize) -> (usize, usize) {
     let mut o = (0..4).filter(|&k| k != i && k != j);
@@ -33,24 +31,24 @@ pub(crate) fn solve_face(
 ) -> Option<(Mat4, f64)> {
     let half = C::new(0.5, 0.0);
     // Every block det d²_a d²_b λ_x λ_y depends only on the UNORDERED pairs
-    // {a,b} and {x,y}, so the det gate lives on PAIR6 x PAIR6, not on ranked
+    // {a,b} and {x,y}, so the det gate lives on PLANES x PLANES, not on ranked
     // permutations: 6x6x6 checks replace the old 864-iteration perm sweep,
     // and the order/sign choices inside a block are enumerated only on a det
-    // match (the common decline never pays them). PAIR6 is ordered so that
+    // match (the common decline never pays them). PLANES is ordered so that
     // the complement of pair t is pair 5-t.
-    let d2p: [C; 6] = std::array::from_fn(|t| d2[PAIR6[t].0] * d2[PAIR6[t].1]);
-    let lamp: [C; 6] = std::array::from_fn(|t| lam4[PAIR6[t].0] * lam4[PAIR6[t].1]);
+    let d2p: [C; 6] = std::array::from_fn(|t| d2[PLANES[t].0] * d2[PLANES[t].1]);
+    let lamp: [C; 6] = std::array::from_fn(|t| lam4[PLANES[t].0] * lam4[PLANES[t].1]);
     for (bi, w) in target_specs.iter().enumerate() {
-        let wp: [C; 6] = std::array::from_fn(|t| w[PAIR6[t].0] * w[PAIR6[t].1]);
+        let wp: [C; 6] = std::array::from_fn(|t| w[PLANES[t].0] * w[PLANES[t].1]);
         // p6 ranges over the pairs containing index 0: one representative per
         // partition (p6 <-> 5-p6 with q6/t6 swapped is the same configuration).
         for p6 in 0..3 {
-            let (a, b) = PAIR6[p6];
-            let (c, d) = PAIR6[5 - p6];
+            let (a, b) = PLANES[p6];
+            let (c, d) = PLANES[5 - p6];
             for q6 in 0..6 {
                 let det_ab = d2p[p6] * lamp[q6];
                 let det_cd = d2p[5 - p6] * lamp[5 - q6];
-                for (t6, &(i, j)) in PAIR6.iter().enumerate() {
+                for (t6, &(i, j)) in PLANES.iter().enumerate() {
                     // norm_sqr vs (1e-7)^2: same predicate, no sqrt.
                     if (wp[t6] - det_ab).norm_sqr() > 1e-14 {
                         continue; // this target pair isn't block {a,b}'s spectrum
@@ -59,8 +57,8 @@ pub(crate) fn solve_face(
                         continue;
                     }
                     let (k, l) = complement(i, j);
-                    let (x, y) = PAIR6[q6];
-                    let (z, v) = PAIR6[5 - q6];
+                    let (x, y) = PLANES[q6];
+                    let (z, v) = PLANES[5 - q6];
                     // block trace = A + B·cos2θ; swapping the λ assignment
                     // within a block flips B, so both orders are tried.
                     for s1 in 0..2 {
@@ -91,7 +89,11 @@ pub(crate) fn solve_face(
                             perm[b] = xb;
                             perm[c] = za;
                             perm[d] = zb;
-                            let o = givens(a, b, th1) * givens(c, d, th2) * signed_perm(perm);
+                            let mut o = signed_perm(perm);
+                            let (sine, cosine) = th2.sin_cos();
+                            rotate_rows(&mut o, c, d, cosine, sine);
+                            let (sine, cosine) = th1.sin_cos();
+                            rotate_rows(&mut o, a, b, cosine, sine);
                             let r = compound_residual(dc, lam, &o, &targets[bi]);
                             if r < ACCEPT {
                                 return Some((o, r));
@@ -113,15 +115,9 @@ pub(crate) fn solve_face(
 /// `4 * residual >= DELTA^4`.  The chosen delta therefore excludes only
 /// candidates whose residual is already larger than `ACCEPT`.  A vertex is a
 /// special edge and necessarily passes the same gate.
-pub(crate) struct RoutedSupport {
-    pub(crate) edge: Option<[[u8; 4]; 4]>,
-    pub(crate) exact: [[u8; 4]; 4],
-}
-
-pub(crate) fn edge_gate(routed: &[[C; 4]; 4], target_specs: &[[C; 4]]) -> RoutedSupport {
+pub(crate) fn edge_gate(routed: &[[C; 4]; 4], target_specs: &[[C; 4]]) -> Option<[[u8; 4]; 4]> {
     const DELTA_SQ: f64 = 1e-4;
     let mut viable = [[0u8; 4]; 4];
-    let mut exact = [[0u8; 4]; 4];
     let (mut rows, mut cols) = ([0u8; 8], [0u8; 8]);
     for k in 0..4 {
         for m in 0..4 {
@@ -131,9 +127,6 @@ pub(crate) fn edge_gate(routed: &[[C; 4]; 4], target_specs: &[[C; 4]]) -> Routed
                     .iter()
                     .map(|w| (prod - w).norm_sqr())
                     .fold(f64::INFINITY, f64::min);
-                if distance <= 1e-16 {
-                    exact[k][m] |= 1 << b;
-                }
                 if distance <= DELTA_SQ {
                     viable[k][m] |= 1 << b;
                     rows[b] |= 1 << k;
@@ -142,10 +135,9 @@ pub(crate) fn edge_gate(routed: &[[C; 4]; 4], target_specs: &[[C; 4]]) -> Routed
             }
         }
     }
-    let edge = (0..target_specs.len())
+    (0..target_specs.len())
         .any(|b| rows[b].count_ones() >= 2 && cols[b].count_ones() >= 2)
-        .then_some(viable);
-    RoutedSupport { edge, exact }
+        .then_some(viable)
 }
 
 /// Edge rung: `O = givens(i,j,θ)·P`. `M` differs from diagonal only in the `(i,j)`
@@ -202,7 +194,9 @@ pub(crate) fn solve_edge(
                     continue; // not a real in-range cos2θ -> target isn't on this edge
                 }
                 let theta = u.re.clamp(-1.0, 1.0).acos() / 2.0;
-                let o = givens(i, j, theta) * signed_perm(p);
+                let mut o = signed_perm(p);
+                let (sine, cosine) = theta.sin_cos();
+                rotate_rows(&mut o, i, j, cosine, sine);
                 let r = compound_residual(dc, lam, &o, t);
                 if r < ACCEPT {
                     return Some((o, r));

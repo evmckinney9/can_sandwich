@@ -19,7 +19,6 @@ mod diagnostics;
 mod numerical;
 mod problem;
 mod spectral;
-use algebraic::compiler_solution;
 #[cfg(not(feature = "diagnostics"))]
 use algebraic::{Rung, Solution};
 #[cfg(feature = "diagnostics")]
@@ -32,13 +31,7 @@ use problem::Problem;
 #[cfg(feature = "diagnostics")]
 pub type Mat4 = ComplexMatrix;
 #[cfg(feature = "diagnostics")]
-pub use diagnostics::{
-    branch_signature, certify_frame, endpoint_gauge_residual, endpoint_right_gauge,
-    factor_through_berkeley, factorized_gate_collapse_residual, factorized_waypoint_mass_residual,
-    init_tables, ordered_chart_solutions, paired_edge_scope, solve_charts_only,
-    solve_factorized_waypoint, solve_factorized_waypoint_direct, solve_paired_edges,
-    solve_paired_edges_forward, solve_via_fixed_berkeley, solve_via_fixed_factor,
-};
+pub use diagnostics::{branch_signature, certify_frame, init_tables, solve_report};
 
 /// Construct a real SO(4) matrix `O` for left gate `c`, right gate `g`, and target `t`.
 ///
@@ -49,7 +42,7 @@ pub use diagnostics::{
 /// Returns `None` for nonfinite inputs or when the bounded search finds no
 /// accepted witness. A decline does not establish that the input is infeasible.
 pub fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<Matrix4<f64>> {
-    solve_using(c, g, t, |_, solution, _| Some(solution.o.map(|z| z.re)))
+    solve_using(c, g, t, |_, solution| Some(solution.o))
 }
 
 /// Return `(O, L, R, phase)` with all three matrices real SO(4), where
@@ -64,8 +57,8 @@ pub fn solve_with_factors(
     g: [f64; 3],
     t: [f64; 3],
 ) -> Option<(Matrix4<f64>, Matrix4<f64>, Matrix4<f64>, f64)> {
-    solve_using(c, g, t, |problem, solution, state| {
-        state.factors(problem, t, solution.o.map(|z| z.re))
+    solve_using(c, g, t, |problem, solution| {
+        solution.state.factors(problem, t, solution.o)
     })
 }
 
@@ -73,7 +66,7 @@ fn solve_using<T>(
     c: [f64; 3],
     g: [f64; 3],
     t: [f64; 3],
-    finish: impl FnOnce(&Problem, Solution, spectral::State) -> Option<T>,
+    finish: impl FnOnce(&Problem, Solution) -> Option<T>,
 ) -> Option<T> {
     if c.iter().chain(&g).chain(&t).any(|x| !x.is_finite()) {
         return None;
@@ -81,18 +74,15 @@ fn solve_using<T>(
     let tp = prof::start();
     let problem = Problem::new(c, g, t);
     prof::rec(prof::SEG_PREPARE, tp);
-    let result = algebraic::solve(&problem);
-    if let Some(solution) = result
-        && let Some(state) = solution.verified
-    {
-        return finish(&problem, solution, state);
-    }
-    let certify = |o: Matrix4<f64>| {
-        let solution =
-            compiler_solution(&problem, o.map(|v| C::new(v, 0.0)), Rung::Numerical, 0.0)?;
-        let state = solution.verified?;
-        Some((solution, state))
-    };
-    let (solution, state) = numerical::solve(&problem, c, g, t).and_then(certify)?;
-    finish(&problem, solution, state)
+    let solution = algebraic::solve(&problem).or_else(|| {
+        let o = numerical::solve(&problem, c, g, t)?;
+        let state = spectral::verify(&problem, &o)?;
+        Some(Solution {
+            o,
+            rung: Rung::Numerical,
+            residual: state.error,
+            state,
+        })
+    })?;
+    finish(&problem, solution)
 }

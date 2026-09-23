@@ -396,67 +396,6 @@ pub(crate) fn solve_boundary_accelerators(problem: &Problem) -> Option<(Mat4, f6
     None
 }
 
-/// Diagnostic for the exact 16-word lexicographic spanning-tree chain used by
-/// the native algebra audits, crossed with all 24 relative base permutations.
-///
-#[inline]
-pub(crate) fn cross2(left: C, right: C) -> f64 {
-    left.re * right.im - left.im * right.re
-}
-
-/// Membership in a finite convex hull in the complex trace plane.  By
-/// Caratheodory, a point in a planar hull lies in one triangle of its
-/// vertices.  The tolerance is outward-only, so this is safe as a necessary
-/// feasibility gate near a hull face.
-pub(crate) fn point_in_complex_hull<const N: usize>(vertices: &[C; N], point: C) -> bool {
-    let scale = vertices
-        .iter()
-        .map(|vertex| vertex.norm())
-        .fold(point.norm().max(1.0), f64::max);
-    let linear_tolerance = 2e-10 * scale;
-    let area_tolerance = linear_tolerance * scale;
-    if vertices
-        .iter()
-        .any(|vertex| (*vertex - point).norm() <= linear_tolerance)
-    {
-        return true;
-    }
-    for i in 0..N.saturating_sub(2) {
-        for j in i + 1..N.saturating_sub(1) {
-            for k in j + 1..N {
-                let (p, q, r) = (vertices[i], vertices[j], vertices[k]);
-                let area = cross2(q - p, r - p);
-                if area.abs() <= area_tolerance {
-                    for (x, y) in [(p, q), (p, r), (q, r)] {
-                        let direction = y - x;
-                        let length2 = direction.norm_sqr();
-                        if length2 <= area_tolerance * area_tolerance {
-                            continue;
-                        }
-                        let parameter = ((point - x).re * direction.re
-                            + (point - x).im * direction.im)
-                            / length2;
-                        let distance = cross2(point - x, direction).abs() / length2.sqrt();
-                        if (-2e-10..=1.0 + 2e-10).contains(&parameter)
-                            && distance <= linear_tolerance
-                        {
-                            return true;
-                        }
-                    }
-                    continue;
-                }
-                let s0 = cross2(q - p, point - p) / area;
-                let s1 = cross2(point - p, r - p) / area;
-                let s2 = 1.0 - s0 - s1;
-                if s0 >= -2e-10 && s1 >= -2e-10 && s2 >= -2e-10 {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
 /// One prepared cyclic three-Givens boundary atlas.  Reanchoring is only a
 /// target-slot change in the same three-spectrum relation, so both production
 /// placements advance this object over disjoint plane ranges instead of

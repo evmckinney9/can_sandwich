@@ -1,90 +1,10 @@
-//! Research entry points and optional stage timing.
+//! Route reports, candidate verification, and optional stage timing.
 #[cfg(feature = "diagnostics")]
-use crate::algebraic::{
-    self, ACCEPT, Problem, Rung, Solution, certificate, charts, compiler_solution, esym4, interior,
-    symfn, two_plus_two, unsolved_solution,
+use crate::{
+    ComplexMatrix as Mat4, Rung, Solution,
+    algebraic::{ACCEPT, certificate, interior},
+    problem::Problem,
 };
-#[cfg(feature = "diagnostics")]
-use crate::problem::{eigphases, weyl_from_monodromy};
-#[cfg(feature = "diagnostics")]
-use crate::{C, ComplexMatrix as Mat4};
-/// The diagonal phase matrix `D = mb(Can(w))` (canonical gates are diagonal in the
-/// magic basis). Built directly as `diag(exp(i*eigphases(w)))` in the ordering
-/// documented by [`eigphases`].
-#[cfg(feature = "diagnostics")]
-pub(crate) fn dphase(w: [f64; 3]) -> Mat4 {
-    let ph = eigphases(w);
-    let d: [C; 4] = std::array::from_fn(|k| C::from_polar(1.0, ph[k]));
-    Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(&d))
-}
-
-/// Return the canonical right endpoint frame of a certified child.
-/// This is the exact frame needed to insert the local layer between two
-/// adjacent entanglers in a factorization chain.
-#[cfg(feature = "diagnostics")]
-pub fn endpoint_right_gauge(c: [f64; 3], g: [f64; 3], t: [f64; 3], frame: &Mat4) -> Option<Mat4> {
-    let problem = Problem::new(c, g, t);
-    certificate::canonical_right_endpoint_gauge(&problem, frame)
-        .or_else(|| certificate::endpoint_factorization(&problem, frame).map(|(_, r)| r))
-}
-
-#[cfg(feature = "diagnostics")]
-pub fn endpoint_gauge_residual(c: [f64; 3], g: [f64; 3], t: [f64; 3], frame: &Mat4) -> f64 {
-    let problem = Problem::new(c, g, t);
-    certificate::endpoint_factorization_residual(&problem, frame)
-}
-
-/// Check whether two certified child endpoint gauges collapse a three-factor
-/// entangler word to the requested gate class.  If the child identities are
-/// `D_C O₁ D_X = L₁ D_M R₁`, etc., the forced interstitial locals are
-/// `V₁=R₁ᵀ`, `V₂=R₂ᵀ`; no optimization remains.  The residual compares the
-/// spectrum of `(D_X V₁ D_Y V₂ D_Z)(...)ᵀ` with the canonical spectrum of G.
-#[allow(clippy::too_many_arguments)]
-#[cfg(feature = "diagnostics")]
-pub fn factorized_gate_collapse_residual(
-    g: [f64; 3],
-    x: [f64; 3],
-    y: [f64; 3],
-    z: [f64; 3],
-    r1: &Mat4,
-    middle_frame: &Mat4,
-    r2: &Mat4,
-    final_frame: &Mat4,
-) -> f64 {
-    let word = dphase(x)
-        * r1.transpose()
-        * *middle_frame
-        * dphase(y)
-        * r2.transpose()
-        * *final_frame
-        * dphase(z);
-    let actual = symfn(&(word * word.transpose()));
-    let problem = Problem::new([0.0; 3], g, [0.0; 3]);
-    (0..2)
-        .map(|branch| {
-            let want = esym4(problem.target_roots[branch]);
-            actual
-                .iter()
-                .zip(want.iter())
-                .map(|(a, b)| (*a - *b).norm())
-                .fold(0.0, f64::max)
-        })
-        .fold(f64::INFINITY, f64::min)
-}
-
-/// Berkeley (2+2) CS masses of an orthogonal frame.  These are the squared
-/// singular-value invariants of the leading 2x2 block; unlike a frame gauge,
-/// they survive the left/right O(2)xO(2) actions.
-#[cfg(feature = "diagnostics")]
-pub(crate) fn cs_masses(o: &Mat4) -> (f64, f64) {
-    let a00 = o[(0, 0)].re;
-    let a01 = o[(0, 1)].re;
-    let a10 = o[(1, 0)].re;
-    let a11 = o[(1, 1)].re;
-    let s = a00 * a00 + a01 * a01 + a10 * a10 + a11 * a11;
-    let det = a00 * a11 - a01 * a10;
-    (s, det * det)
-}
 
 /// Stable, endpoint-computable branch bin used by corpus census tooling.
 /// This deliberately records predicates independently of the first successful
@@ -113,107 +33,10 @@ pub fn init_tables() {
     let _ = &*interior::INTERIOR_QUOTIENT;
 }
 
+/// Solve and report the accepted construction and its spectral error.
 #[cfg(feature = "diagnostics")]
-fn solve_report(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solution {
-    crate::solve_using(c, g, t, |_, solution, _| Some(solution)).unwrap_or_else(unsolved_solution)
-}
-
-/// Enumerate the finite ordered interior chart witnesses.  A generic child
-/// realization has a continuous fiber; these are distinct closed-form
-/// transversal witnesses exposed by the atlas, rather than repeated calls to
-/// the first-hit production selector.
-#[cfg(feature = "diagnostics")]
-pub fn ordered_chart_solutions(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Vec<Solution> {
-    let problem = Problem::new(c, g, t);
-    let mut out = Vec::new();
-    let mut vertices = [None; 256];
-    for &order in &interior::BOUNDARY_HEAD {
-        let Some((o, residual, _, _)) = interior::solve_interior_cover(
-            &problem.left,
-            &problem.right,
-            &problem.target_roots,
-            &problem.dc,
-            &problem.lam,
-            &problem.targets,
-            &[order],
-            &mut vertices,
-        ) else {
-            continue;
-        };
-        let Some(solution) = certificate::compiler_solution(&problem, o, Rung::Interior, residual)
-        else {
-            continue;
-        };
-        if out.iter().all(|old: &Solution| {
-            (old.o - solution.o)
-                .iter()
-                .map(|z| z.norm())
-                .fold(0.0, f64::max)
-                > 1e-8
-        }) {
-            out.push(solution);
-        }
-    }
-    if out.is_empty()
-        && let Some(solution) = algebraic::solve(&problem)
-    {
-        out.push(solution);
-    }
-    out
-}
-
-/// Factor a target canonical gate through the fixed Berkeley entangler:
-/// `B * V * B ~ target`, where the returned frame is the local middle gate
-/// `V` in the magic basis.  Since both outer factors are 2+2, this dispatches
-/// directly to the Pair22/Heron selector rather than the generic tail.
-#[cfg(feature = "diagnostics")]
-pub fn factor_through_berkeley(target: [f64; 3]) -> Option<Mat4> {
-    // Berkeley canonical coordinates are (1/2,1/4,0); convert through the
-    // package's monodromy convention c=(m0+m1,m0+m2,m1+m2).
-    const B: [f64; 3] = [0.375, 0.125, -0.125];
-    let solution = solve_report(B, B, target);
-    (solution.rung != Rung::Unsolved).then_some(solution.o)
-}
-
-/// Reduce a generic right entangler to the fixed Berkeley factor.  In canonical
-/// coordinates choose `G = B + R` and `M = T - R`; because all canonical
-/// factors are diagonal in the magic basis, the same local frame that realizes
-/// `C · U · B ~ M` realizes `C · U · G ~ T`.  This is the recursive waypoint
-/// reduction with the waypoint eliminated analytically.
-#[cfg(feature = "diagnostics")]
-pub fn solve_via_fixed_berkeley(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<Solution> {
-    const B: [f64; 3] = [0.375, 0.125, -0.125];
-    solve_via_fixed_factor(c, g, t, B)
-}
-
-/// General fixed-factor form of the recursive reduction. `h` is a canonical
-/// monodromy triple whose realization chart is known or separately certified.
-#[cfg(feature = "diagnostics")]
-pub fn solve_via_fixed_factor(
-    c: [f64; 3],
-    g: [f64; 3],
-    t: [f64; 3],
-    h: [f64; 3],
-) -> Option<Solution> {
-    let gw = weyl_from_monodromy(g);
-    let tw = weyl_from_monodromy(t);
-    let bw = weyl_from_monodromy(h);
-    let residual = [
-        tw[0] - gw[0] + bw[0],
-        tw[1] - gw[1] + bw[1],
-        tw[2] - gw[2] + bw[2],
-    ];
-    let middle = [
-        (residual[0] + residual[1] - residual[2]) * 0.5,
-        (residual[0] - residual[1] + residual[2]) * 0.5,
-        (-residual[0] + residual[1] + residual[2]) * 0.5,
-    ];
-    let child = solve_report(c, h, middle);
-    if child.rung == Rung::Unsolved {
-        return None;
-    }
-    let problem = Problem::new(c, g, t);
-    certificate::compiler_solution(&problem, child.o, child.rung, child.residual)
+pub fn solve_report(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<Solution> {
+    crate::solve_using(c, g, t, |_, solution| Some(solution))
 }
 
 /// Re-certify an externally selected frame against the original sandwich.
@@ -231,232 +54,13 @@ pub fn certify_frame(
     certificate::compiler_solution(&problem, o, rung, ACCEPT)
 }
 
-/// Evaluate one proposed waypoint for the virtual factorization
-/// `G = B V B`. The caller supplies `M` (for example from a reachable-polytope
-/// intersection); this routine realizes both B-children and applies the exact
-/// endpoint-Grassmannian compatibility test. A small residual means the two
-/// child certificates can be stitched with the fixed middle local `V`.
-#[cfg(feature = "diagnostics")]
-pub fn solve_factorized_waypoint(
-    c: [f64; 3],
-    g: [f64; 3],
-    t: [f64; 3],
-    waypoint: [f64; 3],
-) -> Option<(Solution, Solution, Mat4, f64)> {
-    const B: [f64; 3] = [0.375, 0.125, -0.125];
-    let middle = factor_through_berkeley(g)?;
-    let first = solve_report(c, B, waypoint);
-    let second = solve_report(waypoint, B, t);
-    let mut candidates = Vec::new();
-    if first.rung != Rung::Unsolved && second.rung != Rung::Unsolved {
-        candidates.push((first, second));
-    }
-    // The realization fiber is nontrivial.  If the production witnesses do
-    // not glue, try the finite ordered chart transversal before declaring the
-    // waypoint impossible.  This keeps the outer waypoint search unchanged
-    // while making orientation selection explicit and deterministic.
-    if candidates
-        .first()
-        .is_none_or(|(a, b)| a.rung == Rung::Unsolved || b.rung == Rung::Unsolved)
-    {
-        let fs = ordered_chart_solutions(c, B, waypoint);
-        let ss = ordered_chart_solutions(waypoint, B, t);
-        for a in fs {
-            for b in &ss {
-                candidates.push((a, *b));
-            }
-        }
-    }
-    let mut best = None;
-    for (first, second) in candidates {
-        let first_problem = Problem::new(c, B, waypoint);
-        let Some(endpoint) = certificate::canonical_right_endpoint_gauge(&first_problem, &first.o)
-        else {
-            continue;
-        };
-        let expected = endpoint * middle;
-        let mut residual = f64::INFINITY;
-        for mask in 0..16 {
-            let signs = [0, 1, 2, 3].map(|i| if (mask >> i) & 1 == 0 { 1.0 } else { -1.0 });
-            if signs.iter().product::<f64>() < 0.0 {
-                continue;
-            }
-            let s = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(
-                &signs.map(|x| C::new(x, 0.0)),
-            ));
-            residual = residual.min(certificate::endpoint_plane_residual(
-                &(s * expected),
-                &second.o,
-            ));
-        }
-        if best.as_ref().is_none_or(|(_, _, _, r)| residual < *r) {
-            best = Some((first, second, middle, residual));
-        }
-        if residual <= ACCEPT {
-            break;
-        }
-    }
-    if best.as_ref().is_none_or(|(_, _, _, r)| *r > ACCEPT) {
-        let fs = ordered_chart_solutions(c, B, waypoint);
-        let ss = ordered_chart_solutions(waypoint, B, t);
-        for first in fs {
-            let first_problem = Problem::new(c, B, waypoint);
-            let Some(endpoint) =
-                certificate::canonical_right_endpoint_gauge(&first_problem, &first.o)
-            else {
-                continue;
-            };
-            let expected = endpoint * middle;
-            for second in &ss {
-                let mut residual = f64::INFINITY;
-                for mask in 0..16 {
-                    let signs = [0, 1, 2, 3].map(|i| if (mask >> i) & 1 == 0 { 1.0 } else { -1.0 });
-                    if signs.iter().product::<f64>() < 0.0 {
-                        continue;
-                    }
-                    let s = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(
-                        &signs.map(|x| C::new(x, 0.0)),
-                    ));
-                    residual = residual.min(certificate::endpoint_plane_residual(
-                        &(s * expected),
-                        &second.o,
-                    ));
-                }
-                if best.as_ref().is_none_or(|(_, _, _, r)| residual < *r) {
-                    best = Some((first, *second, middle, residual));
-                }
-                if residual <= ACCEPT {
-                    return Some((first, *second, middle, residual));
-                }
-            }
-        }
-    }
-    best
-}
-
-/// Diagnostic only: compare the two CS masses of the relative endpoint frame
-/// against the Berkeley middle frame.  This is a necessary B-double-coset
-/// check, not a generic waypoint certificate (the left stabilizer of a generic
-/// waypoint is K_M, not K_B).
-#[cfg(feature = "diagnostics")]
-pub fn factorized_waypoint_mass_residual(
-    c: [f64; 3],
-    g: [f64; 3],
-    t: [f64; 3],
-    waypoint: [f64; 3],
-) -> Option<(f64, f64)> {
-    let (first, second, middle, _) = solve_factorized_waypoint(c, g, t, waypoint)?;
-    let first_problem = Problem::new(c, [0.375, 0.125, -0.125], waypoint);
-    let endpoint = certificate::canonical_right_endpoint_gauge(&first_problem, &first.o)?;
-    let relative = endpoint.transpose() * second.o;
-    let (s, d) = cs_masses(&relative);
-    let (sm, dm) = cs_masses(&middle);
-    Some(((s - sm).abs(), (d - dm).abs()))
-}
-
-/// Collapse a compatible factorized waypoint to a direct certified frame for
-/// the original gate. Endpoint gauges are rephased onto the canonical target
-/// diagonal before the fixed Berkeley middle frame is applied.
-#[cfg(feature = "diagnostics")]
-pub fn solve_factorized_waypoint_direct(
-    c: [f64; 3],
-    g: [f64; 3],
-    t: [f64; 3],
-    waypoint: [f64; 3],
-) -> Option<Solution> {
-    let (first, _second, middle, compatibility) = solve_factorized_waypoint(c, g, t, waypoint)?;
-    // The Plücker chart is a coordinate certificate, not the final spectral
-    // certificate.  Near a chart boundary its subtraction error is amplified
-    // by the endpoint Takagi gauge; allow a small numerical band here, while
-    // retaining the strict original compiler certificate below.
-    if compatibility > 1e-7 {
-        return None;
-    }
-    const B: [f64; 3] = [0.375, 0.125, -0.125];
-    let factor_problem = Problem::new(B, B, g);
-    let problem = Problem::new(c, g, t);
-    for branch in 0..2 {
-        let Some((left, _right)) =
-            certificate::endpoint_factorization_branch(&factor_problem, &middle, branch)
-        else {
-            continue;
-        };
-        let _left = if branch == 0 {
-            left
-        } else {
-            let (sp, _) = certificate::rho_transport_for_collapse();
-            left * sp
-        };
-        // `first.o` is already the frame multiplying the original right
-        // entangler: the endpoint equation is `O₂ = R₁ V`, so
-        // `C O₁ B V B ~ T`.  Multiplying O₁ by the factorization's left
-        // Takagi frame double-counts the virtual BVB collapse and was the
-        // reason even the planted B,B,B case failed.
-        let candidate = first.o;
-        for candidate in [candidate] {
-            if let Some(solution) =
-                certificate::compiler_solution(&problem, candidate, Rung::Chart, compatibility)
-            {
-                return Some(solution);
-            }
-        }
-    }
-    None
-}
-
-/// The chart tier alone: `Problem` then `charts::solve_full`, with no
-/// prefix rung, representative orbit, hold or adjacent-stratum lattice.
-/// Diagnostics only: measures whether everything above the tail is load-bearing.
-#[cfg(feature = "diagnostics")]
-pub fn solve_charts_only(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solution {
-    let problem = Problem::new(c, g, t);
-    charts::solve_full(&problem).unwrap_or_else(unsolved_solution)
-}
-
-/// Minimum within-pair root gap over recognized nonscalar paired inputs.
-/// This is a floating-point applicability label, not a theorem-domain test.
-#[cfg(feature = "diagnostics")]
-pub fn paired_edge_scope(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<f64> {
-    let problem = Problem::new(c, g, t);
-    [
-        two_plus_two::paired_gap(&problem.left),
-        two_plus_two::paired_gap(&problem.right),
-    ]
-    .into_iter()
-    .flatten()
-    .reduce(f64::min)
-}
-
-/// Candidate-only paired-input wall selector with R0266 backward transport.
-/// Uses the public certificate; unsupported ranks and numerical misses return
-/// `Unsolved`. No chart tail, dense Heron selector, or optimizer is called.
-#[cfg(feature = "diagnostics")]
-pub fn solve_paired_edges(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solution {
-    solve_paired_edges_inner(c, g, t, true)
-}
-
-/// Ablation of `solve_paired_edges` retaining only original input roles.
-#[cfg(feature = "diagnostics")]
-pub fn solve_paired_edges_forward(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Solution {
-    solve_paired_edges_inner(c, g, t, false)
-}
-
-#[cfg(feature = "diagnostics")]
-fn solve_paired_edges_inner(c: [f64; 3], g: [f64; 3], t: [f64; 3], backward: bool) -> Solution {
-    let problem = Problem::new(c, g, t);
-    two_plus_two::solve_paired_edges_with(&problem, backward, |o, residual| {
-        compiler_solution(&problem, o, Rung::Pair22, residual)
-    })
-    .unwrap_or_else(unsolved_solution)
-}
-
 /// PROF=1 instrumentation: per-stage aggregate ns/calls across a corpus run.
 /// Compiled out unless the `diagnostics` feature is enabled.
 pub mod prof {
     #[cfg(feature = "diagnostics")]
     use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
     #[cfg(feature = "diagnostics")]
-    pub const N: usize = 53;
+    pub const N: usize = 50;
     /// Slot indices, one per stage or event counter.
     pub const EDGE: usize = 0;
     pub const CHART_COEFFS: usize = 1;
@@ -508,10 +112,6 @@ pub mod prof {
     pub const SEG_PREPARE: usize = 47;
     pub const SEG_EDGEGATE: usize = 48;
     pub const SEG_VERTEX: usize = 49;
-    pub const CHART_TIER: usize = 50;
-    pub const CHART_PHASEA: usize = 51;
-    #[cfg(feature = "diagnostics")]
-    pub const CERT_FAST: usize = 52;
     #[cfg(feature = "diagnostics")]
     pub const NAMES: [&str; N] = [
         "edge",
@@ -564,9 +164,6 @@ pub mod prof {
         "seg_prepare",
         "seg_edgegate",
         "seg_vertex",
-        "chart_tier",
-        "chart_phaseA",
-        "cert_fast",
     ];
     #[cfg(feature = "diagnostics")]
     pub static NS: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];

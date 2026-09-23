@@ -63,7 +63,7 @@ cargo run --release -- --corpus /path/to/can_sandwich/tests/cases.bin --report r
 ```
 
 The runner calls your algorithm and the production solver on the same inputs,
-then reports failures, time spent in each solver, and errors in the spectrum,
+then reports failures, total and per-case solver timings, and errors in the spectrum,
 orthogonality, and determinant. You can replay individual cases to investigate
 failures. The [researcher guide](docs/researcher.md) provides a complete example
 project and defines the inputs, outputs, and report format.

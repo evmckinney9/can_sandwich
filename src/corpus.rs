@@ -145,12 +145,18 @@ struct Summary {
     passed: usize,
     declined: usize,
     elapsed: Duration,
+    timings: Vec<Duration>,
+    slowest: (usize, Duration),
     errors: Vec<[f64; 3]>,
     failed: Vec<usize>,
 }
 impl Summary {
     fn add(&mut self, index: usize, outcome: &Outcome) {
         self.elapsed += outcome.elapsed;
+        self.timings.push(outcome.elapsed);
+        if self.timings.len() == 1 || outcome.elapsed > self.slowest.1 {
+            self.slowest = (index, outcome.elapsed);
+        }
         self.passed += usize::from(outcome.passed());
         if !outcome.passed() {
             self.failed.push(index);
@@ -170,6 +176,19 @@ impl Summary {
             count - self.passed - self.declined,
             self.elapsed.as_secs_f64(),
             self.elapsed.as_secs_f64() * 1e6 / count as f64
+        );
+        let mut timings = self.timings.clone();
+        timings.sort_unstable();
+        let n = timings.len();
+        let median = (timings[(n - 1) / 2].as_secs_f64() + timings[n / 2].as_secs_f64()) * 0.5;
+        println!(
+            "  latency us: median={:.3} p95={:.3} p99={:.3} p99.9={:.3} max={:.3} (row {})",
+            median * 1e6,
+            timings[(n * 95).div_ceil(100) - 1].as_secs_f64() * 1e6,
+            timings[(n * 99).div_ceil(100) - 1].as_secs_f64() * 1e6,
+            timings[(n * 999).div_ceil(1000) - 1].as_secs_f64() * 1e6,
+            self.slowest.1.as_secs_f64() * 1e6,
+            self.slowest.0
         );
         if !self.failed.is_empty() {
             println!(

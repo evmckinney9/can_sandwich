@@ -25,92 +25,7 @@
 //!
 //! so squaring gives a REAL quartic `p(s)² = k²·D₄(s)`. `σ` is then read off from
 //! the sign of `p·k`, not searched.
-use super::{ACCEPT, C, Mat4, PERMS24};
-
-/// Diagonalize a nearly unitary normal matrix through a Hermitian projection.
-///
-/// A generic complex eigensolver can lose several digits on a clustered
-/// unit-circle spectrum even though the matrix is normal.  For unitary `y`,
-///
-/// `H(phi) = Re(exp(-i phi) y)`
-///
-/// is Hermitian and has the same eigenspaces as `y`.  We choose a projection
-/// direction that separates the requested target roots, use the backward-
-/// stable self-adjoint eigensolver, and recover the complex roots as Rayleigh
-/// quotients of `y`.  The returned error includes every off-diagonal entry in
-/// that basis, so callers do not have to assume that the input was exactly
-/// normal in floating point.
-#[cfg(feature = "diagnostics")]
-pub(crate) fn unitary_eigenvalues(y: &Mat4, target: &[C; 4]) -> Option<([C; 4], f64)> {
-    // This must agree with the compiler's repeated-root cluster. Attempting to
-    // separate two roots that the public boundary treats as one block makes
-    // the projection direction chase their O(1e-12) split and can collapse
-    // the gap between the actual eigenspaces.
-    const ROOT_CLUSTER: f64 = 1e-8;
-    let mut best_phi = 0.0;
-    let mut best_gap = -1.0f64;
-    for step in 0..64 {
-        let phi = std::f64::consts::TAU * step as f64 / 64.0;
-        let phase = C::from_polar(1.0, -phi);
-        let projected = target.map(|root| (phase * root).re);
-        let mut gap = f64::INFINITY;
-        let mut has_distinct_pair = false;
-        for i in 0..4 {
-            for j in i + 1..4 {
-                if (target[i] - target[j]).norm() >= ROOT_CLUSTER {
-                    has_distinct_pair = true;
-                    gap = gap.min((projected[i] - projected[j]).abs());
-                }
-            }
-        }
-        if !has_distinct_pair {
-            gap = f64::INFINITY;
-        }
-        if gap > best_gap {
-            best_gap = gap;
-            best_phi = phi;
-        }
-    }
-
-    let diagonalize = |phi: f64| -> Option<([C; 4], f64)> {
-        let phase = C::from_polar(1.0, -phi);
-        let hermitian = faer::Mat::<C>::from_fn(4, 4, |row, column| {
-            (phase * y[(row, column)] + phase.conj() * y[(column, row)].conj()) * 0.5
-        });
-        let decomposition = hermitian.self_adjoint_eigen(faer::Side::Lower).ok()?;
-        let vectors = decomposition.U();
-        let diagonalized = Mat4::from_fn(|row, column| {
-            let mut value = C::default();
-            for i in 0..4 {
-                for j in 0..4 {
-                    value += vectors[(i, row)].conj() * y[(i, j)] * vectors[(j, column)];
-                }
-            }
-            value
-        });
-        let off_diagonal = (0..4)
-            .flat_map(|row| (0..4).map(move |column| (row, column)))
-            .filter(|(row, column)| row != column)
-            .map(|(row, column)| diagonalized[(row, column)].norm())
-            .fold(0.0f64, f64::max);
-        let roots = std::array::from_fn(|i| diagonalized[(i, i)]);
-        Some((roots, off_diagonal))
-    };
-
-    let mut best = diagonalize(best_phi)?;
-    // At an exact target collision the target-optimal projection may itself
-    // be degenerate.  Only then, try a bounded set of transverse Hermitian
-    // projections and retain the basis that most nearly diagonalizes `y`.
-    if best.1 > 1e-9 {
-        for step in 1..8 {
-            let candidate = diagonalize(best_phi + std::f64::consts::PI * step as f64 / 8.0)?;
-            if candidate.1 < best.1 {
-                best = candidate;
-            }
-        }
-    }
-    Some(best)
-}
+use super::{ACCEPT, C, Mat4, PERMS24, PLANES};
 
 /// Replace the spectrum of a nearby symmetric-unitary candidate in its real
 /// eigenframe. Symmetric unitaries have commuting real and imaginary parts,
@@ -200,8 +115,6 @@ const REPS: [([usize; 4], bool); 6] = [
     ([0, 3, 1, 2], false),
     ([0, 3, 2, 1], true),
 ];
-const PAIRS: [(usize, usize); 6] = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];
-
 #[inline]
 fn build_o(q: &[f64; 4], pi: &[usize; 4], odd: bool) -> [[f64; 4]; 4] {
     std::array::from_fn(|j| {
@@ -223,9 +136,9 @@ fn build_o(q: &[f64; 4], pi: &[usize; 4], odd: bool) -> [[f64; 4]; 4] {
 /// in `e₂` is odd in any `q_i`, so the split is complete.
 fn pair_weights(a2: &[C; 4], g2: &[C; 4]) -> [[C; 6]; 6] {
     std::array::from_fn(|ai| {
-        let (i, ip) = PAIRS[ai];
+        let (i, ip) = PLANES[ai];
         std::array::from_fn(|gj| {
-            let (j, jp) = PAIRS[gj];
+            let (j, jp) = PLANES[gj];
             // Preserve the historical left association exactly.
             ((a2[i] * a2[ip]) * g2[j]) * g2[jp]
         })
@@ -235,8 +148,8 @@ fn pair_weights(a2: &[C; 4], g2: &[C; 4]) -> [[C; 6]; 6] {
 fn split_e2(weights: &[[C; 6]; 6], pi: &[usize; 4]) -> ([[C; 4]; 4], C) {
     let mut q = [[C::new(0.0, 0.0); 4]; 4];
     let mut kap = C::new(0.0, 0.0);
-    for (ai, &(i, ip)) in PAIRS.iter().enumerate() {
-        for (gj, &(j, jp)) in PAIRS.iter().enumerate() {
+    for (ai, &(i, ip)) in PLANES.iter().enumerate() {
+        for (gj, &(j, jp)) in PLANES.iter().enumerate() {
             let (pj, pjp) = (pi[j], pi[jp]);
             let w = weights[ai][gj];
             let t = SGN[i][pj] * SGN[ip][pjp] * SGN[i][pjp] * SGN[ip][pj];

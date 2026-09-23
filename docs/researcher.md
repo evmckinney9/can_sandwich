@@ -65,6 +65,18 @@ A path dependency uses the files in your local checkout, so another researcher
 will need the same versions to reproduce your run. A clean checkout at a
 recorded commit, or a Git dependency with `rev`, makes that easier.
 
+The timing summary reports total solver time, mean time per case, median,
+p95, p99, p99.9, and maximum latency with the slowest row's index. These
+measure only the solver call; input loading and independent verification are
+outside the timer. Each row is timed once, so the percentiles describe the
+distribution across corpus inputs. The median averages the two central
+measurements for an even number of rows; percentiles use nearest rank.
+
+Repeat comparisons in separate processes and inspect the slowest rows as
+well as aggregate time. A maximum can include scheduling delays or one-time
+initialization. The CSV's `nanoseconds` column retains every measured call;
+use `--case INDEX` to replay an outlier.
+
 ## Mathematical contract
 
 The function takes three finite monodromy triples, in this order:

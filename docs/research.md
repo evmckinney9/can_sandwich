@@ -264,9 +264,6 @@ The accepted eigenbasis is retained for endpoint recovery. Earlier coefficient
 bounds, divided projectors, and companion-root fallback checks have been removed
 from the production certificate. Repeated-root retargeting remains a candidate
 repair and must pass the same verifier as every other candidate.
-Charts retain an additional projector gate: removing it preserved corpus pass
-counts but degraded some per-row residuals. It needs an accuracy-preserving
-replacement before it can be deleted.
 
 ## Complementary minors in dimension four
 

@@ -1,15 +1,12 @@
-//! Algebraic candidate search: special cases first, then the chart search.
+//! Algebraic candidate search: support, multiplicity formulas, and three-Givens charts.
 use crate::diagnostics::prof;
 pub(crate) use crate::problem::{
     PERMS24, PLANES, Problem, SpectrumKind, StratumSignature, compensated_sum, esym4,
 };
 use crate::{C, ComplexMatrix as Mat4};
 pub(crate) mod certificate;
-mod chart_precision;
-pub(crate) mod charts;
 pub(crate) mod interior;
 mod klein;
-mod one_plus_three;
 mod radical;
 mod resonance;
 mod support_strata;
@@ -17,29 +14,21 @@ mod three_givens;
 pub(crate) mod two_plus_two;
 pub(crate) use certificate::{
     apply_transpose, certify_frame_against_targets, certify_frame_candidate,
-    certify_frame_candidate_with_limit, compiler_solution, frame_metrics, orient_so4,
+    certify_frame_candidate_with_limit, compiler_solution,
 };
 pub(crate) use interior::{
-    bernstein_variations, perm_vertex_residual, point_in_complex_hull, recover_frame,
-    solve_boundary_accelerators,
+    bernstein_variations, perm_vertex_residual, recover_frame, solve_boundary_accelerators,
 };
 /// One accepted interior chart: frame, residual, row permutation, plane word.
 type InteriorHit = (Mat4, f64, [usize; 4], [(usize, usize); 3]);
 
 use crate::problem;
 
-/// Try specialized constructions before the general chart search.
+/// Try the bounded algebraic constructions before numerical recovery.
 pub(crate) fn solve(problem: &Problem) -> Option<Solution> {
-    if let Some(solution) = solve_scalar_factor(problem)
+    solve_scalar_factor(problem)
         .or_else(|| solve_rank_one_31(problem))
         .or_else(|| solve_prefix(problem))
-    {
-        return Some(solution);
-    }
-    let started = prof::start();
-    let result = charts::solve_full(problem);
-    prof::rec(prof::CHART_TIER, started);
-    result
 }
 
 #[inline]
@@ -68,24 +57,21 @@ pub(crate) fn signed_perm(p: [usize; 4]) -> Mat4 {
     m
 }
 
-/// Givens rotation in plane `(i,j)` by `θ`: identity except `g[i,i]=g[j,j]=cosθ`,
-/// `g[i,j]=−sinθ`, `g[j,i]=sinθ` (s66 convention).
-pub(crate) fn givens(i: usize, j: usize, theta: f64) -> Mat4 {
-    let (ct, st) = (theta.cos(), theta.sin());
-    let mut g = Mat4::identity();
-    g[(i, i)] = c(ct, 0.0);
-    g[(j, j)] = c(ct, 0.0);
-    g[(i, j)] = c(-st, 0.0);
-    g[(j, i)] = c(st, 0.0);
-    g
+/// Left-multiply by a Givens rotation, touching only the two affected rows.
+pub(crate) fn rotate_rows(o: &mut Mat4, i: usize, j: usize, cosine: f64, sine: f64) {
+    for column in 0..4 {
+        let (x, y) = (o[(i, column)], o[(j, column)]);
+        o[(i, column)] = cosine * x - sine * y;
+        o[(j, column)] = sine * x + cosine * y;
+    }
 }
 
 /// Elementary symmetric functions `e₁..e₄` of `eig(A)` via Newton's identities on
 /// traces -- no eigendecomposition, so it does not floor at spectrum degeneracy.
 /// Production uses the matrix-free `compound_residual`; this is the test-side
 /// reference implementation.
-#[cfg(any(test, feature = "diagnostics"))]
-pub(crate) fn symfn(a: &Mat4) -> [C; 4] {
+#[cfg(test)]
+fn symfn(a: &Mat4) -> [C; 4] {
     let a2 = a * a;
     let a3 = a2 * a;
     let (p1, p2, p3, p4) = (a.trace(), a2.trace(), a3.trace(), (a3 * a).trace());
@@ -154,7 +140,8 @@ pub(crate) fn chart_o(xyz: [f64; 3], planes: [(usize, usize); 3], perm: [usize; 
     let mut o = signed_perm(perm);
     for (k, &(i, j)) in planes.iter().enumerate() {
         let theta = xyz[k].clamp(0.0, 1.0).sqrt().acos();
-        o = givens(i, j, theta) * o;
+        let (sine, cosine) = theta.sin_cos();
+        rotate_rows(&mut o, i, j, cosine, sine);
     }
     o
 }
@@ -168,12 +155,7 @@ pub(crate) fn chart_o_sqrt(xyz: [f64; 3], planes: [(usize, usize); 3], perm: [us
         let v = xyz[k].clamp(0.0, 1.0);
         let ct = v.sqrt();
         let st = (1.0 - v).sqrt();
-        let mut g = Mat4::identity();
-        g[(i, i)] = c(ct, 0.0);
-        g[(j, j)] = c(ct, 0.0);
-        g[(i, j)] = c(-st, 0.0);
-        g[(j, i)] = c(st, 0.0);
-        o = g * o;
+        rotate_rows(&mut o, i, j, ct, st);
     }
     o
 }
@@ -222,21 +204,19 @@ pub(crate) fn poly_roots(coeffs: &[f64]) -> Vec<C> {
 /// Which bounded construction produced the certified frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Rung {
-    /// A frame transported from an adjacent exact stratum and certified
-    /// directly against the original problem. This is a finite algebraic
-    /// transition chart, not a numerical correction.
+    /// Signed permutation or scalar-factor solution.
     Vertex,
+    /// Rotation in one coordinate plane.
     Edge,
+    /// Rotations in two disjoint coordinate planes.
     Face,
-    /// Routed `1 + 3` peel: rank-drop formulas, nine quadratic zero-entry
-    /// walls, and the dense residual selector.
-    OnePlusThree,
     /// Exact rank-one spectral-measure selector when either factor is `3+1`.
     RankOne31,
     /// Certified candidate from the near-`3+1` rank-one limit. The formula is
     /// not a theorem on this stratum; the unchanged forward certificate is
     /// mandatory.
     NearRankOne31,
+    /// Three-Givens chart, including inverse-factor transport.
     Interior,
     /// Klein-circulant one-sided chart: `e₁` linear in the orthostochastic
     /// diagonal pins a line in the simplex, `e₂` collapses to one real quadratic.
@@ -244,29 +224,22 @@ pub enum Rung {
     /// One factor has multiplicity `2 + 2`: linear target matching in six
     /// squared Pluecker coordinates followed by one Heron plane quartic.
     Pair22,
-    /// Input-side rank-secular closed form ((3,1)-degenerate base or gate).
-    /// Radical strata of the distilled solver (skeleton / pin-pair /
-    /// split-pair theta characteristics), tried in all four orientations and
-    /// re-gated on the original smooth residual.
+    /// Confluent spectrum solved by rank-secular or resonance formulas.
     Radical,
-    /// The row-in-plane chart atlas: one row of `O` in a coordinate 2-plane, the
-    /// inner solve a line cut by the Heron quartic, `t'` from the chart's own
-    /// discriminant. Closed-form frames only.
-    Chart,
     /// Certified result from bounded Levenberg–Marquardt refinement or restarts.
     Numerical,
-    #[cfg(feature = "diagnostics")]
-    Unsolved,
 }
 
+/// A verified real frame, its construction, and its spectral error.
 #[derive(Clone, Copy)]
 pub struct Solution {
-    pub o: Mat4,
-    /// Construction that produced the certified frame, or `Unsolved`.
+    pub o: nalgebra::Matrix4<f64>,
+    /// Construction that produced the verified frame.
     #[cfg_attr(not(feature = "diagnostics"), allow(dead_code))]
     pub rung: Rung,
+    #[cfg_attr(not(feature = "diagnostics"), allow(dead_code))]
     pub residual: f64,
-    pub(crate) verified: Option<crate::spectral::State>,
+    pub(crate) state: crate::spectral::State,
 }
 
 /// Accept threshold on the smooth residual. A true reach is ~1e-13; this is loose
@@ -278,17 +251,6 @@ pub(crate) const ACCEPT: f64 = 1e-9;
 /// orthogonal frame.  A rejected accelerator candidate must fall through to
 /// the next construction rather than escape the black box.
 const FRAME_ACCEPT: f64 = 2e-10;
-
-#[cfg(feature = "diagnostics")]
-#[inline]
-pub(crate) fn unsolved_solution() -> Solution {
-    Solution {
-        o: Mat4::identity(),
-        rung: Rung::Unsolved,
-        verified: None,
-        residual: f64::INFINITY,
-    }
-}
 
 /// Fast-accept threshold for the reduced trilinear score. Candidates with
 /// `rs < FAST_ACCEPT` have direct residual below `FAST_ACCEPT` plus the score
@@ -313,18 +275,9 @@ fn solve_scalar_factor(problem: &Problem) -> Option<Solution> {
         return None;
     };
     let expected: [C; 4] = other.map(|z| scalar * z);
-    let o = Mat4::identity();
-    let mut best = f64::INFINITY;
-    for target in &problem.target_roots {
-        for permutation in *PERMS24 {
-            let error = (0..4)
-                .map(|i| (expected[i] - target[permutation[i]]).norm())
-                .fold(0.0, f64::max);
-            best = best.min(error);
-        }
-    }
-    (best <= ACCEPT)
-        .then(|| compiler_solution(problem, o, Rung::Vertex, best))
+    let error = problem.match_roots(expected);
+    (error <= ACCEPT)
+        .then(|| compiler_solution(problem, Mat4::identity(), Rung::Vertex, error))
         .flatten()
 }
 
@@ -336,57 +289,35 @@ fn solve_scalar_factor(problem: &Problem) -> Option<Solution> {
 /// deliberately before the generic cascade: it has no chart variables,
 /// root search, or continuous selection.
 fn solve_rank_one_31(problem: &Problem) -> Option<Solution> {
-    if problem.strata.c == SpectrumKind::Triple31
-        && problem.strata.c_proximity == problem::SpectrumProximity::Exact
-        && let Some(hit) = solve_rank_one_side(
-            problem,
-            problem.left,
-            problem.right,
-            false,
-            64.0 * f64::EPSILON,
-            Rung::RankOne31,
-        )
-    {
-        return Some(hit);
-    }
-    if problem.strata.g == SpectrumKind::Triple31
-        && problem.strata.g_proximity == problem::SpectrumProximity::Exact
-        && let Some(hit) = solve_rank_one_side(
-            problem,
-            problem.right,
-            problem.left,
-            true,
-            64.0 * f64::EPSILON,
-            Rung::RankOne31,
-        )
-    {
-        return Some(hit);
-    }
-    if problem.strata.c == SpectrumKind::Triple31
-        && problem.strata.c_proximity == problem::SpectrumProximity::Near
-        && let Some(hit) = solve_rank_one_side(
-            problem,
-            problem.left,
-            problem.right,
-            false,
-            1.0e-7,
-            Rung::NearRankOne31,
-        )
-    {
-        return Some(hit);
-    }
-    if problem.strata.g == SpectrumKind::Triple31
-        && problem.strata.g_proximity == problem::SpectrumProximity::Near
-        && let Some(hit) = solve_rank_one_side(
-            problem,
-            problem.right,
-            problem.left,
-            true,
-            1.0e-7,
-            Rung::NearRankOne31,
-        )
-    {
-        return Some(hit);
+    use problem::SpectrumProximity::{Exact, Near};
+    for (proximity, tolerance, rung) in [
+        (Exact, 64.0 * f64::EPSILON, Rung::RankOne31),
+        (Near, 1e-7, Rung::NearRankOne31),
+    ] {
+        for (distinguished, other, kind, distance, transpose) in [
+            (
+                problem.left,
+                problem.right,
+                problem.strata.c,
+                problem.strata.c_proximity,
+                false,
+            ),
+            (
+                problem.right,
+                problem.left,
+                problem.strata.g,
+                problem.strata.g_proximity,
+                true,
+            ),
+        ] {
+            if kind == SpectrumKind::Triple31
+                && distance == proximity
+                && let Some(hit) =
+                    solve_rank_one_side(problem, distinguished, other, transpose, tolerance, rung)
+            {
+                return Some(hit);
+            }
+        }
     }
     None
 }
@@ -538,35 +469,19 @@ fn polynomial_derivative_at(coeff: &[C; 5], z: C, order: usize) -> C {
     value
 }
 
-/// Convert a swapped-orientation solution back to the original edge:
-/// `u` solves `(C,G,T)` iff `uᵀ` solves `(G,C,T)`; in the magic basis
-/// `mb(uᵀ) = E·mb(u)ᵀ·E` with `E = diag(1,-1,1,-1)`.  The converted frame is
-/// re-certified against the original lift; a conversion that fails
-/// certification falls through to the next representative.
-/// Convert a certificate built with central-rho gate representatives back to
-/// the caller's canonical representatives.  In the magic basis,
-///
-/// `D(rho(w)) = i L D(w) R`,
-///
-/// Every microsecond-scale exact stage: support strata, Klein, the
-/// multiplicity formulas, the 1+3 walls, the boundary accelerators, and the
-/// float pass of the dense 1+3 selector.
+/// Try support, Klein, confluent, and three-Givens constructions in order.
 fn solve_prefix(problem: &Problem) -> Option<Solution> {
     let tpre = prof::start();
     // A vertex or one-Givens edge preserves routed eigenvalues a_i*g_j. Test
     // that necessary spectral signature before enumerating support incidences.
     // The gate carries its branch masks into the edge solve, so the certificate
-    // is computed only once.  An interior stratum certificate kills every
-    // facet-tied support construction (vertex/edge/1+3 via the empty gate,
-    // face via its own guard) outright.
+    // is computed only once.
     let teg = prof::start();
     let edge_gate = support_strata::edge_gate(&problem.routed, &problem.target_roots);
     prof::rec(prof::SEG_EDGEGATE, teg);
     let tvx = prof::start();
-    let mut support_perms = None;
-    if let Some(viable) = edge_gate.edge.as_ref() {
-        let cand = *PERMS24;
-        for p in cand {
+    if let Some(viable) = edge_gate.as_ref() {
+        for p in *PERMS24 {
             // A vertex needs all four routed roots on the same target branch.
             let branch_mask = (0..4).fold(0b11u8, |mask, k| mask & viable[k][p[k]]);
             if branch_mask == 0 {
@@ -579,13 +494,12 @@ fn solve_prefix(problem: &Problem) -> Option<Solution> {
                 return Some(solution);
             }
         }
-        support_perms = Some(cand);
     }
     prof::rec(prof::SEG_VERTEX, tvx);
     prof::rec(prof::PRELUDE, tpre);
     // Exhaust the lower support strata before a broader section can cannibalize
     // their cheaper, better-conditioned formulas.
-    if let (Some(viable), Some(cand)) = (edge_gate.edge.as_ref(), support_perms.as_ref()) {
+    if let Some(viable) = edge_gate.as_ref() {
         let tp = prof::start();
         let hit = support_strata::solve_edge(
             &problem.left,
@@ -595,7 +509,7 @@ fn solve_prefix(problem: &Problem) -> Option<Solution> {
             &problem.targets,
             &problem.routed,
             viable,
-            cand,
+            PERMS24,
         );
         prof::rec(prof::EDGE, tp);
         if let Some((o, r)) = hit
@@ -637,36 +551,7 @@ fn solve_prefix(problem: &Problem) -> Option<Solution> {
     {
         return Some(solution);
     }
-    let target_repeated = problem.strata.target.iter().any(|kind| kind.is_repeated());
-    let mut resonance_best = None;
-    if problem.strata.has_confluence() && target_repeated {
-        let exact = resonance::solve_with(
-            &problem.left,
-            &problem.right,
-            &problem.target_roots,
-            &problem.dc,
-            &problem.lam,
-            &problem.targets,
-            |o, residual| {
-                let solution = compiler_solution(problem, o, Rung::Radical, residual)?;
-                if solution.residual < 1e-12 {
-                    return Some(solution);
-                }
-                if resonance_best
-                    .as_ref()
-                    .is_none_or(|candidate: &Solution| solution.residual < candidate.residual)
-                {
-                    resonance_best = Some(solution);
-                }
-                None
-            },
-        );
-        if let Some(solution) = exact {
-            return Some(solution);
-        }
-    }
-    // Multiplicity formulas own only exact confluent signatures and run after
-    // the cheaper support and Klein sections have declined.
+    // Try multiplicity formulas after the cheaper support and Klein sections.
     if let Some((o, r, rung)) = support_strata::solve_confluent(
         &problem.left,
         &problem.right,
@@ -679,38 +564,8 @@ fn solve_prefix(problem: &Problem) -> Option<Solution> {
     {
         return Some(solution);
     }
-    if let Some(solution) = resonance_best {
-        return Some(solution);
-    }
-    let has_one_plus_three = edge_gate.exact.iter().flatten().any(|&mask| mask != 0);
-    if has_one_plus_three
-        && let Some((o, residual)) = one_plus_three::solve_walls(
-            &problem.left,
-            &problem.right,
-            &edge_gate.exact,
-            &problem.dc,
-            &problem.lam,
-            &problem.targets,
-        )
-        && let Some(solution) = compiler_solution(problem, o, Rung::OnePlusThree, residual)
-    {
-        return Some(solution);
-    }
     if let Some((o, residual, rung)) = solve_boundary_accelerators(problem)
         && let Some(solution) = compiler_solution(problem, o, rung, residual)
-    {
-        return Some(solution);
-    }
-    if has_one_plus_three
-        && let Some((o, residual)) = one_plus_three::solve_dense(
-            &problem.left,
-            &problem.right,
-            &edge_gate.exact,
-            &problem.dc,
-            &problem.lam,
-            &problem.targets,
-        )
-        && let Some(solution) = compiler_solution(problem, o, Rung::OnePlusThree, residual)
     {
         return Some(solution);
     }
@@ -750,7 +605,9 @@ fn compound_moments_match_matrix_traces() {
         );
         let mut o = signed_perm(PERMS24[sample % 24]);
         for (k, (i, j)) in PLANES.into_iter().enumerate() {
-            o = givens(i, j, (x * (k + 1) as f64).sin()) * o;
+            let angle = (x * (k + 1) as f64).sin();
+            let (sine, cosine) = angle.sin_cos();
+            rotate_rows(&mut o, i, j, cosine, sine);
         }
         let actual = symfn(&mmat(&problem.dc, &problem.lam, &o));
         // Newton's trace identities do not use complementary minors.
