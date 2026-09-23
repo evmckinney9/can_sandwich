@@ -32,7 +32,7 @@ use super::{ACCEPT, C, Mat4, PERMS24, PLANES};
 /// so one real self-adjoint eigendecomposition supplies that frame. The target
 /// assignment is a finite permutation, and the caller must still reconstruct
 /// and verify the original sandwich.
-pub(crate) fn retarget_symmetric(y: &Mat4, target: &[C; 4]) -> Option<(Mat4, Mat4)> {
+pub(crate) fn retarget_symmetric(y: &Mat4, target: &[C; 4]) -> Option<Mat4> {
     const ROOT_CLUSTER: f64 = 1e-8;
     let mut best_phi = 0.0;
     let mut best_gap = -1.0f64;
@@ -90,7 +90,7 @@ pub(crate) fn retarget_symmetric(y: &Mat4, target: &[C; 4]) -> Option<(Mat4, Mat
     }
     let diagonal = Mat4::from_diagonal(&nalgebra::Vector4::from_row_slice(target));
     let rebuilt = ordered * diagonal * ordered.transpose();
-    Some((rebuilt, ordered))
+    Some(rebuilt)
 }
 
 /// `L_q[j][m] = SGN[j][m] · q[XOR[j][m]]` -- the left-multiplication matrix of
@@ -242,90 +242,25 @@ fn in_hull(c: &[C; 4], z: C) -> bool {
 pub(crate) fn takagi_real(y: &Mat4, g: &[C; 4]) -> Option<nalgebra::Matrix4<f64>> {
     let a = nalgebra::Matrix4::<f64>::from_fn(|i, j| y[(i, j)].re);
     let b = nalgebra::Matrix4::<f64>::from_fn(|i, j| y[(i, j)].im);
-    for &t in &[0.0f64, 1.0, -1.0, 0.5, 2.0, -0.37] {
-        let lam: [f64; 4] = std::array::from_fn(|k| g[k].re + t * g[k].im);
-        if (0..4).any(|i| ((i + 1)..4).any(|j| (lam[i] - lam[j]).abs() < 1e-7)) {
-            continue;
-        }
-        // Sylvester's formula, not an eigensolver: with the eigenvalues KNOWN
-        // and separated, the spectral projector Π_{j≠k}(M−λⱼ)/(λₖ−λⱼ) is rank
-        // one, so its largest column IS the eigenvector. Horner form: the
-        // numerator is the divided characteristic m³−s₁m²+s₂m−s₃I with sᵢ the
-        // elementary symmetric functions of the three OTHER eigenvalues, so
-        // m² and m³ are shared across all four columns -- two 4×4 products
-        // total instead of twelve, no iteration.
-        let m = a + b * t;
-        let m2 = m * m;
-        let m3 = m2 * m;
-        let mut o = nalgebra::Matrix4::<f64>::zeros();
-        let mut ok = true;
-        for k in 0..4 {
-            let mut others = [0.0f64; 3];
-            let mut idx = 0;
-            let mut d = 1.0f64;
-            for j in 0..4 {
-                if j != k {
-                    others[idx] = lam[j];
-                    idx += 1;
-                    d *= lam[k] - lam[j];
-                }
-            }
-            let s1 = others[0] + others[1] + others[2];
-            let s2 = others[0] * others[1] + others[0] * others[2] + others[1] * others[2];
-            let s3 = others[0] * others[1] * others[2];
-            let mut p = (m3 - m2 * s1 + m * s2) / d;
-            for i in 0..4 {
-                p[(i, i)] -= s3 / d;
-            }
-            let mut best = (0.0f64, 0usize);
-            for cidx in 0..4 {
-                let n = p.column(cidx).norm();
-                if n > best.0 {
-                    best = (n, cidx);
-                }
-            }
-            if best.0 < 1e-8 {
-                ok = false;
-                break;
-            }
-            o.set_column(k, &(p.column(best.1) / best.0));
-        }
-        if ok {
-            let oc = Mat4::from_fn(|r, k| C::new(o[(r, k)], 0.0));
-            let diagonalized = oc.transpose() * y * oc;
-            let mut error = 0.0f64;
-            for r in 0..4 {
-                for c in 0..4 {
-                    let want = if r == c { g[r] } else { C::default() };
-                    error = error.max((diagonalized[(r, c)] - want).norm());
-                }
-            }
-            if error < 1e-8 {
-                return Some(o);
-            }
-        }
-    }
-    // Near a target collision every fixed projection above can have a small
-    // eigenvalue gap, making divided projectors unusable even though the real
-    // Takagi frame itself is well conditioned as a subspace.  A symmetric
-    // eigensolve supplies an orthonormal basis of that subspace; enumerate its
-    // finite column order and accept only direct complex reconstruction.
+    // A real symmetric projection supplies the common eigenvectors.
+    // Try other projections when a collision prevents reconstruction.
     for &t in &[0.0f64, 1.0, -1.0, 0.5, 2.0, -0.37] {
         let m = a + b * t;
         let eigenvectors = m.symmetric_eigen().eigenvectors;
+        let cv = eigenvectors.map(|x| C::new(x, 0.0));
+        let diagonalized = cv.transpose() * y * cv;
+        // Permuting eigenvectors only permutes this matrix. Its off-diagonal
+        // error is invariant, so each projection needs one matrix product.
+        if (0..4).any(|i| (0..4).any(|j| i != j && diagonalized[(i, j)].norm() >= 1e-8)) {
+            continue;
+        }
+        let errors: [[f64; 4]; 4] =
+            std::array::from_fn(|i| std::array::from_fn(|j| (diagonalized[(i, i)] - g[j]).norm()));
         for permutation in *PERMS24 {
-            let o = nalgebra::Matrix4::<f64>::from_fn(|r, k| eigenvectors[(r, permutation[k])]);
-            let oc = Mat4::from_fn(|r, k| C::new(o[(r, k)], 0.0));
-            let diagonalized = oc.transpose() * y * oc;
-            let mut error = 0.0f64;
-            for r in 0..4 {
-                for c in 0..4 {
-                    let want = if r == c { g[r] } else { C::default() };
-                    error = error.max((diagonalized[(r, c)] - want).norm());
-                }
-            }
-            if error < 1e-8 {
-                return Some(o);
+            if (0..4).all(|j| errors[permutation[j]][j] < 1e-8) {
+                return Some(nalgebra::Matrix4::from_fn(|i, j| {
+                    eigenvectors[(i, permutation[j])]
+                }));
             }
         }
     }

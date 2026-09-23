@@ -6,6 +6,9 @@ use crate::{
 use nalgebra::{Matrix4, SymmetricEigen};
 use std::f64::consts::PI;
 type R4 = Matrix4<f64>;
+/// Maximum accepted root error, including the eigenbasis residual. This is
+/// an acceptance ceiling; numerical refinement aims for substantially less.
+pub(crate) const SPECTRAL_TOLERANCE: f64 = 1e-12;
 #[derive(Clone, Copy)]
 pub(crate) struct State {
     pub(crate) cost: f64,
@@ -74,16 +77,17 @@ impl Problem {
             for i in 0..4 {
                 for j in 0..4 {
                     if i != j {
-                        err = err.max(diag[(i, j)].norm());
+                        err = err.max(diag[(i, j)].norm_sqr());
                     }
                 }
             }
+            let err = err.sqrt();
             if err < off {
                 off = err;
                 eigenvectors = v;
                 roots = std::array::from_fn(|i| diag[(i, i)]);
             }
-            if off < 2e-13 {
+            if off < 1e-14 {
                 break;
             }
         }
@@ -108,8 +112,9 @@ impl Problem {
         }
         let chosen: [Z; 4] = std::array::from_fn(|i| self.target_roots[0][order[i]] * chosen_sign);
         let error = (0..4)
-            .map(|i| (roots[i] - chosen[i]).norm())
+            .map(|i| (roots[i] - chosen[i]).norm_sqr())
             .fold(0.0, f64::max)
+            .sqrt()
             + 4.0 * off;
         State {
             cost: best,
@@ -128,12 +133,12 @@ pub(crate) fn verify(problem: &Problem, o: &R4) -> Option<State> {
     if !o.iter().all(|v| v.is_finite()) {
         return None;
     }
-    if (o.transpose() * o - R4::identity()).amax() > 1e-11 || (o.determinant() - 1.0).abs() > 1e-11
+    if (o.transpose() * o - R4::identity()).amax() > 1e-12 || (o.determinant() - 1.0).abs() > 1e-12
     {
         return None;
     }
     let state = problem.state(o, 0.0);
-    (state.cost.is_finite() && state.error < 8e-9).then_some(state)
+    (state.cost.is_finite() && state.error < SPECTRAL_TOLERANCE).then_some(state)
 }
 
 impl State {
@@ -167,9 +172,9 @@ impl State {
         let right = right.map(|v| v.re);
         let rebuilt = complex_left * Matrix4::from_fn(|i, j| scalar * dt[i] * right[(i, j)]);
         if right.iter().all(|v| v.is_finite())
-            && (right.transpose() * right - R4::identity()).amax() < 1e-11
-            && (right.determinant() - 1.0).abs() < 1e-11
-            && (rebuilt - u).iter().all(|v| v.norm() < 8e-9)
+            && (right.transpose() * right - R4::identity()).amax() < 1e-12
+            && (right.determinant() - 1.0).abs() < 1e-12
+            && (rebuilt - u).iter().all(|v| v.norm() < 1e-12)
         {
             Some((o, left, right, phase))
         } else {

@@ -260,10 +260,11 @@ argument, the code also checks the frame, and the corpus independently checks
 the resulting spectrum. These numerical checks do not provide the rigorous
 enclosures needed for an interval certificate.
 
-The accepted eigenbasis is retained for endpoint recovery. Earlier coefficient
-bounds, divided projectors, and companion-root fallback checks have been removed
-from the production certificate. Repeated-root retargeting remains a candidate
-repair and must pass the same verifier as every other candidate.
+The accepted eigenbasis is retained for endpoint recovery. Candidate
+constructions use coefficient residuals for screening, but only the rootwise
+verifier can accept a result. A rejected candidate falls through to the next
+construction or to numerical recovery. Repeated-root retargeting remains a
+candidate repair and must pass the same verifier.
 
 ## Complementary minors in dimension four
 

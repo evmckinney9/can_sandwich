@@ -31,7 +31,7 @@ use problem::Problem;
 #[cfg(feature = "diagnostics")]
 pub type Mat4 = ComplexMatrix;
 #[cfg(feature = "diagnostics")]
-pub use diagnostics::{branch_signature, certify_frame, init_tables, solve_report};
+pub use diagnostics::{branch_signature, certify_frame, solve_report};
 
 /// Construct a real SO(4) matrix `O` for left gate `c`, right gate `g`, and target `t`.
 ///
@@ -74,7 +74,7 @@ fn solve_using<T>(
     let tp = prof::start();
     let problem = Problem::new(c, g, t);
     prof::rec(prof::SEG_PREPARE, tp);
-    let solution = algebraic::solve(&problem).or_else(|| {
+    let mut solution = algebraic::solve(&problem).or_else(|| {
         let o = numerical::solve(&problem, c, g, t)?;
         let state = spectral::verify(&problem, &o)?;
         Some(Solution {
@@ -84,5 +84,14 @@ fn solve_using<T>(
             state,
         })
     })?;
+    if solution.state.error > numerical::ACCEPT
+        && let Some(o) = problem.iterate(solution.o, 0.0)
+        && let Some(state) = spectral::verify(&problem, &o)
+        && state.error < solution.state.error
+    {
+        solution.o = o;
+        solution.residual = state.error;
+        solution.state = state;
+    }
     finish(&problem, solution)
 }

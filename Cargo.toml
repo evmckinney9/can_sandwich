@@ -34,5 +34,3 @@ corpus = []
 
 [dependencies]
 nalgebra = "0.35"
-# Companion-matrix eigenvalues for the polynomial root primitives.
-faer = { version = "0.24", default-features = false, features = ["std"] }

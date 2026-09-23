@@ -6,7 +6,7 @@ use crate::{
 use nalgebra::{Matrix4, SMatrix, SVector};
 use std::f64::consts::PI;
 type R4 = Matrix4<f64>;
-const ACCEPT: f64 = 4e-9;
+pub(crate) const ACCEPT: f64 = 1e-13;
 fn rotate(o: &mut R4, p: usize, q: usize, angle: f64) {
     let (s, c) = angle.sin_cos();
     for j in 0..4 {
@@ -37,34 +37,41 @@ impl Problem {
                 return Some(o);
             }
             for (p, q) in PLANES {
-                let slope =
-                    (self.left[p] - self.left[q]) * (self.right[perm[q]] - self.right[perm[p]]);
-                if slope.norm_sqr() < 1e-28 {
-                    continue;
-                }
                 for sign in [-1.0, 1.0] {
-                    let delta = trace * sign - sum;
-                    let u = (delta * slope.conj()).re / slope.norm_sqr();
-                    if !(-1e-12..=1.0 + 1e-12).contains(&u) || (delta - slope * u).norm() > 1e-9 {
+                    let targets = self.target_roots[0].map(|z| z * sign);
+                    if (0..4)
+                        .filter(|&i| i != p && i != q)
+                        .any(|i| targets.iter().all(|z| (roots[i] - z).norm() > 1e-13))
+                    {
                         continue;
                     }
-                    let mut candidate = o;
-                    rotate(&mut candidate, p, q, u.clamp(0.0, 1.0).sqrt().asin());
-                    let state = self.state(&candidate, 0.0);
-                    if state.cost.is_finite() && state.error < ACCEPT {
-                        return Some(candidate);
+                    for root in targets {
+                        let Some(angle) = self.block_angle((p, q), (perm[p], perm[q]), root) else {
+                            continue;
+                        };
+                        let mut candidate = o;
+                        rotate(&mut candidate, p, q, angle);
+                        let state = self.state(&candidate, 0.0);
+                        if state.cost.is_finite() && state.error < ACCEPT {
+                            return Some(candidate);
+                        }
                     }
                 }
             }
         }
         None
     }
-    fn iterate(&self, mut o: R4, branch: f64) -> Option<R4> {
+    pub(crate) fn iterate(&self, o: R4, branch: f64) -> Option<R4> {
+        self.iterate_fixed(o, branch, None)
+    }
+
+    fn iterate_fixed(&self, mut o: R4, branch: f64, fixed: Option<usize>) -> Option<R4> {
         let ratios: [Z; 6] = PLANES.map(|(p, q)| self.dc[(p, p)] * self.dc[(q, q)].conj());
+        o = orthogonalize(o);
         let mut state = self.state(&o, branch);
         let mut damping = 1e-3;
         let mut stalled = 0;
-        for _ in 0..40 {
+        for _ in 0..120 {
             if state.cost.is_finite() && state.error < ACCEPT {
                 return Some(o);
             }
@@ -73,12 +80,16 @@ impl Problem {
             }
             // Variable-projection GN: eliminate target eigenbasis rotations
             // pairwise while retaining splitting curvature at repeated targets.
-            let mut h = SMatrix::<f64, 6, 6>::zeros();
-            let mut gradient = SVector::<f64, 6>::zeros();
+            let mut jacobian = SMatrix::<f64, 30, 6>::zeros();
+            let mut residual = SVector::<f64, 30>::zeros();
+            let mut row = 0;
             for i in 0..4 {
                 for l in i..4 {
                     let derivative: [Z; 6] = std::array::from_fn(|k| {
                         let (p, q) = PLANES[k];
+                        if fixed.is_some_and(|fixed| p == fixed || q == fixed) {
+                            return Z::new(0.0, 0.0);
+                        }
                         let ratio = ratios[k];
                         (state.roots[l] * ratio - state.roots[i] * ratio.conj())
                             * state.eigenvectors[(p, i)]
@@ -87,7 +98,11 @@ impl Problem {
                                 * state.eigenvectors[(q, i)]
                                 * state.eigenvectors[(p, l)]
                     });
-                    let weight = if i == l { 1.0 } else { 2.0 };
+                    let weight = if i == l {
+                        1.0
+                    } else {
+                        std::f64::consts::SQRT_2
+                    };
                     let direction = state.target[l] - state.target[i];
                     let regularization = state.cost.max(1e-28);
                     let denominator = direction.norm_sqr() + regularization;
@@ -101,33 +116,46 @@ impl Problem {
                     let projected: [Z; 6] =
                         std::array::from_fn(|k| derivative[k] - alpha[k] * direction);
                     for k in 0..6 {
-                        if i == l {
-                            gradient[k] +=
-                                (derivative[k].conj() * (state.roots[i] - state.target[i])).re;
-                        }
-                        for n in 0..=k {
-                            let value = (projected[k].conj() * projected[n]).re
-                                + regularization * alpha[k] * alpha[n];
-                            h[(k, n)] += weight * value;
-                            if k != n {
-                                h[(n, k)] += weight * value;
-                            }
-                        }
+                        jacobian[(row, k)] = weight * projected[k].re;
+                        jacobian[(row + 1, k)] = weight * projected[k].im;
+                        jacobian[(row + 2, k)] = weight * regularization.sqrt() * alpha[k];
                     }
+                    if i == l {
+                        let error = state.roots[i] - state.target[i];
+                        residual[row] = error.re;
+                        residual[row + 1] = error.im;
+                    }
+                    row += 3;
                 }
             }
-            let scale = h.diagonal().amax().max(1e-24);
+            let norms: [f64; 6] = std::array::from_fn(|k| jacobian.column(k).norm_squared());
+            let scale = norms.into_iter().fold(1e-24, f64::max);
             let mut accepted = false;
             for _ in 0..12 {
-                let mut regularized = h;
+                // Solve the damped least-squares system directly. Forming JᵀJ
+                // squares the condition number and loses directions that
+                // distinguish nearly repeated roots.
+                let mut augmented = SMatrix::<f64, 36, 6>::zeros();
+                augmented.fixed_rows_mut::<30>(0).copy_from(&jacobian);
                 for k in 0..6 {
-                    regularized[(k, k)] += damping * h[(k, k)].max(scale * 1e-14).max(1e-30);
+                    augmented[(30 + k, k)] =
+                        (damping * norms[k].max(scale * 1e-28).max(1e-30)).sqrt();
                 }
-                let Some(chol) = regularized.cholesky() else {
+                let qr = augmented.qr();
+                let mut rhs = SVector::<f64, 36>::zeros();
+                rhs.fixed_rows_mut::<30>(0).copy_from(&(-residual));
+                qr.q_tr_mul(&mut rhs);
+                let Some(mut step) = qr.r().solve_upper_triangular(&rhs.fixed_rows::<6>(0)) else {
                     damping *= 10.0;
                     continue;
                 };
-                let mut step = -chol.solve(&gradient);
+                // A frozen coordinate stays exactly zero, including roundoff
+                // from the least-squares solve. Otherwise its boundary root drifts.
+                for (k, (p, q)) in PLANES.into_iter().enumerate() {
+                    if fixed.is_some_and(|fixed| p == fixed || q == fixed) {
+                        step[k] = 0.0;
+                    }
+                }
                 let norm = step.norm();
                 if norm > 0.8 {
                     step *= 0.8 / norm;
@@ -137,6 +165,7 @@ impl Problem {
                     let (p, q) = PLANES[k];
                     rotate(&mut candidate, p, q, step[k]);
                 }
+                candidate = orthogonalize(candidate);
                 let next = self.state(&candidate, branch);
                 if next.cost < state.cost {
                     let gain = state.cost - next.cost;
@@ -147,7 +176,7 @@ impl Problem {
                     }
                     o = candidate;
                     state = next;
-                    damping = (damping * 0.25).max(1e-14);
+                    damping = (damping * 0.25).max(1e-30);
                     accepted = true;
                     break;
                 } else {
@@ -165,6 +194,13 @@ impl Problem {
         }
     }
 }
+
+/// One polar Newton step removes the rounding drift of successive rotations.
+/// The input is already orthogonal to working precision.
+fn orthogonalize(o: R4) -> R4 {
+    o * ((R4::identity() * 3.0 - o.transpose() * o) * 0.5)
+}
+
 fn random(state: &mut u64) -> f64 {
     *state = state.wrapping_add(0x9e3779b97f4a7c15);
     let mut z = *state;
@@ -173,9 +209,8 @@ fn random(state: &mut u64) -> f64 {
     ((z ^ (z >> 31)) >> 11) as f64 / (1u64 << 53) as f64
 }
 fn random_starts(problem: &Problem, seed: &mut u64, branches: &[f64]) -> Option<R4> {
-    // Try another orientation after four starts instead of exhausting one
-    // parameterization. Each start has its own bounded refinement budget.
-    for attempt in 0..4 {
+    // Each orientation and each refinement has a bounded search budget.
+    for attempt in 0..24 {
         let mut o = R4::identity();
         for (p, q) in PLANES {
             rotate(&mut o, p, q, (2.0 * random(seed) - 1.0) * PI);
@@ -194,6 +229,38 @@ fn solve_primary(problem: &Problem, c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Op
     let mut seed = 0x123456789abcdefu64;
     for value in c.into_iter().chain(g).chain(t) {
         seed = seed.rotate_left(7) ^ value.to_bits();
+    }
+    // A routed root can be retained exactly while solving the complementary
+    // SO(3) block. Free rotations would only preserve that boundary root to
+    // second order, which stalls refinement near repeated spectra.
+    let mut fixed_seed = seed;
+    for fixed in 0..4 {
+        for column in 0..4 {
+            for sign in [-1.0, 1.0] {
+                let root = problem.left[fixed] * problem.right[column];
+                if problem.target_roots[0]
+                    .iter()
+                    .all(|z| (root - z * sign).norm() > 1e-14)
+                {
+                    continue;
+                }
+                for _ in 0..24 {
+                    let mut start = R4::identity();
+                    start.swap_columns(fixed, column);
+                    if start.determinant() < 0.0 {
+                        start.column_mut(0).neg_mut();
+                    }
+                    for (p, q) in PLANES {
+                        if p != fixed && q != fixed {
+                            rotate(&mut start, p, q, (2.0 * random(&mut fixed_seed) - 1.0) * PI);
+                        }
+                    }
+                    if let Some(o) = problem.iterate_fixed(start, sign, Some(fixed)) {
+                        return Some(o);
+                    }
+                }
+            }
+        }
     }
     if let Some(o) = random_starts(problem, &mut seed, &[0.0]) {
         return Some(o);
@@ -258,6 +325,18 @@ fn near_commuting(problem: &Problem) -> Option<R4> {
 }
 
 pub(crate) fn solve(problem: &Problem, c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<R4> {
+    // Rank-two Horn bounds for ordered alcove coordinates, on both central
+    // target lifts. Do not spend restart budgets on a certified violation.
+    let ordered = |m: [f64; 3]| {
+        let last = -m[0] - m[1] - m[2];
+        m[0] >= m[1] && m[1] >= m[2] && m[2] >= last && m[0] - last <= 1.0
+    };
+    let paired_sum = (c[0] + c[2]) + (g[0] + g[2]);
+    if [c, g, t].into_iter().all(ordered)
+        && (t[1] + t[2]).abs() > paired_sum.min(1.0 - paired_sum) + 1e-12
+    {
+        return None;
+    }
     solve_primary(problem, c, g, t)
         .or_else(|| near_commuting(problem))
         .or_else(|| inverse_factor(problem, c, g, t))

@@ -154,14 +154,28 @@ Both algorithms receive the same inputs. The checker measures:
 
 | Error | Definition | Acceptance |
 |---|---|---|
-| Spectrum | Smallest maximum complex-root distance over all 24 bijections and both global signs | At most `1e-8` |
-| Orthogonality | Largest absolute entry of $O^TO-I$ | At most `1e-8` |
-| Determinant | $|\det O-1|$ | At most `1e-8` |
+| Spectrum | Smallest maximum complex-root distance over all 24 bijections and both global signs | At most `1e-12` |
+| Orthogonality | Largest absolute entry of $O^TO-I$ | At most `1e-12` |
+| Determinant | $|\det O-1|$ | At most `1e-12` |
 
-A returned matrix passes only if it meets all three bounds. The runner labels
-a rejected matrix `invalid` and a `None` result `declined`, then reports p50,
-p99, and maximum errors among the returned matrices. When a measurement is
-unavailable, its value is `inf`; for example, the checker skips spectral
+A returned matrix passes only if it meets all three bounds. The independent
+complex Schur calculation shifts and scales the matrix before computing its
+roots; a quarter-turn supplies an alternate QR path if convergence stalls.
+Neither transform changes the eigenvalue problem or its acceptance threshold.
+
+The corpus retains four historical near-feasible inputs that violate necessary
+rank-two Horn inequalities. For ordered alcove coordinates, let
+`a = c0 + c2 + g0 + g2`. The inequalities require
+`abs(t1 + t2) <= min(a, 1-a)` for both central lifts. A violation exceeding
+`1e-12` in phase turns certifies infeasibility at the root-error tolerance.
+Such a row passes only when the solver returns `None`; its CSV status is
+`rejected_infeasible`. Other declines remain failures. This partial certificate
+does not claim to classify every infeasible input, and uses no row indices.
+
+For other rows, the runner labels a rejected matrix `invalid` and a `None`
+result `declined`. It reports p50, p99, p99.9, and maximum errors among the
+returned matrices. When a measurement is unavailable, its value is `inf`;
+for example, the checker skips spectral
 evaluation if the matrix already fails the orthogonality check.
 
 The report calls a row `fixed` when production fails and the candidate passes,

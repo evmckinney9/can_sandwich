@@ -7,8 +7,8 @@
 //! after those cheaper strata and the Klein section have declined.
 
 use super::{
-    ACCEPT, C, Mat4, PLANES, SpectrumKind, StratumSignature, compound_residual, recover_frame,
-    rotate_rows, signed_perm,
+    ACCEPT, C, Mat4, PLANES, Problem, Rung, Solution, SpectrumKind, StratumSignature,
+    compiler_solution, compound_residual, recover_frame, rotate_rows, signed_perm,
 };
 
 fn complement(i: usize, j: usize) -> (usize, usize) {
@@ -16,20 +16,13 @@ fn complement(i: usize, j: usize) -> (usize, usize) {
     (o.next().unwrap(), o.next().unwrap())
 }
 
-/// Face rung: `O = givens(a,b)·givens(c,d)·P` with `{a,b}∩{c,d}=∅`. `M` is block-diagonal in the
-/// two 2×2 blocks (disjoint planes -> NO orthostochastic cross-term); each block has θ-free det and
-/// trace affine in `cos2θ`. Partition the 4 target eigenvalues into the two block pairs by the θ-free
-/// det, then solve each block's `cos2θ` LINEARLY -- two independent edge solves. Closed-form, no eig,
-/// machine-precise; well-conditioned exactly where the deg-6 chart degrades (the near-face tail).
-pub(crate) fn solve_face(
-    d2: &[C; 4],
-    lam4: &[C; 4],
-    dc: &Mat4,
-    lam: &Mat4,
-    target_specs: &[[C; 4]],
-    targets: &[[C; 4]],
-) -> Option<(Mat4, f64)> {
-    let half = C::new(0.5, 0.0);
+/// Two disjoint rotations. Partition target roots by each block's fixed
+/// determinant, then recover both angles with the stable sine-product formula.
+/// Verify each candidate before leaving the scan: a small coefficient residual
+/// can hide inaccurate roots near a degeneracy.
+pub(crate) fn solve_face(problem: &Problem) -> Option<Solution> {
+    let (d2, lam4, dc, lam) = (&problem.left, &problem.right, &problem.dc, &problem.lam);
+    let (target_specs, targets) = (&problem.target_roots, &problem.targets);
     // Every block det d²_a d²_b λ_x λ_y depends only on the UNORDERED pairs
     // {a,b} and {x,y}, so the det gate lives on PLANES x PLANES, not on ranked
     // permutations: 6x6x6 checks replace the old 864-iteration perm sweep,
@@ -49,41 +42,27 @@ pub(crate) fn solve_face(
                 let det_ab = d2p[p6] * lamp[q6];
                 let det_cd = d2p[5 - p6] * lamp[5 - q6];
                 for (t6, &(i, j)) in PLANES.iter().enumerate() {
-                    // norm_sqr vs (1e-7)^2: same predicate, no sqrt.
-                    if (wp[t6] - det_ab).norm_sqr() > 1e-14 {
+                    // Match each block determinant to 1e-12 without a square root.
+                    if (wp[t6] - det_ab).norm_sqr() > 1e-24 {
                         continue; // this target pair isn't block {a,b}'s spectrum
                     }
-                    if (wp[5 - t6] - det_cd).norm_sqr() > 1e-14 {
+                    if (wp[5 - t6] - det_cd).norm_sqr() > 1e-24 {
                         continue;
                     }
-                    let (k, l) = complement(i, j);
+                    let (k, _) = complement(i, j);
                     let (x, y) = PLANES[q6];
                     let (z, v) = PLANES[5 - q6];
-                    // block trace = A + B·cos2θ; swapping the λ assignment
-                    // within a block flips B, so both orders are tried.
+                    // Both orders within each block are distinct angle choices.
                     for s1 in 0..2 {
                         for s2 in 0..2 {
                             let (xa, xb) = if s1 == 0 { (x, y) } else { (y, x) };
                             let (za, zb) = if s2 == 0 { (z, v) } else { (v, z) };
-                            let a_ab = half * (d2[a] + d2[b]) * (lam4[xa] + lam4[xb]);
-                            let b_ab = half * (lam4[xa] - lam4[xb]) * (d2[a] - d2[b]);
-                            let a_cd = half * (d2[c] + d2[d]) * (lam4[za] + lam4[zb]);
-                            let b_cd = half * (lam4[za] - lam4[zb]) * (d2[c] - d2[d]);
-                            if b_ab.norm() < 1e-12 || b_cd.norm() < 1e-12 {
+                            let Some(th1) = problem.block_angle((a, b), (xa, xb), w[i]) else {
                                 continue;
-                            }
-                            let u1 = (w[i] + w[j] - a_ab) / b_ab;
-                            let u2 = (w[k] + w[l] - a_cd) / b_cd;
-                            if u1.im.abs() > 1e-6 || u2.im.abs() > 1e-6 {
+                            };
+                            let Some(th2) = problem.block_angle((c, d), (za, zb), w[k]) else {
                                 continue;
-                            }
-                            if !(-1.0001..=1.0001).contains(&u1.re)
-                                || !(-1.0001..=1.0001).contains(&u2.re)
-                            {
-                                continue;
-                            }
-                            let th1 = u1.re.clamp(-1.0, 1.0).acos() / 2.0;
-                            let th2 = u2.re.clamp(-1.0, 1.0).acos() / 2.0;
+                            };
                             let mut perm = [0usize; 4];
                             perm[a] = xa;
                             perm[b] = xb;
@@ -95,8 +74,10 @@ pub(crate) fn solve_face(
                             let (sine, cosine) = th1.sin_cos();
                             rotate_rows(&mut o, a, b, cosine, sine);
                             let r = compound_residual(dc, lam, &o, &targets[bi]);
-                            if r < ACCEPT {
-                                return Some((o, r));
+                            if r < ACCEPT
+                                && let Some(solution) = compiler_solution(problem, o, Rung::Face, r)
+                            {
+                                return Some(solution);
                             }
                         }
                     }

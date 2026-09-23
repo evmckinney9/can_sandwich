@@ -69,12 +69,12 @@ pub(crate) fn spectrum_proximity(s: &[C; 4]) -> SpectrumProximity {
     let mut minimum = f64::INFINITY;
     for i in 0..4 {
         for j in (i + 1)..4 {
-            minimum = minimum.min((s[i] - s[j]).norm());
+            minimum = minimum.min((s[i] - s[j]).norm_sqr());
         }
     }
-    if minimum <= 64.0 * f64::EPSILON {
+    if minimum <= (64.0 * f64::EPSILON).powi(2) {
         SpectrumProximity::Exact
-    } else if minimum <= 1.0e-7 {
+    } else if minimum <= 1.0e-14 {
         SpectrumProximity::Near
     } else {
         SpectrumProximity::Distinct
@@ -156,6 +156,32 @@ pub(crate) struct Problem {
 }
 
 impl Problem {
+    /// Rotation of a 2×2 block from one target root. The sine-product form
+    /// remains usable when differences of traces round to zero.
+    pub(crate) fn block_angle(
+        &self,
+        (p, q): (usize, usize),
+        (x, y): (usize, usize),
+        root: C,
+    ) -> Option<f64> {
+        let alpha = self.left_phases[p] - self.left_phases[q];
+        let beta = self.right_phases[x] - self.right_phases[y];
+        let denominator = alpha.sin() * beta.sin();
+        if denominator == 0.0 {
+            return Some(0.0);
+        }
+        let center =
+            self.left_phases[p] + self.left_phases[q] + self.right_phases[x] + self.right_phases[y];
+        let kappa = (root * C::from_polar(1.0, -center)).arg();
+        // cos²θ = [sin²(κ/2) - sin²((α-β)/2)] / (sin α sin β).
+        let cosine_squared = ((kappa + alpha - beta) * 0.5).sin()
+            * ((kappa - alpha + beta) * 0.5).sin()
+            / denominator;
+        (-1e-12..=1.0 + 1e-12)
+            .contains(&cosine_squared)
+            .then(|| cosine_squared.clamp(0.0, 1.0).sqrt().acos())
+    }
+
     pub(crate) fn new(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Self {
         let left_phases = phases(c);
         let right_phases = phases(g);

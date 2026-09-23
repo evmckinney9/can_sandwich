@@ -4,20 +4,128 @@ pub(crate) use crate::problem::{
     PERMS24, PLANES, Problem, SpectrumKind, StratumSignature, compensated_sum, esym4,
 };
 use crate::{C, ComplexMatrix as Mat4};
-pub(crate) mod certificate;
 pub(crate) mod interior;
 mod klein;
 mod radical;
 mod support_strata;
 mod three_givens;
-pub(crate) use certificate::{apply_transpose, certify_frame_against_targets, compiler_solution};
+use crate::problem;
 pub(crate) use interior::{
     bernstein_variations, perm_vertex_residual, recover_frame, solve_boundary_accelerators,
 };
-/// One accepted interior chart: frame, residual, row permutation, plane word.
-type InteriorHit = (Mat4, f64, [usize; 4], [(usize, usize); 3]);
 
-use crate::problem;
+/// Reorient a candidate after swapping the two input spectra.
+fn apply_transpose(frame: Mat4, transpose: bool) -> Mat4 {
+    if transpose { frame.transpose() } else { frame }
+}
+
+/// Check a constructed frame before using its coefficient residual.
+fn certify_frame_against_targets(
+    mut frame: Mat4,
+    dc: &Mat4,
+    lam: &Mat4,
+    targets: &[[C; 4]],
+) -> Option<(Mat4, f64)> {
+    if frame
+        .iter()
+        .any(|z| !z.re.is_finite() || !z.im.is_finite() || z.im.abs() > FRAME_ACCEPT)
+    {
+        return None;
+    }
+    let real = frame.map(|z| z.re);
+    let determinant = real.determinant();
+    let gram = (real.transpose() * real - nalgebra::Matrix4::identity()).amax();
+    if !determinant.is_finite()
+        || !gram.is_finite()
+        || gram > FRAME_ACCEPT
+        || (determinant.abs() - 1.0).abs() > FRAME_ACCEPT
+    {
+        return None;
+    }
+    if determinant < 0.0 {
+        frame.column_mut(0).neg_mut();
+    }
+    let residual = targets
+        .iter()
+        .map(|target| compound_residual(dc, lam, &frame, target))
+        .fold(f64::INFINITY, f64::min);
+    (residual <= ACCEPT).then_some((frame, residual))
+}
+
+/// Normalize the orientation, then check the frame once against the original
+/// roots. Keep the verified eigenbasis for endpoint reconstruction.
+pub(crate) fn compiler_solution(
+    problem: &Problem,
+    o: Mat4,
+    rung: Rung,
+    residual: f64,
+) -> Option<Solution> {
+    if !residual.is_finite()
+        || o.iter()
+            .any(|z| !z.re.is_finite() || !z.im.is_finite() || z.im.abs() > FRAME_ACCEPT)
+    {
+        return None;
+    }
+    let mut real = o.map(|z| z.re);
+    let determinant = real.determinant();
+    if !determinant.is_finite()
+        || (determinant.abs() - 1.0).abs() > FRAME_ACCEPT
+        || (real.transpose() * real - nalgebra::Matrix4::identity()).amax() > FRAME_ACCEPT
+    {
+        return None;
+    }
+    if determinant < 0.0 {
+        real.column_mut(0).neg_mut();
+    }
+    let certify = |real| {
+        let state = crate::spectral::verify(problem, &real)?;
+        Some(Solution {
+            o: real,
+            rung,
+            residual: state.error,
+            state,
+        })
+    };
+    if let Some(solution) = certify(real) {
+        return Some(solution);
+    }
+    // Refine a constructed witness before discarding it under the strict
+    // spectral tolerance. Rotations preserve its existing frame accuracy.
+    if let Some(refined) = problem.iterate(real, 0.0)
+        && let Some(solution) = certify(refined)
+    {
+        return Some(solution);
+    }
+    let roots = problem.target_roots[0];
+    if !(0..4).any(|i| (i + 1..4).any(|j| (roots[i] - roots[j]).norm() < 1e-3)) {
+        return None;
+    }
+    let o = real.map(|x| C::new(x, 0.0));
+    let master = Mat4::from_fn(|i, j| {
+        let mut entry = C::default();
+        for k in 0..4 {
+            entry += (o[(i, k)] * problem.right[k]) * o[(j, k)];
+        }
+        problem.dc[(i, i)] * entry * problem.dc[(j, j)]
+    });
+    let inverse_dc = problem.dc.map(|z| z.conj());
+    for roots in &problem.target_roots {
+        let Some(target_master) = klein::retarget_symmetric(&master, roots) else {
+            continue;
+        };
+        let peeled = inverse_dc * target_master * inverse_dc;
+        let Some(mut real) = klein::takagi_real(&peeled, &problem.right) else {
+            continue;
+        };
+        if real.determinant() < 0.0 {
+            real.column_mut(0).neg_mut();
+        }
+        if let Some(solution) = certify(real) {
+            return Some(solution);
+        }
+    }
+    None
+}
 
 /// Try the bounded algebraic constructions before numerical recovery.
 pub(crate) fn solve(problem: &Problem) -> Option<Solution> {
@@ -79,7 +187,8 @@ fn symfn(a: &Mat4) -> [C; 4] {
 
 /// The sandwich Makhlin matrix `M = D_C·O·Λ·Oᵀ·D_C` for a real frame `O` (passed as
 /// `Mat4` with zero imaginary part). `dc = mb(Can(C))`, `lam = mb(Can(G))²`.
-pub(crate) fn mmat(dc: &Mat4, lam: &Mat4, o: &Mat4) -> Mat4 {
+#[cfg(test)]
+fn mmat(dc: &Mat4, lam: &Mat4, o: &Mat4) -> Mat4 {
     dc * o * lam * o.transpose() * dc
 }
 
@@ -142,8 +251,7 @@ pub(crate) fn chart_o(xyz: [f64; 3], planes: [(usize, usize); 3], perm: [usize; 
 }
 
 /// Direct-sqrt chart frame: `cos θ = √v`, `sin θ = √(1−v)` for `θ = arccos(√v)`,
-/// three square roots per coordinate instead of three transcendentals. Equal to
-/// `chart_o` in exact arithmetic.
+/// two square roots per coordinate, with rotations applied directly to rows.
 pub(crate) fn chart_o_sqrt(xyz: [f64; 3], planes: [(usize, usize); 3], perm: [usize; 4]) -> Mat4 {
     let mut o = signed_perm(perm);
     for (k, &(i, j)) in planes.iter().enumerate() {
@@ -156,7 +264,7 @@ pub(crate) fn chart_o_sqrt(xyz: [f64; 3], planes: [(usize, usize); 3], perm: [us
 }
 
 /// All complex roots of a real polynomial via companion-matrix eigenvalues
-/// (faer). Used by bounded algebraic constructions outside the hot
+/// (nalgebra). Used by bounded algebraic constructions outside the hot
 /// three-Givens atlas. `coeffs` are low-to-high; trailing near-zero leading
 /// terms are trimmed.
 pub(crate) fn poly_roots(coeffs: &[f64]) -> Vec<C> {
@@ -177,7 +285,7 @@ pub(crate) fn poly_roots(coeffs: &[f64]) -> Vec<C> {
     let n = a.len() - 1;
     let lead = a[n];
     // companion: subdiagonal 1, last column = -a_i/lead -> char poly = a(x)/lead.
-    let comp = faer::Mat::<f64>::from_fn(n, n, |i, j| {
+    let comp = nalgebra::DMatrix::<f64>::from_fn(n, n, |i, j| {
         if j == n - 1 {
             -a[i] / lead
         } else if i == j + 1 {
@@ -186,15 +294,10 @@ pub(crate) fn poly_roots(coeffs: &[f64]) -> Vec<C> {
             0.0
         }
     });
-    // A degenerate γ can still yield a non-convergent eigensolve; treat as "no roots here" (the
-    // per-γ scan skips it) rather than panicking.
-    let Ok(ev) = comp.eigenvalues() else {
-        return vec![];
-    };
-    (0..n).map(|i| C::new(ev[i].re, ev[i].im)).collect()
+    nalgebra::Schur::try_new(comp, f64::EPSILON, 64)
+        .map(|schur| schur.complex_eigenvalues().iter().copied().collect())
+        .unwrap_or_default()
 }
-
-// ---- polynomial helpers for the interior elimination (real coeffs, low→high) ----
 
 /// Which bounded construction produced the certified frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -234,29 +337,18 @@ pub struct Solution {
     pub(crate) state: crate::spectral::State,
 }
 
-/// Accept threshold on the smooth residual. A true reach is ~1e-13; this is loose
-/// enough to absorb FP while rejecting non-reaches (whose residual is O(0.1+)).
-pub(crate) const ACCEPT: f64 = 1e-9;
+/// Polynomial residual screen. Final acceptance also requires the rootwise
+/// spectral check; clustered roots can amplify coefficient errors.
+pub(crate) const ACCEPT: f64 = 1e-13;
 
-/// Public-frame tolerance.  This is deliberately tighter than the spectral
-/// acceptance threshold: the fast compound residual is valid only for a real
+/// Public-frame tolerance: the fast compound residual is valid only for a real
 /// orthogonal frame.  A rejected accelerator candidate must fall through to
 /// the next construction rather than escape the black box.
-const FRAME_ACCEPT: f64 = 2e-10;
+const FRAME_ACCEPT: f64 = 1e-12;
 
-/// Fast-accept threshold for the reduced trilinear score. Candidates with
-/// `rs < FAST_ACCEPT` have direct residual below `FAST_ACCEPT` plus the score
-/// discrepancy (about 6e-15 over the full corpora), so they sit well below
-/// `ACCEPT`, which is 100x larger. The reduced score also rejects candidates at
-/// or above `ACCEPT` before frame construction; shadow gates over the full Haar
-/// and linspace corpora found no decision disagreements.
-pub(crate) const FAST_ACCEPT: f64 = 1e-11;
-
-/// How many ranked perms the edge/interior rungs try. The vertex-residual rank ORDERS the
-/// perms so the right chart is hit first (fast early-exit), but truncating it drops the right
-/// perm region-dependently and costs coverage for ~no perf gain (perf is eig-bound, not
-/// perm-bound) -- so we keep all 24, ranked.
-pub(crate) const CAND_K: usize = 24;
+/// Use the reduced trilinear score only well below coefficient acceptance.
+/// Every candidate must still pass the final rootwise verifier.
+pub(crate) const FAST_ACCEPT: f64 = 1e-14;
 
 fn solve_scalar_factor(problem: &Problem) -> Option<Solution> {
     let (scalar, other) = if problem.strata.c == SpectrumKind::Scalar4 {
@@ -511,18 +603,9 @@ fn solve_prefix(problem: &Problem) -> Option<Solution> {
         }
     }
     let tp = prof::start();
-    let hit = support_strata::solve_face(
-        &problem.left,
-        &problem.right,
-        &problem.dc,
-        &problem.lam,
-        &problem.target_roots,
-        &problem.targets,
-    );
+    let hit = support_strata::solve_face(problem);
     prof::rec(prof::FACE, tp);
-    if let Some((o, r)) = hit
-        && let Some(solution) = compiler_solution(problem, o, Rung::Face, r)
-    {
+    if let Some(solution) = hit {
         return Some(solution);
     }
     // Klein-circulant acceleration: a one-sided section of the same realization

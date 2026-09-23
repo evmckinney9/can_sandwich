@@ -17,7 +17,7 @@ use crate::solve;
 type Case = [[f64; 3]; 3];
 type Frame = Matrix4<f64>;
 type Solver = fn([f64; 3], [f64; 3], [f64; 3]) -> Option<Frame>;
-const TOLERANCE: f64 = 1e-8;
+const TOLERANCE: f64 = 1e-12;
 const HELP: &str = "Compare a candidate with can_sandwich::solve.
 Usage: candidate --corpus PATH [--case INDEX] [--report PATH]
   --corpus PATH  Nine little-endian f64 values per row (c, g, t).
@@ -85,10 +85,27 @@ fn errors([c, g, t]: Case, o: &Frame) -> [f64; 3] {
     let o = o.map(|v| Complex::new(v, 0.0));
     let a = Matrix4::from_diagonal(&nalgebra::Vector4::from(a));
     let b = Matrix4::from_diagonal(&nalgebra::Vector4::from(b));
-    let Some(actual) = nalgebra::linalg::Schur::try_new(a * o * b * o.transpose(), 1e-14, 1000)
-        .and_then(|schur| schur.eigenvalues())
-    else {
-        return result;
+    // Shift and scale clustered spectra before the independent complex Schur
+    // solve. Near a scalar matrix, unscaled QR can stall despite a valid frame.
+    let matrix = a * o * b * o.transpose();
+    let center = matrix.trace() / 4.0;
+    let shifted = matrix - Matrix4::identity() * center;
+    let scale = shifted.iter().map(|z| z.norm()).fold(0.0, f64::max);
+    let actual = if scale == 0.0 {
+        nalgebra::Vector4::repeat(center)
+    } else {
+        let normalized = shifted / Complex::new(scale, 0.0);
+        let Some(roots) = [Complex::new(1.0, 0.0), Complex::new(0.0, 1.0)]
+            .into_iter()
+            .find_map(|phase| {
+                nalgebra::linalg::Schur::try_new(normalized * phase, 1e-14, 1000)
+                    .and_then(|schur| schur.eigenvalues())
+                    .map(|roots| roots.map(|z| z / phase))
+            })
+        else {
+            return result;
+        };
+        roots.map(|z| z * scale + center)
     };
     // All 24 bijections and both global signs preserve root multiplicities.
     for i in 0..4 {
@@ -113,14 +130,21 @@ fn errors([c, g, t]: Case, o: &Frame) -> [f64; 3] {
 struct Outcome {
     elapsed: Duration,
     errors: Option<[f64; 3]>,
+    infeasible: bool,
 }
 impl Outcome {
     fn passed(&self) -> bool {
-        self.errors
-            .is_some_and(|e| e.into_iter().all(|v| v <= TOLERANCE))
+        if self.infeasible {
+            self.errors.is_none()
+        } else {
+            self.errors
+                .is_some_and(|e| e.into_iter().all(|v| v <= TOLERANCE))
+        }
     }
     fn status(&self) -> &'static str {
-        if self.errors.is_none() {
+        if self.infeasible && self.errors.is_none() {
+            "rejected_infeasible"
+        } else if self.errors.is_none() {
             "declined"
         } else if self.passed() {
             "passed"
@@ -129,6 +153,21 @@ impl Outcome {
         }
     }
 }
+
+/// Four rank-two Horn inequalities already used by tests/generate.py imply
+/// |t1+t2| <= min(a, 1-a), a=c0+c2+g0+g2, for ordered alcove coordinates.
+/// The other central lift negates t1+t2, so the same bound excludes both.
+/// A 1e-12 margin in phase turns exceeds the checker’s root-error allowance.
+/// This is a sufficient rejection certificate, not a feasibility oracle.
+fn proven_infeasible([c, g, t]: Case) -> bool {
+    let in_alcove = |m: [f64; 3]| {
+        let fourth = -m.iter().sum::<f64>();
+        m[0] >= m[1] && m[1] >= m[2] && m[2] >= fourth && m[0] - fourth <= 1.0
+    };
+    let a = c[0] + c[2] + g[0] + g[2];
+    [c, g, t].into_iter().all(in_alcove) && (t[1] + t[2]).abs() > a.min(1.0 - a) + 1e-12
+}
+
 fn evaluate(case: Case, solver: Solver) -> Outcome {
     let [c, g, t] = case;
     let start = Instant::now();
@@ -137,6 +176,7 @@ fn evaluate(case: Case, solver: Solver) -> Outcome {
     Outcome {
         elapsed,
         errors: o.map(|o| errors(case, &o)),
+        infeasible: proven_infeasible(case),
     }
 }
 
@@ -144,6 +184,7 @@ fn evaluate(case: Case, solver: Solver) -> Outcome {
 struct Summary {
     passed: usize,
     declined: usize,
+    rejected_infeasible: usize,
     elapsed: Duration,
     timings: Vec<Duration>,
     slowest: (usize, Duration),
@@ -163,15 +204,18 @@ impl Summary {
         }
         if let Some(errors) = outcome.errors {
             self.errors.push(errors);
+        } else if outcome.infeasible {
+            self.rejected_infeasible += 1;
         } else {
             self.declined += 1;
         }
     }
     fn print(&self, name: &str, count: usize) {
         println!(
-            "{name}: {}/{} passed, {} declined, {} invalid; {:.6}s in solver ({:.3} us/case)",
+            "{name}: {}/{} passed ({} rejected infeasible), {} declined, {} invalid; {:.6}s in solver ({:.3} us/case)",
             self.passed,
             count,
+            self.rejected_infeasible,
             self.declined,
             count - self.passed - self.declined,
             self.elapsed.as_secs_f64(),
@@ -207,11 +251,20 @@ impl Summary {
             values.sort_unstable_by(f64::total_cmp);
             let last = values.len() - 1;
             println!(
-                "  {label}: p50={:.3e} p99={:.3e} max={:.3e}",
+                "  {label}: p50={:.3e} p99={:.3e} p99.9={:.3e} max={:.3e}",
                 values[last / 2],
                 values[last * 99 / 100],
+                values[last * 999 / 1000],
                 values[last]
             );
+            if i == 0 {
+                println!(
+                    "  spectral errors above: 1e-13={} 1e-12={} 1e-10={}",
+                    values.iter().filter(|&&v| v > 1e-13).count(),
+                    values.iter().filter(|&&v| v > 1e-12).count(),
+                    values.iter().filter(|&&v| v > 1e-10).count(),
+                );
+            }
         }
     }
 }
@@ -387,14 +440,18 @@ mod tests {
             Matrix4::from_diagonal(&nalgebra::Vector4::from(d))
         };
         for factor in [&left, &right] {
-            assert!((factor.transpose() * factor - Frame::identity()).amax() < 1e-8);
-            assert!((factor.determinant() - 1.0).abs() < 1e-8);
+            assert!((factor.transpose() * factor - Frame::identity()).amax() < TOLERANCE);
+            assert!((factor.determinant() - 1.0).abs() < TOLERANCE);
         }
         let complex = |v| Complex::new(v, 0.0);
         let actual = diagonal(c) * o.map(complex) * diagonal(g);
         let reconstructed =
             left.map(complex) * diagonal(t) * right.map(complex) * Complex::from_polar(1.0, phase);
-        assert!((actual - reconstructed).iter().all(|v| v.norm() < 1e-8));
+        assert!(
+            (actual - reconstructed)
+                .iter()
+                .all(|v| v.norm() < TOLERANCE)
+        );
         Some(o)
     }
 
@@ -437,6 +494,18 @@ mod tests {
         reflection[(0, 0)] = -1.0;
         assert!(!check([[0.0; 3]; 3], &reflection));
         assert!(!check([[0.0; 3]; 3], &Frame::repeat(f64::NAN)));
+
+        // The corpus also contains near-feasible inputs. A certified rejection
+        // must pass; an approximate witness for that input must not.
+        let impossible = [[0.5, 0.0, 0.0], [0.5, 0.0, 0.0], [0.3, 0.2, -0.20000001]];
+        assert!(proven_infeasible(impossible));
+        assert!(evaluate(impossible, |_, _, _| None).passed());
+        assert!(!evaluate(impossible, |_, _, _| Some(Frame::identity())).passed());
+        assert!(!proven_infeasible([
+            [0.5, 0.0, 0.0],
+            [0.5, 0.0, 0.0],
+            [0.3, 0.2, -0.2],
+        ]));
     }
 
     #[test]

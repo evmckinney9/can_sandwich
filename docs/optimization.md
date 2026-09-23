@@ -182,6 +182,153 @@ spectral checks and endpoint reconstruction. `make lint` passed. The final
 comparison executable built without warnings. The corpus, checker, and
 acceptance thresholds were unchanged.
 
+## Accuracy correction after the third pass
+
+Baseline: `4492fad`. The initial third-pass deletion experiment passed the old
+`1e-8` corpus bound and reduced total time by 6.2–6.6%, but spectral error p99
+rose from `9.783e-13` to `2.270e-12`. That tradeoff was rejected. Passing a
+loose threshold did not establish that an accuracy mechanism was unnecessary.
+
+The final implementation retains QZ root rescue, admissible-component root
+isolation, transported three-Givens charts, and repeated-root repair. It keeps
+the independent cleanup: static chart schedules, consolidated frame checks,
+reused projected eigenmatrices, and the nalgebra companion fallback. Removing
+faer leaves nalgebra as the sole direct dependency and reduces the lockfile
+from 84 packages to 25, without package upgrades.
+
+Acceptance limits are now stricter:
+
+| Check | Before | Current |
+|---|---|---|
+| Spectral roots | `8e-9` | `1e-12` |
+| Numerical acceptance | `4e-9` | `1e-13` |
+| Polynomial residual | `1e-9` | `1e-13` |
+| Final frame checks | `1e-11` | `1e-12` |
+| Endpoint reconstruction | `8e-9` | `1e-12` |
+| Independent corpus checker | `1e-8` | `1e-12` |
+
+Tightening exposed cancellation in the one- and two-block rotation formulas.
+They now use products of sines instead of differences of nearly equal traces.
+The two-block search verifies each candidate before leaving its chart scan.
+Numerical refinement uses QR on the damped least-squares system, avoiding the
+squared condition number of normal equations, and a polar Newton step removes
+rounding drift from successive rotations. Constructed frames can be refined
+before the strict spectral check rejects them. A routed target root can also
+be held fixed while refining its complementary SO(3) block. The inactive
+rotation increments are explicitly zeroed after the linear solve, so roundoff
+cannot move the boundary root. Numerical budgets are 120 iterations and up
+to 24 starts per orientation; the earlier smaller budgets were not retained
+at the tighter tolerances.
+
+The checker still computes complex Schur eigenvalues independently of the
+solver. Shifting and scaling its matrix fixes convergence near scalar spectra;
+a quarter-turn gives a second QR path without changing the spectrum. The
+corpus now also reports p99.9 spectral errors and counts above `1e-13`,
+`1e-12`, and `1e-10`.
+
+Four original regression rows (1–4) violate the rank-two Horn inequalities
+already present in `tests/generate.py`. Their phase-inequality violations are
+`4.323e-10`, `1.844e-10`, `2.803e-10`, and `1.100e-10`, respectively. Their
+old approximate witnesses cannot satisfy the stricter contract. The grader
+now applies that necessary inequality to inputs in the ordered alcove and
+requires rejection when it certifies infeasibility. It uses no row lookup;
+the corpus bytes are unchanged. The numerical fallback rejects a certified
+violation before spending its restart budget. The generator’s feasibility
+slack is now `1e-13`, reduced from `1e-7`; the corpus was not regenerated.
+See the [grader contract](researcher.md).
+
+Rejected experiments included replacing QZ rescue with local polynomial
+Newton steps, removing repeated-root repair, and unstructured perturbations
+of accepted frames. Increasing search budgets alone did not fix the last
+boundary failures. Removing the spectral-projection regularization also
+reduced coverage and was discarded.
+
+### Strict release measurements
+
+Three paired runs used release mode, fat LTO, one codegen unit, the `corpus`
+feature, and CPU 2 affinity, with diagnostics disabled and no concurrent
+builds or tests. Both solvers were graded with the updated independent checker.
+
+| Metric | Committed `4492fad` | Strict candidate |
+|---|---|---|
+| Total solver time (s) | 5.293–5.312 | 7.416–7.443 |
+| Mean (µs) | 4.839–4.857 | 6.781–6.805 |
+| Median (µs) | 2.470–2.490 | 2.700–2.720 |
+| p95 (µs) | 13.210–13.220 | 19.030–19.130 |
+| p99 (µs) | 30.400–30.440 | 40.130–40.230 |
+| p99.9 (µs) | 109.379–109.830 | 383.529–388.909 |
+| Maximum (ms) | 3.660–3.744 | 18.620–19.027 |
+
+The stronger contract costs 40.1–40.4% more total solver time in these runs.
+The slowest candidate row was 1,075,377 in all three runs. These costs are
+recorded rather than traded for larger accepted errors.
+
+The candidate passes every row: 1,093,687 verified witnesses and four certified
+infeasible rejections. Spectral error p50 is `1.047e-15`, p99 `4.591e-14`,
+p99.9 `9.170e-14`, and maximum `9.762e-13`. There are 645 errors above
+`1e-13`, and none above `1e-12`. Maximum orthogonality defect is `1.334e-13`;
+maximum determinant error is `1.041e-13`.
+
+Under this stricter grader, the committed solver fails 10,957 rows. Its
+spectral p99 is `1.004e-12`. Its reported maximum is `inf` because the stricter
+frame checks skip spectral evaluation for some matrices; the earlier checker
+measured a maximum spectral error of `7.978e-9`. The comparisons count 161,821
+smaller, 760,387 equal, and 171,033 larger finite spectral errors. Small
+roundoff differences remain; the new hard error bound applies to every witness.
+
+`make test` passed all five tests, including every corpus row and endpoint
+reconstruction. `make lint` passed. The generator passed a syntax check.
+The corpus SHA-256 remains
+`75508dd43fb7e462c9af3e59e070fb6f2defb06d8a344f5a1a7f1691850df5cd`.
+The GULPS pin and release tag were not changed.
+
+## Iteration at the stricter tolerances
+
+The baseline for this iteration was the strict candidate above, frozen before
+further edits. The retained changes use squared distances for comparisons in
+spectrum classification and repeated-spectrum construction. Spectral checking
+now takes a square root after each maximum-distance reduction instead of for
+each entry. Acceptance constants and search budgets are unchanged.
+
+The full comparison found identical status, spectral error, orthogonality
+error, and determinant error for every row. All 1,093,687 finite spectral
+errors were exactly equal, without a rounding threshold. The four infeasible
+inputs still return no witness. Worst spectral error remains `9.762e-13`.
+
+Three final paired runs used release mode, fat LTO, one codegen unit, CPU 2,
+no diagnostics, and no concurrent builds, tests, or other benchmark runs.
+Total solver time fell by 5.3–5.5%. Median latency fell by about 9–10%; the
+worst individual timing varied between runs and does not show a consistent gain.
+
+| Metric | Strict baseline | Retained optimization |
+|---|---|---|
+| Total solver time (s) | 7.861–7.941 | 7.439–7.518 |
+| Mean (µs) | 7.188–7.261 | 6.802–6.874 |
+| Median (µs) | 2.860–2.890 | 2.590–2.620 |
+| p95 (µs) | 20.430–20.690 | 19.770–20.080 |
+| p99 (µs) | 44.220–44.990 | 42.210–43.080 |
+| p99.9 (µs) | 401.630–403.969 | 375.959–381.479 |
+| Maximum (ms) | 19.431–20.116 | 18.504–20.814 |
+
+Several larger changes were tested and rejected:
+
+| Experiment | Result | Decision |
+|---|---|---|
+| Switch numerical orientations after four starts | Roughly halved the worst latency, but changed individual errors | Revert |
+| Reduce fixed-root searches to four starts | Slower on the difficult subset | Revert |
+| Solve only the three active rotations for a fixed root | Preserved coverage and reduced latency, but one combined search change raised error from `6.206e-16` to `9.874e-14` | Revert |
+| Share the two polynomial-root routines | Preserved coverage, but increased the maximum orthogonality defect and gave no clear speed gain | Revert |
+| Tighten numerical acceptance to `1e-14` with the search changes | Improved spectral p99 to `7.820e-15`, but increased errors above `1e-13` from 645 to 879 and increased total time | Revert |
+
+These trials show why aggregate accuracy alone is insufficient. The retained
+optimization preserves every independently measured error in the corpus.
+
+Three endpoint-test assertions still used `1e-8`, although production endpoint
+verification already used `1e-12`. They now use the independent checker's
+`1e-12` constant for orthogonality, determinant, and reconstruction. `make test`
+passes all five tests, including the full corpus and these stricter endpoint
+assertions. `make lint` passes.
+
 ## Validation
 
 The full corpus test checks spectral matching, orthogonality, determinant,

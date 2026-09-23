@@ -2,7 +2,7 @@
 #[cfg(feature = "diagnostics")]
 use crate::{
     ComplexMatrix as Mat4, Rung, Solution,
-    algebraic::{ACCEPT, certificate, interior},
+    algebraic::{ACCEPT, compiler_solution},
     problem::Problem,
 };
 
@@ -27,12 +27,6 @@ pub fn branch_signature(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> String {
     )
 }
 
-/// Build the interior quotient before timing the solver.
-#[cfg(feature = "diagnostics")]
-pub fn init_tables() {
-    let _ = &*interior::INTERIOR_QUOTIENT;
-}
-
 /// Solve and report the accepted construction and its spectral error.
 #[cfg(feature = "diagnostics")]
 pub fn solve_report(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<Solution> {
@@ -51,7 +45,7 @@ pub fn certify_frame(
     rung: Rung,
 ) -> Option<Solution> {
     let problem = Problem::new(c, g, t);
-    certificate::compiler_solution(&problem, o, rung, ACCEPT)
+    compiler_solution(&problem, o, rung, ACCEPT)
 }
 
 /// PROF=1 instrumentation: per-stage aggregate ns/calls across a corpus run.
@@ -60,64 +54,61 @@ pub mod prof {
     #[cfg(feature = "diagnostics")]
     use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
     #[cfg(feature = "diagnostics")]
-    pub const N: usize = 49;
+    pub const N: usize = 47;
     /// Slot indices, one per stage or event counter.
     pub const EDGE: usize = 0;
     pub const CHART_COEFFS: usize = 1;
     pub const ELIM: usize = 2;
     pub const ROOTS: usize = 3;
-    pub const SCORE: usize = 4;
-    pub const RADICAL_ORIENTED: usize = 5;
-    pub const RADICAL_FRAME: usize = 6;
-    pub const INTERIOR_TOTAL: usize = 7;
-    pub const RADICAL_TOTAL: usize = 8;
-    pub const PRELUDE: usize = 9;
-    pub const FACE: usize = 10;
-    pub const SW_RANK1: usize = 11;
-    pub const SW_TWO_STEP: usize = 12;
-    pub const SW_MIRROR: usize = 13;
-    pub const SW_PAIR_ROOTS: usize = 14;
-    pub const SW_WORD_GATE: usize = 15;
-    pub const GATE_BOX: usize = 16;
-    pub const GATE_HULL: usize = 17;
-    pub const GATE_PASS: usize = 18;
-    pub const TIER_REANCHOR_FAST: usize = 19;
-    pub const N_TRY_MU: usize = 20;
-    pub const RJ_BASE: usize = 21;
-    pub const RJ_SKEL: usize = 22;
-    pub const RJ_UREAL: usize = 23;
-    pub const RJ_USUM: usize = 24;
-    pub const N_CONSTRUCTED: usize = 25;
-    pub const RJ_V_IMAG: usize = 26;
-    pub const RJ_V_NEG: usize = 27;
-    pub const RJ_V_SUM: usize = 28;
-    pub const SW_BASE: usize = 29;
-    pub const ARC_PAIR_SKIP: usize = 30;
-    pub const ARC_CAND_SKIP: usize = 31;
-    pub const URAY_SKIP: usize = 32;
-    pub const SKEL_SKIP: usize = 33;
-    pub const BASE_FAIL_FORCED: usize = 34;
-    pub const BASE_FAIL_SKEL: usize = 35;
-    pub const BASE_FAIL_PAIR: usize = 36;
-    pub const DEV_LT_1EM6: usize = 37;
-    pub const DEV_MID: usize = 38;
-    pub const DEV_GT_1EM2: usize = 39;
-    pub const PAIR_GATE_SOME: usize = 40;
-    pub const PAIR_GATE_NONE: usize = 41;
-    pub const INH_SKIP: usize = 42;
-    pub const RED_SKIP: usize = 43;
-    pub const SW_HEADER: usize = 44;
-    pub const KLEIN_TOTAL: usize = 45;
-    pub const SEG_PREPARE: usize = 46;
-    pub const SEG_EDGEGATE: usize = 47;
-    pub const SEG_VERTEX: usize = 48;
+    pub const RADICAL_ORIENTED: usize = 4;
+    pub const RADICAL_FRAME: usize = 5;
+    pub const INTERIOR_TOTAL: usize = 6;
+    pub const RADICAL_TOTAL: usize = 7;
+    pub const PRELUDE: usize = 8;
+    pub const FACE: usize = 9;
+    pub const SW_RANK1: usize = 10;
+    pub const SW_TWO_STEP: usize = 11;
+    pub const SW_MIRROR: usize = 12;
+    pub const SW_PAIR_ROOTS: usize = 13;
+    pub const SW_WORD_GATE: usize = 14;
+    pub const GATE_BOX: usize = 15;
+    pub const GATE_HULL: usize = 16;
+    pub const GATE_PASS: usize = 17;
+    pub const N_TRY_MU: usize = 18;
+    pub const RJ_BASE: usize = 19;
+    pub const RJ_SKEL: usize = 20;
+    pub const RJ_UREAL: usize = 21;
+    pub const RJ_USUM: usize = 22;
+    pub const N_CONSTRUCTED: usize = 23;
+    pub const RJ_V_IMAG: usize = 24;
+    pub const RJ_V_NEG: usize = 25;
+    pub const RJ_V_SUM: usize = 26;
+    pub const SW_BASE: usize = 27;
+    pub const ARC_PAIR_SKIP: usize = 28;
+    pub const ARC_CAND_SKIP: usize = 29;
+    pub const URAY_SKIP: usize = 30;
+    pub const SKEL_SKIP: usize = 31;
+    pub const BASE_FAIL_FORCED: usize = 32;
+    pub const BASE_FAIL_SKEL: usize = 33;
+    pub const BASE_FAIL_PAIR: usize = 34;
+    pub const DEV_LT_1EM6: usize = 35;
+    pub const DEV_MID: usize = 36;
+    pub const DEV_GT_1EM2: usize = 37;
+    pub const PAIR_GATE_SOME: usize = 38;
+    pub const PAIR_GATE_NONE: usize = 39;
+    pub const INH_SKIP: usize = 40;
+    pub const RED_SKIP: usize = 41;
+    pub const SW_HEADER: usize = 42;
+    pub const KLEIN_TOTAL: usize = 43;
+    pub const SEG_PREPARE: usize = 44;
+    pub const SEG_EDGEGATE: usize = 45;
+    pub const SEG_VERTEX: usize = 46;
     #[cfg(feature = "diagnostics")]
     pub const NAMES: [&str; N] = [
         "edge",
         "chart_coeffs",
         "elim",
         "roots",
-        "score",
         "radical_oriented",
         "radical_frame",
         "interior_total",
@@ -132,7 +123,6 @@ pub mod prof {
         "gate_box",
         "gate_hull",
         "gate_pass",
-        "tier_reanchor_fast",
         "n_try_mu",
         "rj_base",
         "rj_skel",

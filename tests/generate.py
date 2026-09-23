@@ -63,6 +63,8 @@ QLR = [
 ]
 
 # Fixed regressions for clustered spectra and near-identity gates.
+# Rows 1–4 are historical near-feasible targets. Keep them as rejection tests:
+# their Horn-inequality violations exceed the strict spectral tolerance.
 REGRESSIONS = [
     [[0.25156717590725, 0.24843282409275, 0.24690239120876], [0.03363566241836, 0.02691404826411, 0.02691404826411], [0.27897727016045, 0.27741771973249, 0.16056554217426]],  # near-swap repeated-gate witness
     [[0.5, 0.0, 0.0], [0.5, 0.0, 0.0], [0.29546099931489134, 0.20453900018510873, -0.20453900061744035]],  # exact-double target 4101
@@ -176,8 +178,8 @@ CI, GI, TI, BOUND = qlr_blocks()
 def feasible(c, g, t):
     reflected = np.column_stack([t[:, 2] + 0.5, -t.sum(axis=1) + 0.5, t[:, 0] - 0.5])
     bound = BOUND - c @ CI.T - g @ GI.T
-    plain = (bound - t @ TI.T).min(axis=1) >= -1e-7
-    reflected_ok = (bound - reflected @ TI.T).min(axis=1) >= -1e-7
+    plain = (bound - t @ TI.T).min(axis=1) >= -1e-13
+    reflected_ok = (bound - reflected @ TI.T).min(axis=1) >= -1e-13
     keep = plain | reflected_ok
     return np.stack(
         [c[keep], g[keep], np.where(plain[:, None], t, reflected)[keep]], axis=1

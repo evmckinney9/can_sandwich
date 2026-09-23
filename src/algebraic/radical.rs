@@ -196,7 +196,7 @@ fn residues_v(
             let mut md = f64::INFINITY;
             for (i, &m) in mu.iter().enumerate() {
                 if !used[i] {
-                    let d = (m - delta[k]).norm();
+                    let d = (m - delta[k]).norm_sqr();
                     if d < md {
                         md = d;
                         mi = i;
@@ -728,7 +728,7 @@ impl PairGateR {
         let mut r2 = [0.0f64; 4];
         let unpinned = reps
             .iter()
-            .all(|&k| pins.iter().all(|&p| (delta[k] - p).norm() > 1e-9));
+            .all(|&k| pins.iter().all(|&p| (delta[k] - p).norm_sqr() > 1e-18));
         for &k in reps {
             let d = delta[k];
             let wq = d * pinprod(d) / (a[k] * cis[k]);
@@ -795,7 +795,7 @@ impl PairGateR {
                 .filter(|&&k| k != l_idx && !cl2.contains(&k))
                 .fold(C::new(1.0, 0.0), |acc, &k| acc * (l - delta[k]));
             let denom = rho2 * a[l_idx] * cis[l_idx] * pinprod(l);
-            if denom.norm() < 1e-12 {
+            if denom.norm_sqr() < 1e-24 {
                 g.mag_ok = false;
                 continue;
             }
@@ -827,7 +827,7 @@ impl PairGateR {
         let m2f = pf / m;
         let clear = self.reps[..self.nreps]
             .iter()
-            .all(|&k| (m - delta[k]).norm() > 1e-4 && (m2f - delta[k]).norm() > 1e-4);
+            .all(|&k| (m - delta[k]).norm_sqr() > 1e-8 && (m2f - delta[k]).norm_sqr() > 1e-8);
         if !clear {
             return false;
         }
@@ -844,7 +844,7 @@ impl PairGateR {
             let mut t_re = 0.0;
             for i in 0..self.ncl {
                 let bl = self.ta[i] + self.tb[i] * x;
-                if bl.norm() < 1e-6 {
+                if bl.norm_sqr() < 1e-12 {
                     return false; // near-confluent cluster term: abstain
                 }
                 t_re += (self.tk[i] / bl).re;
@@ -916,7 +916,7 @@ fn problem_base(delta: &[C; 4], dcl: &Clusters4, w: &[C; 4]) -> ProblemBase {
             let (mut wi, mut wd) = (usize::MAX, f64::INFINITY);
             for (j, &wj) in w.iter().enumerate() {
                 if !wused[j] {
-                    let dd = (wj - delta[k0]).norm();
+                    let dd = (wj - delta[k0]).norm_sqr();
                     if dd < wd {
                         wd = dd;
                         wi = j;
@@ -1078,7 +1078,7 @@ fn mirror_base(
             let (mut mi, mut md) = (usize::MAX, f64::INFINITY);
             for (i, &m) in mu.iter().enumerate() {
                 if !used[i] {
-                    let dd = (m - delta[k0]).norm();
+                    let dd = (m - delta[k0]).norm_sqr();
                     if dd < md {
                         md = dd;
                         mi = i;
@@ -1195,14 +1195,14 @@ fn mirror_completion(
                 let (mut ti, mut td) = (usize::MAX, f64::INFINITY);
                 for (j, &t) in ts.iter().enumerate() {
                     if !tused[j] {
-                        let dd = (t - delta[k0]).norm();
+                        let dd = (t - delta[k0]).norm_sqr();
                         if dd < td {
                             td = dd;
                             ti = j;
                         }
                     }
                 }
-                if ti == usize::MAX || td > XTOL {
+                if ti == usize::MAX || td > XTOL * XTOL {
                     return None;
                 }
                 tused[ti] = true;
@@ -1234,14 +1234,14 @@ fn mirror_completion(
             let (mut pi, mut pd) = (usize::MAX, f64::INFINITY);
             for j in 0..np {
                 if !phused[j] {
-                    let dd = (ph[j] - muhat[l]).norm();
+                    let dd = (ph[j] - muhat[l]).norm_sqr();
                     if dd < pd {
                         pd = dd;
                         pi = j;
                     }
                 }
             }
-            if pi == usize::MAX || pd > XTOL {
+            if pi == usize::MAX || pd > XTOL * XTOL {
                 crate::algebraic::prof::hit(crate::algebraic::prof::RJ_SKEL);
                 return None; // gamma = 0 forces mu into the data multiset
             }
@@ -1688,7 +1688,7 @@ pub(crate) fn two_step<R>(
 ) -> Option<R> {
     let th = crate::algebraic::prof::start();
     let (rho1v, rho2v) = (d1 - c, d2 - c);
-    if rho1v.norm() < CTOL || rho2v.norm() < CTOL {
+    if rho1v.norm_sqr() < CTOL * CTOL || rho2v.norm_sqr() < CTOL * CTOL {
         return None;
     }
     let delta: [C; 4] = std::array::from_fn(|k| c * a[k]);
