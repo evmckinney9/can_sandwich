@@ -4,7 +4,7 @@ use crate::{
     problem::{PERMS24, PLANES, Problem},
     spectral::{SPECTRAL_TOLERANCE, State},
 };
-use nalgebra::{Matrix4, SMatrix, SVector};
+use nalgebra::{Matrix4, SMatrix, SVector, SymmetricEigen};
 use std::f64::consts::PI;
 type R4 = Matrix4<f64>;
 /// Refinement target for root distances; the spectral verifier separately
@@ -74,11 +74,85 @@ impl Problem {
 
     /// Keep useful progress even when refinement cannot reach its target.
     pub(crate) fn refine(&self, o: R4) -> R4 {
-        self.refine_fixed(o, 0.0, None, ROOT_TOLERANCE).0
+        let (first, plain) = self.polish(o, false);
+        let state = self.joint(&first, plain, 0.0);
+        if converged(&state, ROOT_TOLERANCE) {
+            return first;
+        }
+        // Continue with the joint eigenbasis, whose smaller residual lets the
+        // iteration resolve nearly repeated roots.
+        let (second, next) = self.polish(first, true);
+        if next.error < state.error {
+            second
+        } else {
+            first
+        }
+    }
+
+    fn polish(&self, o: R4, joint: bool) -> (R4, State) {
+        let (o, state) = self.refine_fixed(o, 0.0, None, ROOT_TOLERANCE, joint);
+        if converged(&state, ROOT_TOLERANCE) {
+            return (o, state);
+        }
+        self.escape(o, state, joint)
+    }
+
+    /// Restart a stalled refinement along directions that leave every root
+    /// fixed to first order. Vertex, edge, and face frames are critical points
+    /// of the spectral map, where a root error `e` needs rotations of order
+    /// `sqrt(e / sigma_max)`.
+    fn escape(&self, o: R4, state: State, joint: bool) -> (R4, State) {
+        let jacobian = SMatrix::<f64, 8, 6>::from_fn(|row, k| {
+            let (p, q) = PLANES[k];
+            let (i, v) = (row / 2, &state.eigenvectors);
+            let ratio = self.dc[(p, p)] * self.dc[(q, q)].conj();
+            let change = state.roots[i] * ratio - state.roots[i] * ratio.conj();
+            let derivative = change * v[(p, i)] * v[(q, i)] + change * v[(q, i)] * v[(p, i)];
+            if row % 2 == 0 {
+                derivative.re
+            } else {
+                derivative.im
+            }
+        });
+        let eigen = SymmetricEigen::new(jacobian.transpose() * jacobian);
+        let largest = eigen.eigenvalues.max();
+        let mut best = (o, state);
+        if !state.cost.is_finite() {
+            return best;
+        }
+        let step = (state.root_error / largest.sqrt()).sqrt().min(0.5);
+        for k in 0..6 {
+            if largest > 0.0 && eigen.eigenvalues[k] > 1e-4 * largest {
+                continue;
+            }
+            for sign in [-1.0, 1.0] {
+                let mut start = o;
+                for (m, (p, q)) in PLANES.into_iter().enumerate() {
+                    rotate(&mut start, p, q, sign * step * eigen.eigenvectors[(m, k)]);
+                }
+                let (candidate, next) = self.refine_fixed(start, 0.0, None, ROOT_TOLERANCE, joint);
+                if next.error < best.1.error && next.root_error < best.1.root_error {
+                    best = (candidate, next);
+                }
+                if converged(&best.1, ROOT_TOLERANCE) {
+                    return best;
+                }
+            }
+        }
+        best
+    }
+
+    fn measure(&self, o: &R4, branch: f64, joint: bool) -> State {
+        let state = self.state(o, branch);
+        if joint {
+            self.joint(o, state, branch)
+        } else {
+            state
+        }
     }
 
     fn iterate_fixed(&self, o: R4, branch: f64, fixed: Option<usize>) -> Option<R4> {
-        let (o, state) = self.refine_fixed(o, branch, fixed, SPECTRAL_TOLERANCE);
+        let (o, state) = self.refine_fixed(o, branch, fixed, SPECTRAL_TOLERANCE, false);
         converged(&state, SPECTRAL_TOLERANCE).then_some(o)
     }
 
@@ -88,10 +162,11 @@ impl Problem {
         branch: f64,
         fixed: Option<usize>,
         root_tolerance: f64,
+        joint: bool,
     ) -> (R4, State) {
         let ratios: [Z; 6] = PLANES.map(|(p, q)| self.dc[(p, p)] * self.dc[(q, q)].conj());
         o = orthogonalize(o);
-        let mut state = self.state(&o, branch);
+        let mut state = self.measure(&o, branch, joint);
         let mut best = (o, state);
         let mut damping = 1e-3;
         let mut stalled = 0;
@@ -190,7 +265,7 @@ impl Problem {
                     rotate(&mut candidate, p, q, step[k]);
                 }
                 candidate = orthogonalize(candidate);
-                let next = self.state(&candidate, branch);
+                let next = self.measure(&candidate, branch, joint);
                 if next.cost < state.cost {
                     let gain = state.cost - next.cost;
                     if gain < state.cost * 1e-8 {

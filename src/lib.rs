@@ -84,16 +84,22 @@ fn solve_using<T>(
             state,
         })
     })?;
-    // Require improvement beyond both eigenbasis residuals.
-    let lower_error = solution.state.root_error - 4.0 * solution.state.off_diagonal_error;
-    if lower_error > 0.0 && solution.state.root_error > numerical::ROOT_TOLERANCE {
-        let o = problem.refine(solution.o);
-        if let Some(state) = spectral::verify(&problem, &o)
-            && state.error < lower_error
-        {
-            solution.o = o;
-            solution.residual = state.error;
-            solution.state = state;
+    // Polish when the verified bound exceeds the refinement target. Measure
+    // both frames with the joint eigenbasis and require improvement beyond
+    // both of its residuals. A large residual can reflect orthogonality
+    // drift, which refinement removes; then the error bound must halve.
+    if solution.state.error > numerical::ROOT_TOLERANCE {
+        let current = problem.joint(&solution.o, solution.state, 0.0);
+        let lower_error = current.root_error - 4.0 * current.off_diagonal_error;
+        if current.root_error > numerical::ROOT_TOLERANCE {
+            let o = problem.refine(solution.o);
+            if let Some(state) = spectral::verify(&problem, &o)
+                && problem.joint(&o, state, 0.0).error < lower_error.max(0.5 * current.error)
+            {
+                solution.o = o;
+                solution.residual = state.error;
+                solution.state = state;
+            }
         }
     }
     finish(&problem, solution)

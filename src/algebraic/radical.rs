@@ -521,20 +521,9 @@ struct PairGate {
     half_product: C,
     xlo: f64,
     xhi: f64,
-    /// conj(W^2)/|W|^2 at a calibration node, W = d (d-t1)(d-t2)/(a C):
-    /// all nodes share arg(W) (det-pin telescope with the z-origin root),
-    /// so U_i = zeta r_i^2 / V_i with zeta = g2 * ray. For pairs with no
-    /// pin at a data node the production reality dichotomy is EXACTLY
-    /// "|Im zeta| > |Re zeta|", and all-negative U is "Re zeta < 0".
-    ray: Option<C>,
     /// Telescope violated (kappa not real): every on-circle candidate of the
     /// pair fails residue reality identically -- the pair is dead.
     dead: bool,
-    /// Magnitude-law data: U-sum = zeta*S(x), S = sum 2 r_i^2/(kappa_i (x-c_i)).
-    kap: [f64; 4],
-    cc: [f64; 4],
-    r2: [f64; 4],
-    mag_ok: bool,
 }
 
 impl PairGate {
@@ -560,33 +549,6 @@ impl PairGate {
             -(dt12[k] * (d - m) * (d - pp_m)) / (rho1 * ac[k])
         };
         let (mut xlo, mut xhi) = (-1.0f64, 1.0f64);
-        // U-ray calibration: any node clear of the pins works (shared phase)
-        let mut ray = None;
-        let mut best_w = 1e-6;
-        let mut r2 = [0.0f64; 4];
-        for k in 0..4 {
-            let d = delta[k];
-            let w = d * dt12[k] / ac[k];
-            let n2 = w.norm_sqr();
-            r2[k] = n2;
-            if n2 > best_w {
-                best_w = n2;
-                let w2 = w * w;
-                // |w2| = |w|^2 = n2, so w2/|w2| = w2/n2 (avoids hypot)
-                ray = Some(w2 / n2);
-            }
-        }
-        // a pin AT a data node breaks the pure zeta form of the dichotomy
-        // use norm_sqr > 1e-18 to avoid 8 sqrt calls (equivalent to norm > 1e-9)
-        let unpinned = delta
-            .iter()
-            .all(|&d| (d - t1).norm_sqr() > 1e-18 && (d - t2).norm_sqr() > 1e-18);
-        if !unpinned {
-            ray = None;
-        }
-        let mut kaps = [0.0f64; 4];
-        let mut ccs = [0.0f64; 4];
-        let mut mag_ok = ray.is_some();
         let mut dead = false;
         for k in 0..4 {
             let ci = (delta[k] * m1.conj()).re;
@@ -607,11 +569,6 @@ impl PairGate {
                 return None; // marginal telescope: abstain entirely
             }
             let k_re = kap.re;
-            kaps[k] = k_re;
-            ccs[k] = ci;
-            if k_re.abs() < 1e-9 {
-                mag_ok = false; // pin-like node: S incomplete, no magnitude gate
-            }
             let margin = 1e-3 * (1.0 + k_re.abs()) / k_re.abs().max(1e-30);
             if k_re > 1e-9 {
                 xlo = xlo.max(ci - margin);
@@ -625,11 +582,6 @@ impl PairGate {
             xlo,
             xhi,
             dead,
-            ray,
-            kap: kaps,
-            cc: ccs,
-            r2,
-            mag_ok,
         })
     }
 
@@ -658,200 +610,6 @@ impl PairGate {
             && self.rejects(t1)
             && self.rejects(t2)
             && beta_interval_variations(beta, pp, self.xlo, self.xhi) == Some(0)
-    }
-}
-
-/// Reduced interval gate (confluent three laws, leading (2,1,1)
-/// case): with the cluster copy dropped, muhat = {t_surv, m, pf/m} and
-/// every rep residue is linear in x = cos(arg m - arg(pf)/2). Same
-/// margins and fall-through discipline as PairGate. The U-side clauses
-/// descend too (laws 2-3): with ghat = g/R, all reduced What_rep
-/// share one phase, so U-reality is zetahat = gamma^2 * rayhat real
-/// positive, and the det-pin sum is zetahat*Shat(x) + That(x) = 1 with
-/// the ONE cluster term That = K/(alpha + beta x) rational deg-(0/1)
-/// (Phat(L) = chi_w(L) prod_other != 0 at the cluster rep; the term is
-/// exactly the cluster block's Cauchy-Schwarz slack).
-struct PairGateR {
-    half_product: C,
-    xlo: f64,
-    xhi: f64,
-    nreps: usize,
-    reps: [usize; 4],
-    ray: Option<C>,
-    kap: [f64; 4],
-    cc: [f64; 4],
-    r2: [f64; 4],
-    /// cluster terms That_i(x) = tk_i / (ta_i + tb_i*x), one per 2-cluster
-    /// ((2,1,1): one; (2,2): two)
-    ncl: usize,
-    tk: [C; 2],
-    ta: [C; 2],
-    tb: [C; 2],
-    mag_ok: bool,
-}
-
-impl PairGateR {
-    /// `pins` = the surviving (non-letter) pins of the pair after the
-    /// inheritance copies are dropped: one for the (2,1,1) leading case,
-    /// none for the (2,2) both-letters case. `cl2` = the 2-cluster rep
-    /// indices (the letters).
-    #[allow(clippy::too_many_arguments)]
-    fn new(
-        pins: &[C],
-        pf: C,
-        reps: &[usize],
-        delta: &[C; 4],
-        cis: &[C; 4],
-        rho1: C,
-        rho2: C,
-        a: &[C; 4],
-        w: &[C; 4],
-        cl2: &[usize],
-    ) -> Option<PairGateR> {
-        let mut mhalf = pf.sqrt();
-        let half_norm = mhalf.norm();
-        if half_norm < 1e-12 {
-            return None;
-        }
-        mhalf /= C::new(half_norm, 0.0);
-        let pinprod = |d: C| pins.iter().fold(C::new(1.0, 0.0), |acc, &p| acc * (d - p));
-        let vex = |m: C, k: usize| -> C {
-            let d = delta[k];
-            -(pinprod(d) * (d - m) * (d - pf / m)) / (rho1 * a[k] * cis[k])
-        };
-        let (m1, m2) = (mhalf, -mhalf);
-        let (mut xlo, mut xhi) = (-1.0f64, 1.0f64);
-        // reduced U-ray calibration: What = d * prod(d - pins) / (a C-hat);
-        // a surviving pin AT a rep node breaks the pure zetahat form
-        let mut ray = None;
-        let mut best_w = 1e-6;
-        let mut r2 = [0.0f64; 4];
-        let unpinned = reps
-            .iter()
-            .all(|&k| pins.iter().all(|&p| (delta[k] - p).norm_sqr() > 1e-18));
-        for &k in reps {
-            let d = delta[k];
-            let wq = d * pinprod(d) / (a[k] * cis[k]);
-            let n2 = wq.norm_sqr();
-            r2[k] = n2;
-            if unpinned && n2 > best_w {
-                best_w = n2;
-                let w2 = wq * wq;
-                ray = Some(w2 / w2.norm());
-            }
-        }
-        let mut kaps = [0.0f64; 4];
-        let mut ccs = [0.0f64; 4];
-        let mut mag_ok = ray.is_some();
-        for &k in reps {
-            let ci = (delta[k] * mhalf.conj()).re;
-            let (v, xs) = if (1.0 - ci).abs() > 0.5 {
-                (vex(m1, k), 1.0)
-            } else {
-                (vex(m2, k), -1.0)
-            };
-            let kap = v * C::new(2.0 / (xs - ci), 0.0);
-            if !kap.re.is_finite() || kap.im.abs() > 1e-9 * (1.0 + kap.re.abs()) {
-                return None; // reduced telescope violated: abstain
-            }
-            let k_re = kap.re;
-            kaps[k] = k_re;
-            ccs[k] = ci;
-            if k_re.abs() < 1e-9 {
-                mag_ok = false; // pin-like node: S incomplete
-            }
-            let margin = 1e-3 * (1.0 + k_re.abs()) / k_re.abs().max(1e-30);
-            if k_re > 1e-9 {
-                xlo = xlo.max(ci - margin);
-            } else if k_re < -1e-9 {
-                xhi = xhi.min(ci + margin);
-            }
-        }
-        // cluster term constants per 2-cluster rep L: Phat(L) = chi_w(L) *
-        // prod_{SIMPLE reps}(L - d_k) (the R^2-divided identity: other
-        // 2-clusters contribute exponent s-2 = 0), and Bhat(L) =
-        // prod(L - pins) * (alpha + beta x).
-        let mut g = PairGateR {
-            half_product: mhalf,
-            xlo,
-            xhi,
-            nreps: 0,
-            reps: [0; 4],
-            ray,
-            kap: kaps,
-            cc: ccs,
-            r2,
-            ncl: 0,
-            tk: [C::default(); 2],
-            ta: [C::default(); 2],
-            tb: [C::default(); 2],
-            mag_ok,
-        };
-        for &l_idx in cl2.iter().take(2) {
-            let l = delta[l_idx];
-            let chi_w_l = w.iter().fold(C::new(1.0, 0.0), |acc, &wj| acc * (l - wj));
-            let prod_simple = reps
-                .iter()
-                .filter(|&&k| k != l_idx && !cl2.contains(&k))
-                .fold(C::new(1.0, 0.0), |acc, &k| acc * (l - delta[k]));
-            let denom = rho2 * a[l_idx] * cis[l_idx] * pinprod(l);
-            if denom.norm_sqr() < 1e-24 {
-                g.mag_ok = false;
-                continue;
-            }
-            g.tk[g.ncl] = -chi_w_l * prod_simple / denom;
-            g.ta[g.ncl] = l * l + pf;
-            g.tb[g.ncl] = -2.0 * l * mhalf;
-            g.ncl += 1;
-        }
-        g.nreps = reps.len().min(4);
-        g.reps[..g.nreps].copy_from_slice(&reps[..g.nreps]);
-        Some(g)
-    }
-
-    fn rejects(&self, m: C) -> bool {
-        if (m.norm_sqr() - 1.0).abs() > 1e-4 {
-            return false;
-        }
-        let x = (m * self.half_product.conj()).re / m.norm();
-        x < self.xlo || x > self.xhi
-    }
-
-    /// Reduced ray + magnitude clauses (candidate-level): same factor-2
-    /// ray dichotomy and 1e-2 det-pin margin as the simple gate, with
-    /// the cluster's rational term added to the magnitude sum.
-    fn rejects_u(&self, m: C, pf: C, g2v: C, delta: &[C; 4]) -> bool {
-        let Some(ray) = self.ray else { return false };
-        // validity domain: free pair clear of the rep nodes (else the
-        // deflated Bhat* is not Nhat/Bhat and zetahat does not factor)
-        let m2f = pf / m;
-        let clear = self.reps[..self.nreps]
-            .iter()
-            .all(|&k| (m - delta[k]).norm_sqr() > 1e-8 && (m2f - delta[k]).norm_sqr() > 1e-8);
-        if !clear {
-            return false;
-        }
-        let z = g2v * ray;
-        if z.re <= 0.0 || z.im.abs() > 2.0 * z.re {
-            return true;
-        }
-        if self.mag_ok && (m.norm_sqr() - 1.0).abs() < 1e-6 {
-            let x = (m * self.half_product.conj()).re / m.norm();
-            let s_of_x: f64 = self.reps[..self.nreps]
-                .iter()
-                .map(|&k| 2.0 * self.r2[k] / (self.kap[k] * (x - self.cc[k])))
-                .sum();
-            let mut t_re = 0.0;
-            for i in 0..self.ncl {
-                let bl = self.ta[i] + self.tb[i] * x;
-                if bl.norm_sqr() < 1e-12 {
-                    return false; // near-confluent cluster term: abstain
-                }
-                t_re += (self.tk[i] / bl).re;
-            }
-            return (z.re * s_of_x + t_re - 1.0).abs() > 1e-2;
-        }
-        false
     }
 }
 
@@ -1729,34 +1487,9 @@ pub(crate) fn two_step<R>(
         }
     }
     let slots = &slots_buf[..nslots];
-    // Delta angles are loop-invariant across both orders and all pair cells;
-    // the strict-word masks below consume them once.
-    let delta_args: [f64; 4] = std::array::from_fn(|k| delta[k].arg());
     // ac[k] = a[k] * pb.cis[k] is loop-invariant across both orders and all pairs;
     // precompute once to remove 4 complex muls from each PairGate::new call.
     let pre_ac: [C; 4] = std::array::from_fn(|k| a[k] * pb.cis[k]);
-    // val angles and wildcard masks are loop-invariant across both orders; precompute
-    // once to avoid 2x nvals atan2 + 2x nvals*4 norm() calls inside the orders loop.
-    let mut pre_angs = [0.0f64; 8];
-    let mut pre_masks = [0u8; 8];
-    if all_simple {
-        for vi_ in 0..nvals {
-            let v = vals[vi_].0;
-            let a_ = v.arg();
-            pre_angs[vi_] = a_;
-            let mut wild = false;
-            let mut m = 0u8;
-            for t in 0..4 {
-                if (v - delta[t]).norm_sqr() < 1e-8 {
-                    wild = true;
-                }
-                if a_ > delta_args[t] {
-                    m |= 1 << t;
-                }
-            }
-            pre_masks[vi_] = if wild { 0xFF } else { m };
-        }
-    }
     // The shallow constructions are asymmetric: both peel orders run.
     let orders = [
         (rho1v, rho2v, c * c * c * d1 * prod_a),
@@ -1773,17 +1506,6 @@ pub(crate) fn two_step<R>(
         2
     };
     for &(rho1, rho2, pin) in &orders[..order_count] {
-        // The skeleton arrangement law: with the
-        // det-pin closing the phase telescope, V_i of a 4-subset S is
-        // rho-tilde_i * prod_S sin((theta_i - phi_s)/2), so admissibility
-        // is FOUR PARITY conditions on S's above-node counts -- an XOR of
-        // per-value 4-bit masks against a branch-calibrated target (the
-        // half-angle branch = lifted angle sum mod 4pi). Wildcards (values
-        // at a node) and uncalibrated branches fall through to the exact
-        // gate, so the accept set is unchanged by construction.
-        // pre_angs/pre_masks precomputed above; only argp = pin.arg() varies per order.
-        let skel_masks: Option<f64> = if all_simple { Some(pin.arg()) } else { None };
-        let mut skel_target: [Option<u8>; 2] = [None, None];
         // (rho * a[k]) * pb.cis[k]: left-to-right order matches the
         // per-cluster-rep denominator computation in mirror_base /
         // mirror_completion so the result is bit-identical.
@@ -1920,69 +1642,6 @@ pub(crate) fn two_step<R>(
                                         );
                                         continue;
                                     }
-                                    let mut gate_known = false;
-                                    let mut gate_ok = true;
-                                    if let Some(argp) = &skel_masks {
-                                        let ms = [
-                                            pre_masks[i],
-                                            pre_masks[j],
-                                            pre_masks[k],
-                                            pre_masks[l],
-                                        ];
-                                        if ms.iter().all(|&m| m != 0xFF) {
-                                            let pv = (ms[0] ^ ms[1] ^ ms[2] ^ ms[3]) & 0x0F;
-                                            let ssum = pre_angs[i]
-                                                + pre_angs[j]
-                                                + pre_angs[k]
-                                                + pre_angs[l];
-                                            let br = ((((ssum - argp)
-                                                / (2.0 * std::f64::consts::PI))
-                                                .round()
-                                                as i64)
-                                                & 1)
-                                                as usize;
-                                            match skel_target[br] {
-                                                Some(tgt) => {
-                                                    gate_known = true;
-                                                    gate_ok = pv == tgt;
-                                                }
-                                                None => {
-                                                    // calibrate on this subset's exact V signs
-                                                    let mut neg = 0u8;
-                                                    let mut clean = true;
-                                                    for t in 0..4 {
-                                                        let d = delta[t];
-                                                        let mut bd = C::new(1.0, 0.0);
-                                                        for &m_ in &mu {
-                                                            bd *= d - m_;
-                                                        }
-                                                        let vi_ = -bd / (rho1 * a[t] * pb.cis[t]);
-                                                        // sign-trustworthy: real part dominates
-                                                        // the pin-tolerance imaginary echo
-                                                        if vi_.re.abs() < 1e-6
-                                                            || vi_.im.abs() > 0.1 * vi_.re.abs()
-                                                        {
-                                                            clean = false;
-                                                            break;
-                                                        }
-                                                        if vi_.re < 0.0 {
-                                                            neg |= 1 << t;
-                                                        }
-                                                    }
-                                                    if clean {
-                                                        let calibrated = pv ^ neg;
-                                                        skel_target[br] = Some(calibrated);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    if gate_known && !gate_ok {
-                                        crate::algebraic::prof::hit(
-                                            crate::algebraic::prof::SKEL_SKIP,
-                                        );
-                                        continue;
-                                    }
                                     if let Some(s) = try_mu(
                                         &mu,
                                         Some((C::default(), av[i], av[j])),
@@ -2047,64 +1706,6 @@ pub(crate) fn two_step<R>(
                         crate::algebraic::prof::PAIR_GATE_NONE
                     });
                     g
-                } else {
-                    None
-                };
-                // reduced gate (confluent descent): the (2,1,1) leading
-                // case (one 2-cluster, one pin at the letter) and the (2,2)
-                // both-letters case (two 2-clusters, both pins at the two
-                // distinct letters; no surviving pin, two cluster terms).
-                let arc_r: Option<PairGateR> = if !all_simple
-                    && (0..dcl.k).all(|c| dcl.cluster_len(c) <= 2)
-                {
-                    // two_buf: reps of size-2 clusters; reps_buf: all cluster reps
-                    let mut two_buf = [0usize; 4];
-                    let mut n_two = 0usize;
-                    let mut reps_buf = [0usize; 4];
-                    for ci in 0..dcl.k {
-                        reps_buf[ci as usize] = dcl.cluster_rep(ci);
-                        if dcl.cluster_len(ci) == 2 {
-                            two_buf[n_two] = dcl.cluster_rep(ci);
-                            n_two += 1;
-                        }
-                    }
-                    let n_reps = dcl.k as usize;
-                    {
-                        // Drop pins that ARE inheritance copies (at 2-cluster
-                        // letters); the survivors feed the generic reduced
-                        // gate.  A pair putting BOTH pins on the SAME letter
-                        // is a multiplicity-ambiguous configuration and stays
-                        // ungated, as before.
-                        let at_letter =
-                            |t: C| (0..n_two).find(|&i| (t - delta[two_buf[i]]).norm_sqr() < 1e-8);
-                        let (l1, l2) = (at_letter(t1), at_letter(t2));
-                        if l1.is_some() && l1 == l2 {
-                            None
-                        } else {
-                            let mut pins_buf = [C::default(); 2];
-                            let mut npins = 0usize;
-                            if l1.is_none() {
-                                pins_buf[npins] = t1;
-                                npins += 1;
-                            }
-                            if l2.is_none() {
-                                pins_buf[npins] = t2;
-                                npins += 1;
-                            }
-                            PairGateR::new(
-                                &pins_buf[..npins],
-                                pp,
-                                &reps_buf[..n_reps],
-                                &delta,
-                                &pb.cis,
-                                rho1,
-                                rho2,
-                                a,
-                                w,
-                                &two_buf[..n_two],
-                            )
-                        }
-                    }
                 } else {
                     None
                 };
@@ -2174,12 +1775,6 @@ pub(crate) fn two_step<R>(
                         crate::algebraic::prof::hit(crate::algebraic::prof::INH_SKIP);
                         continue;
                     }
-                    let red_reject =
-                        !inh_reject && arc_r.as_ref().is_some_and(|g| g.rejects(m_free));
-                    if red_reject {
-                        crate::algebraic::prof::hit(crate::algebraic::prof::RED_SKIP);
-                        continue;
-                    }
                     let m2f = mu[3]; // == pp/m_free; already computed above for mu
                     let q_a = (m_free - t1) * (m_free - t2);
                     let q_b = (m2f - t1) * (m2f - t2);
@@ -2197,50 +1792,6 @@ pub(crate) fn two_step<R>(
                     } else {
                         None
                     };
-                    // layer-2 gate: U-side reality is one ray condition on
-                    // zeta = g2 * ray (derived from the ray theorem; the pair
-                    // dependence cancels). Factor-2 margins; shadow-verified.
-                    let uray_reject = match (&gq, &arc) {
-                        (Some((g2v, _, _)), Some(g)) => match g.ray {
-                            Some(ray) if *g2v != C::default() => {
-                                // validity domain: the zeta factorization needs
-                                // B(d_i) != 0, i.e. the free pair clear of the
-                                // data nodes (else the deflated B* is not N/B)
-                                let clear = delta.iter().all(|&d| {
-                                    (m_free - d).norm_sqr() > 1e-8 && (m2f - d).norm_sqr() > 1e-8
-                                });
-                                if clear {
-                                    let z = *g2v * ray;
-                                    if z.re <= 0.0 || z.im.abs() > 2.0 * z.re {
-                                        true
-                                    } else if g.mag_ok && (m_free.norm_sqr() - 1.0).abs() < 1e-6 {
-                                        // magnitude law: U-sum = zeta S(x) = 1
-                                        let x = (m_free * g.half_product.conj()).re / m_free.norm();
-                                        let s_of_x: f64 = (0..4)
-                                            .map(|k| 2.0 * g.r2[k] / (g.kap[k] * (x - g.cc[k])))
-                                            .sum();
-                                        (z.re * s_of_x - 1.0).abs() > 1e-2
-                                    } else {
-                                        false
-                                    }
-                                } else {
-                                    false
-                                }
-                            }
-                            _ => false,
-                        },
-                        // reduced U-side (laws 2-3): clustered pairs whose
-                        // interval gate exists get the same ray dichotomy +
-                        // det-pin magnitude with the cluster's rational term
-                        (Some((g2v, _, _)), None) if *g2v != C::default() => arc_r
-                            .as_ref()
-                            .is_some_and(|g| !red_reject && g.rejects_u(m_free, pp, *g2v, &delta)),
-                        _ => false,
-                    };
-                    if uray_reject {
-                        crate::algebraic::prof::hit(crate::algebraic::prof::URAY_SKIP);
-                        continue;
-                    }
                     if let Some(s) = try_mu(
                         &mu,
                         gq,

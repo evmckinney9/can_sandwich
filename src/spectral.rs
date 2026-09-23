@@ -1,7 +1,7 @@
 //! Spectral verification and endpoint factors from the same real eigenbasis.
 use crate::{
     C as Z,
-    problem::{PERMS24, Problem, phases},
+    problem::{PERMS24, PLANES, Problem, phases},
 };
 use nalgebra::{Matrix4, SymmetricEigen};
 use std::f64::consts::PI;
@@ -36,7 +36,7 @@ impl Problem {
         best.sqrt()
     }
 
-    pub(crate) fn state(&self, o: &R4, branch: f64) -> State {
+    fn sandwich(&self, o: &R4) -> Matrix4<Z> {
         let mut s = Matrix4::<Z>::zeros();
         for i in 0..4 {
             for j in i..4 {
@@ -49,6 +49,11 @@ impl Problem {
                 s[(j, i)] = z;
             }
         }
+        s
+    }
+
+    pub(crate) fn state(&self, o: &R4, branch: f64) -> State {
+        let s = self.sandwich(o);
         let mut eigenvectors = R4::identity();
         let mut roots = [Z::new(0.0, 0.0); 4];
         let mut off = f64::INFINITY;
@@ -71,18 +76,8 @@ impl Problem {
                 continue;
             };
             let v = eigen.eigenvectors;
-            let re = v.transpose() * s.map(|z| z.re) * v;
-            let im = v.transpose() * s.map(|z| z.im) * v;
-            let diag = Matrix4::from_fn(|i, j| Z::new(re[(i, j)], im[(i, j)]));
-            let mut err: f64 = 0.0;
-            for i in 0..4 {
-                for j in 0..4 {
-                    if i != j {
-                        err = err.max(diag[(i, j)].norm_sqr());
-                    }
-                }
-            }
-            let err = err.sqrt();
+            let diag = project(&s, &v);
+            let err = coupling(&diag);
             if err < off {
                 off = err;
                 eigenvectors = v;
@@ -92,6 +87,26 @@ impl Problem {
                 break;
             }
         }
+        self.assign(roots, eigenvectors, off, branch)
+    }
+
+    /// Finish a basis with a large residual by Jacobi rotations of the complex
+    /// matrix. One real projection cannot separate roots whose projected
+    /// values nearly coincide.
+    pub(crate) fn joint(&self, o: &R4, state: State, branch: f64) -> State {
+        if state.off_diagonal_error <= 1e-15 {
+            return state;
+        }
+        let s = self.sandwich(o);
+        let (v, diag) = jacobi(state.eigenvectors, project(&s, &state.eigenvectors));
+        let off = coupling(&diag);
+        if off >= state.off_diagonal_error {
+            return state;
+        }
+        self.assign(std::array::from_fn(|i| diag[(i, i)]), v, off, branch)
+    }
+
+    fn assign(&self, roots: [Z; 4], eigenvectors: R4, off: f64, branch: f64) -> State {
         let mut best = f64::INFINITY;
         let mut order = [0, 1, 2, 3];
         let mut chosen_sign = 1.0;
@@ -130,6 +145,56 @@ impl Problem {
         }
     }
 }
+
+fn project(s: &Matrix4<Z>, v: &R4) -> Matrix4<Z> {
+    let re = v.transpose() * s.map(|z| z.re) * v;
+    let im = v.transpose() * s.map(|z| z.im) * v;
+    Matrix4::from_fn(|i, j| Z::new(re[(i, j)], im[(i, j)]))
+}
+
+/// Largest off-diagonal entry, the residual of an approximate eigenbasis.
+fn coupling(d: &Matrix4<Z>) -> f64 {
+    let mut err: f64 = 0.0;
+    for i in 0..4 {
+        for j in 0..4 {
+            if i != j {
+                err = err.max(d[(i, j)].norm_sqr());
+            }
+        }
+    }
+    err.sqrt()
+}
+
+/// One sweep of real Jacobi rotations on the complex matrix `VᵀSV`. Real and
+/// imaginary parts commute, so tan 2φ = 2 D_il / (D_ll - D_ii) is real.
+fn jacobi(mut v: R4, mut diag: Matrix4<Z>) -> (R4, Matrix4<Z>) {
+    for (i, l) in PLANES {
+        let entry = diag[(i, l)];
+        let spread = diag[(l, l)] - diag[(i, i)];
+        if entry.norm_sqr() <= 1e-36 * spread.norm_sqr() {
+            continue;
+        }
+        let angle = 0.5 * (2.0 * entry * spread.conj()).re.atan2(spread.norm_sqr());
+        let (sine, cosine) = angle.sin_cos();
+        for k in 0..4 {
+            let (x, y) = (diag[(k, i)], diag[(k, l)]);
+            diag[(k, i)] = x * cosine - y * sine;
+            diag[(k, l)] = x * sine + y * cosine;
+        }
+        for k in 0..4 {
+            let (x, y) = (diag[(i, k)], diag[(l, k)]);
+            diag[(i, k)] = x * cosine - y * sine;
+            diag[(l, k)] = x * sine + y * cosine;
+        }
+        for k in 0..4 {
+            let (x, y) = (v[(k, i)], v[(k, l)]);
+            v[(k, i)] = x * cosine - y * sine;
+            v[(k, l)] = x * sine + y * cosine;
+        }
+    }
+    (v, diag)
+}
+
 /// Spectral screen for algebraic and numerical candidates.
 pub(crate) fn verify(problem: &Problem, o: &R4) -> Option<State> {
     if !o.iter().all(|v| v.is_finite()) {

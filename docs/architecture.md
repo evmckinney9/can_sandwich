@@ -41,9 +41,13 @@ transported charts, and repeated-root repair was rejected on accuracy grounds.
 
 The spectral acceptance ceiling and polynomial residual limit are `1e-13`;
 frame and endpoint checks use `1e-12`. Numerical construction stops at the
-spectral ceiling. Final polishing aims for root distances below `1e-14`,
-retains useful partial progress, and replaces a frame only when the estimated
-improvement exceeds both eigenbasis residuals.
+spectral ceiling. Final polishing aims for root distances below `1e-14` and
+retains useful partial progress. When refinement stalls at a vertex, edge, or
+face frame, it restarts along the null space of the root Jacobian. Polishing
+measures frames with a joint eigenbasis: a basis with a large residual is
+finished by Jacobi rotations of the complex matrix. A polished frame replaces
+the original only when its error bound is below the original's lower bound,
+or below half its error bound when a large residual dominates.
 
 Block rotations use a sine-product formula to avoid cancellation of nearly
 equal traces. Numerical refinement solves the damped least-squares system

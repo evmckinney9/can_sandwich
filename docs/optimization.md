@@ -395,6 +395,157 @@ not establish a consistent improvement in maximum latency. `make test` passes
 all five tests, including the full corpus and endpoint reconstruction;
 `make lint` passes. The corpus bytes and SHA-256 are unchanged.
 
+## Core algorithm experiments and retained deletion
+
+Baseline: `f8c3374`. This pass removes 449 lines of radical-search filters:
+the reduced residue interval filter, skeleton parity calibration, and the
+U-residue ray and magnitude filters. Their candidate construction, residue
+checks, and final spectral verification remain. The simple residue interval
+and strict-word filters remain because their removal increased runtime or
+changed witness accuracy. Three unused profiling counters were also removed.
+
+The full paired comparison passes all 1,093,691 rows, including the same four
+infeasible rejections. Every row has identical status, spectral error,
+orthogonality error, and determinant error. No acceptance tolerance or corpus
+byte changed. The retained solver source matches the measured deletion.
+
+One paired release run used fat LTO, one codegen unit, CPU 2 affinity, and no
+diagnostics or concurrent builds, tests, or benchmarks:
+
+| Metric | Baseline | Retained deletion |
+|---|---|---|
+| Total solver time (s) | 7.643 | 7.558 |
+| Mean (µs) | 6.989 | 6.910 |
+| Median (µs) | 2.580 | 2.570 |
+| p95 (µs) | 19.650 | 19.240 |
+| p99 (µs) | 43.110 | 42.140 |
+| p99.9 (µs) | 394.830 | 392.819 |
+| Maximum (ms) | 17.392 | 17.566 |
+
+The 1.1% total-time difference is small and comes from one run; this is a
+complexity reduction, not evidence of a substantial speedup. Row 1,075,377
+remains the slowest. `make test` and `make lint` pass, including the full
+corpus and endpoint reconstruction.
+
+Larger algorithm experiments were rejected:
+
+| Experiment | Evidence | Decision |
+|---|---|---|
+| Replace radical dispatch with numerical recovery | Sample passes but takes about 10.5 times as long | Revert |
+| Direct quadratic charts for a routed root's SO(3) block | Full corpus passes, about 3% faster, but individual errors increase and code grows | Revert |
+| Choose numerical orientation by spectral clustering | Worst full-run time falls from about 18 to 8 ms, but one case is declined and individual errors increase | Revert |
+| Scale numerical Jacobian columns | No useful sample or worst-case improvement | Revert |
+| Joint Jacobi diagonalization of the complex symmetric matrix | Sample passes; no speed gain from either trigonometric or algebraic rotations | Revert |
+| Refine only eigenphases | Sample time and worst latency increase | Revert |
+| Compress the unitary tangent model and alternate row/column rotations | All 2,744 baseline numerical cases pass; time falls 0.933 → 0.808 s and maximum 17.5 → 8.3 ms, but high-precision checks confirm individual error increases | Revert |
+| Direct diagonal/two-block spectral decomposition | Sample passes, but adds slow refinement paths and changes individual errors | Revert |
+| Tighten the edge search's routed-root distance from `1e-2` to `1e-12` | Full corpus passes in 7.425 versus 8.057 s; 80-digit checks confirm individual error increases up to `7.70e-14` | Revert |
+
+The smaller sample contains every 53rd corpus row. The numerical subset
+contains all rows that reached numerical recovery in the frozen baseline;
+neither substitutes for full-corpus validation. Tightening the edge filter
+removed useful refinement starts, even though the unrefined sparse frames
+could not meet the spectral tolerance. A stricter search filter is therefore
+not automatically an accuracy improvement.
+
+## Polishing at clustered spectra
+
+Baseline: `f8c3374` with the radical-filter deletion above. This pass keeps
+every search budget and acceptance limit. It changes final polishing, one
+face-search loop, and the reuse of computed spectral states.
+
+The face search tries both orders in each of its two blocks. Reversing an
+order gives a sign-conjugate frame with the same spectrum, so the four
+variants differ only by roundoff. That roundoff matters only when a
+candidate is near acceptance, where refinement treats the variants as
+restarts. The loop now stops at the first residual above `16 * ACCEPT`.
+Every row keeps its status and spectral error, and one paired run measured
+7.430 → 7.073 s.
+
+At a vertex, edge, or face frame, the spectrum is stationary in some
+rotation directions. A root error `e` there needs rotations of order
+`sqrt(e / sigma_max)`, and Levenberg-Marquardt stops without progress. When
+polishing stalls, it restarts along each null direction of the root rows of
+the Jacobian, with that step size. The eigenbasis rows are excluded from this
+test; they remain nonzero at a critical point.
+
+Most remaining polishing failures were failures of the estimate rather than
+the iteration. The real eigenbasis comes from one real combination of the
+real and imaginary parts. Where projected roots nearly coincide, its residual
+stays near `1e-14`, and the old replacement rule then rejected a frame that
+was already better. Some constructed frames also carried orthogonality drift
+of the same size, which enlarges the residual. Polishing now measures frames
+with a joint eigenbasis: if the residual exceeds `1e-15`, one sweep of real
+Jacobi rotations of the complex matrix is kept when it lowers the residual.
+Polishing first runs the existing iteration, then repeats it with the joint
+estimate if that estimate has not converged, and keeps the better frame. It
+is attempted whenever the joint root estimate exceeds `1e-14`. A polished
+frame replaces the original if its joint error bound is below
+`max(root - 4 * residual, (root + 4 * residual) / 2)`. The first term is the
+previous rule. The second applies when the residual dominates and requires
+the bound to halve.
+
+Verification's state is reused as the plain estimate, and the joint sweep
+runs only when its residual exceeds `1e-15`. These reuses change no row and
+reduce total time by about 2.4%.
+
+All 1,093,691 rows pass, including the same four infeasible rejections.
+Relative to the baseline, 15,155 spectral errors are smaller, 1,078,466 are
+equal, and 66 are larger. An 80-digit eigensolve of all 66 increases found a
+largest actual increase of `2.15e-15`, at row 101,581 (`7.61e-15` →
+`9.76e-15`). The 40 largest reported decreases are actual decreases.
+
+| Metric | Baseline | Revised solver |
+|---|---|---|
+| Spectral p99 | `1.224e-14` | `8.648e-15` |
+| Spectral p99.9 | `3.418e-14` | `1.045e-14` |
+| Spectral maximum | `1.216e-13` | `1.216e-13` |
+| Orthogonality p99.9 | `2.487e-14` | `1.199e-14` |
+| Orthogonality maximum | `1.033e-13` | `9.658e-14` |
+| Determinant maximum | `1.910e-14` | `7.883e-15` |
+
+The two readings above `1e-13` are the Schur artifacts of rows 1,071,777 and
+1,071,780 described earlier. Three paired runs used release mode, fat LTO,
+one codegen unit, CPU 2 affinity, and no diagnostics or concurrent builds,
+tests, or benchmarks:
+
+| Metric | Baseline | Revised solver |
+|---|---|---|
+| Total solver time (s) | 7.432 to 7.467 | 7.865 to 7.877 |
+| Median (µs) | 2.520 to 2.540 | 2.560 |
+| p95 (µs) | 18.680 to 18.880 | 17.420 to 17.540 |
+| p99 (µs) | 40.170 to 40.530 | 40.640 to 40.918 |
+| p99.9 (µs) | 393.700 to 396.329 | 599.529 to 602.089 |
+| Maximum (ms) | 17.218 to 17.522 | 17.341 to 17.633 |
+
+The accuracy gain costs 5.5 to 5.8% total time, mostly in the p99.9 tail where
+polishing restarts run. Row 1,075,377 remains the slowest.
+
+About 180 rows still have actual errors above `2e-14`, most near spectra
+perturbed by about `1e-12` from a degenerate point. There the correction
+needed along a well-conditioned direction changes the coupling inside a
+root cluster by about the cluster gap, so the first-order root model fails.
+The iteration makes no progress, or only partial progress.
+
+| Experiment | Evidence | Decision |
+|---|---|---|
+| Keep only one face order | 10.8% faster; five rows increase to about `9e-14` (80 digits) | Revert |
+| Face angle from `atan2` of sine-product `cos²` and `sin²` | 106,616 smaller and 86,313 larger errors; actual increases to `9.5e-14` | Revert |
+| Skip refinement of constructed vertex frames | 8.4% faster; five actual increases to `8e-14` | Revert |
+| Restart constructed-frame refinement along null directions | 15% slower; 778 larger errors, three above `1e-13` | Revert |
+| Accept vertex frames by direct root matching | 1.9% faster; four actual increases to `1.7e-14` | Revert |
+| Jacobi-finished eigenbasis in every verification | Laxer acceptance admits worse witnesses; 9,666 larger errors, 732 above `1e-14` | Revert |
+| Projection direction chosen from target root differences | 4% slower; 32,029 larger errors | Revert |
+| Jacobi angle from the real part with larger anisotropy | Loses polishing on about 100 rows | Revert |
+| Polar step on every constructed frame | Orthogonality maximum `1.3e-15`, but spectral errors near `3e-16` increase to `1e-14` | Revert |
+| Cap polishing restarts at 30 iterations | 1% faster; an actual increase to `7e-14` | Revert |
+| Joint Newton on `Vᵀ M(O) V = diag(t)` in frame and basis | Fixes 11 of the 179 remaining rows | Revert |
+| Smaller eigenbasis penalty and damping during polishing | Helps some clustered rows; does not remove the stall | Revert |
+
+The polar-step result shows that a frame can match the spectrum through `Oᵀ`
+more accurately than its projection onto SO(4) does. Orthogonality and
+spectral error therefore trade against each other near the tolerance.
+
 ## Validation
 
 The full corpus test checks spectral matching, orthogonality, determinant,

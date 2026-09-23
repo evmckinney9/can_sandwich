@@ -54,7 +54,7 @@ pub mod prof {
     #[cfg(feature = "diagnostics")]
     use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
     #[cfg(feature = "diagnostics")]
-    pub const N: usize = 47;
+    pub const N: usize = 44;
     /// Slot indices, one per stage or event counter.
     pub const EDGE: usize = 0;
     pub const CHART_COEFFS: usize = 1;
@@ -86,23 +86,20 @@ pub mod prof {
     pub const SW_BASE: usize = 27;
     pub const ARC_PAIR_SKIP: usize = 28;
     pub const ARC_CAND_SKIP: usize = 29;
-    pub const URAY_SKIP: usize = 30;
-    pub const SKEL_SKIP: usize = 31;
-    pub const BASE_FAIL_FORCED: usize = 32;
-    pub const BASE_FAIL_SKEL: usize = 33;
-    pub const BASE_FAIL_PAIR: usize = 34;
-    pub const DEV_LT_1EM6: usize = 35;
-    pub const DEV_MID: usize = 36;
-    pub const DEV_GT_1EM2: usize = 37;
-    pub const PAIR_GATE_SOME: usize = 38;
-    pub const PAIR_GATE_NONE: usize = 39;
-    pub const INH_SKIP: usize = 40;
-    pub const RED_SKIP: usize = 41;
-    pub const SW_HEADER: usize = 42;
-    pub const KLEIN_TOTAL: usize = 43;
-    pub const SEG_PREPARE: usize = 44;
-    pub const SEG_EDGEGATE: usize = 45;
-    pub const SEG_VERTEX: usize = 46;
+    pub const BASE_FAIL_FORCED: usize = 30;
+    pub const BASE_FAIL_SKEL: usize = 31;
+    pub const BASE_FAIL_PAIR: usize = 32;
+    pub const DEV_LT_1EM6: usize = 33;
+    pub const DEV_MID: usize = 34;
+    pub const DEV_GT_1EM2: usize = 35;
+    pub const PAIR_GATE_SOME: usize = 36;
+    pub const PAIR_GATE_NONE: usize = 37;
+    pub const INH_SKIP: usize = 38;
+    pub const SW_HEADER: usize = 39;
+    pub const KLEIN_TOTAL: usize = 40;
+    pub const SEG_PREPARE: usize = 41;
+    pub const SEG_EDGEGATE: usize = 42;
+    pub const SEG_VERTEX: usize = 43;
     #[cfg(feature = "diagnostics")]
     pub const NAMES: [&str; N] = [
         "edge",
@@ -135,8 +132,6 @@ pub mod prof {
         "sw_base",
         "arc_pair_skip",
         "arc_cand_skip",
-        "uray_skip",
-        "skel_skip",
         "base_fail_forced",
         "base_fail_skel",
         "base_fail_pair",
@@ -146,7 +141,6 @@ pub mod prof {
         "pair_gate_some",
         "pair_gate_none",
         "inh_skip",
-        "red_skip",
         "sw_header",
         "klein_total",
         "seg_prepare",

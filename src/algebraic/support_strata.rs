@@ -52,8 +52,10 @@ pub(crate) fn solve_face(problem: &Problem) -> Option<Solution> {
                     let (k, _) = complement(i, j);
                     let (x, y) = PLANES[q6];
                     let (z, v) = PLANES[5 - q6];
-                    // Both orders within each block are distinct angle choices.
-                    for s1 in 0..2 {
+                    // Reversing a block's order gives a sign-conjugate frame with
+                    // the same spectrum. The variants differ only by roundoff, which
+                    // matters to refinement only near acceptance.
+                    'orders: for s1 in 0..2 {
                         for s2 in 0..2 {
                             let (xa, xb) = if s1 == 0 { (x, y) } else { (y, x) };
                             let (za, zb) = if s2 == 0 { (z, v) } else { (v, z) };
@@ -74,6 +76,9 @@ pub(crate) fn solve_face(problem: &Problem) -> Option<Solution> {
                             let (sine, cosine) = th1.sin_cos();
                             rotate_rows(&mut o, a, b, cosine, sine);
                             let r = compound_residual(dc, lam, &o, &targets[bi]);
+                            if r > 16.0 * ACCEPT {
+                                break 'orders;
+                            }
                             if r < ACCEPT
                                 && let Some(solution) = compiler_solution(problem, o, Rung::Face, r)
                             {
