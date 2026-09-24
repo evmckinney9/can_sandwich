@@ -62,15 +62,12 @@ QLR = [
     (3, 1, [1, 1, 1], [1, 1, 1], [1, 1, 0], 1.0),
 ]
 
-# Fixed regressions for clustered spectra and near-identity gates.
-# Rows 1–4 are historical near-feasible targets. Keep them as rejection tests:
-# their Horn-inequality violations exceed the strict spectral tolerance.
+# Fixed regressions for clustered spectra and near-identity gates. Every row
+# is feasible: four historical near-feasible targets captured under an 8e-9
+# acceptance were removed in September 2026 once the exact Horn check in
+# margins.py showed violations of 1e-10 (tests/margins.py --summary).
 REGRESSIONS = [
     [[0.25156717590725, 0.24843282409275, 0.24690239120876], [0.03363566241836, 0.02691404826411, 0.02691404826411], [0.27897727016045, 0.27741771973249, 0.16056554217426]],  # near-swap repeated-gate witness
-    [[0.5, 0.0, 0.0], [0.5, 0.0, 0.0], [0.29546099931489134, 0.20453900018510873, -0.20453900061744035]],  # exact-double target 4101
-    [[0.5, 0.0, 0.0], [0.5, 0.0, 0.0], [0.484847219872809, 0.015152779130006122, -0.015152779314408282]],  # exact-double target 4102
-    [[0.2555803919905, 0.25558039198104, -0.2555803919405], [0.2555803919905, 0.25558039198104, -0.2555803919405], [0.2444196080691815, 0.07613277864424217, -0.0761327790245726]],  # near-pair target 4660
-    [[0.5, 0.0, 0.0], [0.5, 0.0, 0.0], [0.47976171336231027, 3.350705823912392e-10, -4.450235180364359e-10]],  # quantized face target 6363
     [[0.22382655216654007, 4.5365999717547037e-10, -3.6097999717547044e-10], [0.37673542185379, 0.0, 0.0], [0.39943802588698385, 4.5366116106166384e-10, -3.609834684704048e-10]],  # clustered proxy certificate 4673
     [[4.920400000000001e-09, 1.38676e-09, -1.22755e-09], [0.5, 0.30909146235419005, -0.30909146235419005], [0.19090853874762126, 3.421808059123066e-09, -3.4846467933391523e-09]],  # near-identity edge target 8497
     [[0.49999999751607005, 0.499999996086, -0.4999999939139901], [0.45073929780807004, 0.21470014625631004, -0.11617874287243998], [0.38382125933803596, -0.04926070113759151, -0.04926070436221991]],  # near-swap edge target 9082

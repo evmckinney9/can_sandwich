@@ -52,8 +52,10 @@ fn certify_frame_against_targets(
     (residual <= ACCEPT).then_some((frame, residual))
 }
 
-/// Normalize the orientation, then check the frame once against the original
-/// roots. Keep the verified eigenbasis for endpoint reconstruction.
+/// Normalize the orientation, then verify the frame against the original
+/// roots. If it fails, verify its refinement, then its retargets near repeated
+/// roots, so the returned frame can differ from `o`. Keep the verified
+/// eigenbasis for endpoint reconstruction.
 pub(crate) fn compiler_solution(
     problem: &Problem,
     o: Mat4,
@@ -394,6 +396,13 @@ fn solve_rank_one_31(problem: &Problem) -> Option<Solution> {
                 true,
             ),
         ] {
+            // The near-rank-one limit applies to spectra within `1e-7` of a
+            // triple, beyond the exact multiplicity threshold.
+            let kind = if proximity == Near {
+                problem::spectrum_kind_within(&distinguished, f64::EPSILON)
+            } else {
+                kind
+            };
             if kind == SpectrumKind::Triple31
                 && distance == proximity
                 && let Some(hit) =

@@ -437,7 +437,7 @@ fn run(candidate: Solver) -> Result<bool, Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     fn production(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<Frame> {
-        let (o, left, right, phase) = crate::solve_with_factors(c, g, t)?;
+        let (o, left, right, phase) = crate::solve_with_factors(c, g, t).ok()?;
         let diagonal = |m: [f64; 3]| {
             let [x, y, z] = [m[0] + m[1], m[0] + m[2], m[1] + m[2]];
             let d = [x - y + z, x + y - z, -x - y - z, -x + y + z]

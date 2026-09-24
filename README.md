@@ -80,8 +80,8 @@ pub fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3])
     -> Option<nalgebra::Matrix4<f64>>;
 
 pub fn solve_with_factors(c: [f64; 3], g: [f64; 3], t: [f64; 3])
-    -> Option<(nalgebra::Matrix4<f64>, nalgebra::Matrix4<f64>,
-               nalgebra::Matrix4<f64>, f64)>;
+    -> Result<(nalgebra::Matrix4<f64>, nalgebra::Matrix4<f64>,
+               nalgebra::Matrix4<f64>, f64), Decline>;
 ```
 
 `solve_with_factors` returns `(O, L, R, phase)` for
@@ -90,9 +90,11 @@ The [coordinate definitions](docs/research.md#gulps-coordinates-and-endpoint-fac
 specify $D$ and the allowed target signs.
 
 The solver uses binary64 arithmetic, combining algebraic constructions with
-Levenberg–Marquardt refinement and restarts. It returns `None` if the inputs
-are nonfinite or it cannot produce a verified result within its search budget;
-the input may still be feasible. The [source guide](docs/architecture.md)
+Levenberg–Marquardt refinement and restarts. `solve` returns `None` if the
+inputs are nonfinite or it cannot produce a verified result within its search
+budget. The input may still be feasible. `solve_with_factors` returns a
+`Decline`: `NoWitness` for the same cases, or `Reconstruction` when a verified
+frame gives no valid `L` and `R`. The [source guide](docs/architecture.md)
 describes the implementation and the internal measurements available with
 the `diagnostics` feature.
 
@@ -107,7 +109,7 @@ make lint
 ```
 
 The tests check returned matrices and endpoint reconstruction against
-1,093,691 cases in `tests/cases.bin`, using an independent checker with a
+1,093,687 cases in `tests/cases.bin`, using an independent checker with a
 `1e-12` tolerance. Four historical near-feasible inputs violate necessary
 Horn inequalities; the checker requires the solver to reject them. The corpus
 bytes are unchanged. The comparison runner uses the same spectral checker and

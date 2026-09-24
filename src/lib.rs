@@ -28,10 +28,15 @@ use diagnostics::prof;
 #[cfg(feature = "diagnostics")]
 pub use diagnostics::prof;
 use problem::Problem;
+/// Largest root error, including the eigenbasis residual, of an accepted witness.
+pub use spectral::SPECTRAL_TOLERANCE;
 #[cfg(feature = "diagnostics")]
 pub type Mat4 = ComplexMatrix;
 #[cfg(feature = "diagnostics")]
 pub use diagnostics::{branch_signature, certify_frame, solve_report};
+
+/// The crate version, for bug reports.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Construct a real SO(4) matrix `O` for left gate `c`, right gate `g`, and target `t`.
 ///
@@ -42,48 +47,68 @@ pub use diagnostics::{branch_signature, certify_frame, solve_report};
 /// Returns `None` for nonfinite inputs or when the bounded search finds no
 /// accepted witness. A decline does not establish that the input is infeasible.
 pub fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<Matrix4<f64>> {
-    solve_using(c, g, t, |_, solution| Some(solution.o))
+    witness(c, g, t).ok().map(|(_, solution)| solution.o)
 }
+
+/// Why [`solve_with_factors`] returned no result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Decline {
+    /// The input is nonfinite, or the bounded search found no frame that
+    /// passes spectral verification.
+    NoWitness,
+    /// A verified frame was found, but `L` and `R` failed their checks.
+    Reconstruction,
+}
+
+impl std::fmt::Display for Decline {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::NoWitness => "no witness",
+            Self::Reconstruction => "endpoint reconstruction failed",
+        })
+    }
+}
+
+impl std::error::Error for Decline {}
 
 /// Return `(O, L, R, phase)` with all three matrices real SO(4), where
 /// `D(c) O D(g) = exp(i phase) L D(t) R` in the magic basis.
 ///
 /// Inputs follow the same convention as [`solve`], and `phase` is in radians.
-/// Returns `None` if the search or endpoint reconstruction fails. The result
-/// is verified numerically, rather than certified in exact arithmetic.
+/// The result is verified numerically, rather than certified in exact
+/// arithmetic. A [`Decline`] does not establish that the input is infeasible.
 #[allow(clippy::type_complexity)]
 pub fn solve_with_factors(
     c: [f64; 3],
     g: [f64; 3],
     t: [f64; 3],
-) -> Option<(Matrix4<f64>, Matrix4<f64>, Matrix4<f64>, f64)> {
-    solve_using(c, g, t, |problem, solution| {
-        solution.state.factors(problem, t, solution.o)
-    })
+) -> Result<(Matrix4<f64>, Matrix4<f64>, Matrix4<f64>, f64), Decline> {
+    let (problem, solution) = witness(c, g, t)?;
+    solution
+        .state
+        .factors(&problem, t, solution.o)
+        .ok_or(Decline::Reconstruction)
 }
 
-fn solve_using<T>(
-    c: [f64; 3],
-    g: [f64; 3],
-    t: [f64; 3],
-    finish: impl FnOnce(&Problem, Solution) -> Option<T>,
-) -> Option<T> {
+fn witness(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Result<(Problem, Solution), Decline> {
     if c.iter().chain(&g).chain(&t).any(|x| !x.is_finite()) {
-        return None;
+        return Err(Decline::NoWitness);
     }
     let tp = prof::start();
     let problem = Problem::new(c, g, t);
     prof::rec(prof::SEG_PREPARE, tp);
-    let mut solution = algebraic::solve(&problem).or_else(|| {
-        let o = numerical::solve(&problem, c, g, t)?;
-        let state = spectral::verify(&problem, &o)?;
-        Some(Solution {
-            o,
-            rung: Rung::Numerical,
-            residual: state.error,
-            state,
+    let mut solution = algebraic::solve(&problem)
+        .or_else(|| {
+            let o = numerical::solve(&problem, c, g, t)?;
+            let state = spectral::verify(&problem, &o)?;
+            Some(Solution {
+                o,
+                rung: Rung::Numerical,
+                residual: state.error,
+                state,
+            })
         })
-    })?;
+        .ok_or(Decline::NoWitness)?;
     // Polish when the verified bound exceeds the refinement target. Measure
     // both frames with the joint eigenbasis and require improvement beyond
     // both of its residuals. A large residual can reflect orthogonality
@@ -102,5 +127,5 @@ fn solve_using<T>(
             }
         }
     }
-    finish(&problem, solution)
+    Ok((problem, solution))
 }

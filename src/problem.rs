@@ -37,7 +37,15 @@ impl SpectrumKind {
     }
 }
 
+/// Multiplicity type with repeated roots closer than `1e-11`. Exact-stratum
+/// formulas fail on inputs farther from the stratum.
 pub(crate) fn spectrum_kind(s: &[C; 4]) -> SpectrumKind {
+    spectrum_kind_within(s, 1e-22)
+}
+
+/// Multiplicity type with roots merged when their squared distance is at
+/// most `tolerance`.
+pub(crate) fn spectrum_kind_within(s: &[C; 4], tolerance: f64) -> SpectrumKind {
     let mut used = [false; 4];
     let mut counts = [0usize; 4];
     let mut groups = 0usize;
@@ -47,7 +55,7 @@ pub(crate) fn spectrum_kind(s: &[C; 4]) -> SpectrumKind {
         }
         let mut count = 0usize;
         for j in i..4 {
-            if !used[j] && (s[j] - s[i]).norm_sqr() <= f64::EPSILON {
+            if !used[j] && (s[j] - s[i]).norm_sqr() <= tolerance {
                 used[j] = true;
                 count += 1;
             }

@@ -57,7 +57,8 @@ drift with a polar Newton step.
 Every accepted frame passes `spectral.rs` against the original spectrum.
 `Solution` stores the real frame and its verification state together, so
 endpoint recovery uses the same eigenbasis without another decomposition.
-A successful result always has that state; failure is `None`.
+A successful result always has that state. `solve` reports failure as `None`,
+and `solve_with_factors` as `Decline::NoWitness` or `Decline::Reconstruction`.
 
 ## Diagnostics
 

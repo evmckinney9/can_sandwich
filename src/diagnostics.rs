@@ -30,12 +30,12 @@ pub fn branch_signature(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> String {
 /// Solve and report the accepted construction and its spectral error.
 #[cfg(feature = "diagnostics")]
 pub fn solve_report(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<Solution> {
-    crate::solve_using(c, g, t, |_, solution| Some(solution))
+    crate::witness(c, g, t).ok().map(|(_, solution)| solution)
 }
 
 /// Re-certify an externally selected frame against the original sandwich.
-/// This is intentionally strict: a frame found in a transformed factor chart
-/// is useful only if it survives the caller's representatives.
+/// A frame that fails the spectral check can come back refined or retargeted,
+/// as in the solver's own acceptance path.
 #[cfg(feature = "diagnostics")]
 pub fn certify_frame(
     c: [f64; 3],

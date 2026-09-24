@@ -546,6 +546,46 @@ The polar-step result shows that a frame can match the spectrum through `Oᵀ`
 more accurately than its projection onto SO(4) does. Orthogonality and
 spectral error therefore trade against each other near the tolerance.
 
+## Multiplicity threshold
+
+The multiplicity test merged roots whose squared distance was at most machine
+epsilon, a distance of `1.5e-8`, 100,000 times the spectral acceptance limit.
+Exact-multiplicity formulas cannot meet that limit on inputs so far from the
+stratum, and 2,307 rows that the test called repeated failed every radical
+construction before another construction solved them. The test now merges
+roots within `1e-11`. The near-rank-one construction keeps the `1.5e-8` test
+for spectra near a triple, which is its purpose.
+
+| Threshold | Time ratio | Larger / smaller errors | Largest actual increase |
+|---|---|---|---|
+| `1e-14` | 0.957 | 208 / 226 | `4.8e-14` |
+| `1e-13` | 0.951 | 35 / 38 | `4.8e-14` (near-rank-one row) |
+| `1e-13`, near-rank-one kept | 0.959 | 33 / 34 | `8.1e-15` |
+| `1e-11`, near-rank-one kept | 0.968 to 0.969 | 4 / 9 | `2.8e-15` |
+
+The tighter thresholds moved rows with `1.6e-12` gaps from radical
+constructions plus refinement, near `5e-16`, to interior charts near `5e-15`.
+The retained `1e-11` threshold keeps them. Three repeated full comparisons
+measured 3.1 to 3.3% less total solver time; every row passes, and 80-digit
+checks put the four increases at `2.8e-15` or less.
+
+## Corpus revision: feasible inputs only
+
+Corpus rows 1 to 4 (zero-based) were four historical targets captured under
+the `8e-9` acceptance of an earlier release. `tests/margins.py`, which
+evaluates the complete quantum-Horn inequalities of `tests/generate.py` in
+exact rational arithmetic, shows they violate an inequality by `1.1e-10` to
+`4.3e-10`; every other row is feasible to within `4e-16`. They were kept as
+rejection tests after the strict contract exposed them. The corpus now means
+feasible inputs only: those four rows are removed from `REGRESSIONS`, and
+`tests/cases.bin` was regenerated. The remaining 1,093,687 rows are
+byte-identical to the previous corpus, so row indices quoted in the sections
+above are 4 higher than the current indices for rows that followed them.
+The new SHA-256 is
+`e070dc09971557bb4c77fae078dc32a8caa26a4fe1ffd6d5a70f605556e56ce3`.
+The grader's certificate and its unit test are unchanged; no corpus row
+exercises the rejection path any more.
+
 ## Validation
 
 The full corpus test checks spectral matching, orthogonality, determinant,

@@ -8,7 +8,7 @@ use std::f64::consts::PI;
 type R4 = Matrix4<f64>;
 /// Maximum accepted root error, including the eigenbasis residual. This is
 /// an acceptance ceiling; numerical refinement aims for substantially less.
-pub(crate) const SPECTRAL_TOLERANCE: f64 = 1e-13;
+pub const SPECTRAL_TOLERANCE: f64 = 1e-13;
 #[derive(Clone, Copy)]
 pub(crate) struct State {
     pub(crate) cost: f64,

@@ -317,6 +317,201 @@ uses it to filter candidate constructions before the final frame and rootwise
 checks, which remain necessary because coefficient-to-root inversion is
 poorly conditioned near repeated roots.
 
+## Critical points and strata
+
+The constructions in the solver follow a stratification of the fiber by the
+stabilizer of the triangle. The measurements below were taken on the
+production witnesses of 16,000 corpus rows, 2,000 from each construction.
+
+### Rank of the spectral map
+
+Let $F:SO(4)\to\mathbb R^3$ send $O$ to the three real coefficients
+$(\Re e_1,\Im e_1,e_2)$ of $M=AOBO^T$, and let
+$\mathfrak s\subset\mathfrak{su}(4)$ be the Lie algebra of the common
+stabilizer of $A$ and $OBO^T$. For the product map $\mu(A,B)=AB$ of the
+quasi-Hamiltonian space of Alekseev, Malkin, and Meinrenken, the image of
+$d\mu$ at a point is $\mathfrak s^\perp$. The characteristic-polynomial map
+$\chi$ has $d\chi$ of rank $d_C-1$ at $C=AB$, where $d_C$ is the number of
+distinct eigenvalues of $C$, and $d\chi$ only sees the traces against the
+spectral projectors $P_i$ of $C$ (Kostant). Composing the two gives
+
+$$
+\operatorname{rank} dF = (d_C-1)-\dim\left(\mathfrak s\cap
+\operatorname{span}_0\{iP_i\}\right),
+$$
+
+where the span is traceless. For a regular target the span is the whole
+centralizer of $C$, which contains $\mathfrak s$, so the rank is
+$3-\dim\mathfrak s$. The derivation assumes that $dF$ on the real locus has
+the rank of its complex counterpart; the corpus supports that assumption.
+
+Central differences with step `1e-5` give the rank, with singular values
+below `1e-6` of the largest treated as zero. The stabilizer is the null space
+of $X\mapsto([X,A],[X,OBO^T])$. On rows whose spectral gaps are all below
+`1e-14` or above `1e-4`, the formula holds for 4,933 of 4,938 regular
+witnesses and 8,258 of 8,409 witnesses with repeated spectra. The remaining
+repeated cases are inputs with triple or quadruple degeneracy, where the
+finite-difference rank is unreliable.
+
+### Constructions as strata
+
+| Construction | Witness structure | Stabilizer | Rank of $dF$ | Observed |
+|---|---|---|---|---|
+| Vertex | Four 1×1 blocks | 3-torus | 0 | 98.2% rank ≤ 1 |
+| Edge | 2+1+1 blocks | 2-torus | 1 | 98.4% rank ≤ 1 |
+| Face | 2+2 blocks | circle | 2 | 97.5% rank 2 |
+| Klein, Interior | Irreducible | discrete | 3 | 98 to 99% rank 3 |
+
+Vertex, edge, and face frames are reducible triangles: $A$, $OBO^T$, and
+their product preserve a common coordinate splitting. They are critical
+points of $F$, which explains two observations. Their targets have closed
+forms because the problem splits into lower-rank problems. Refinement
+starting at them stalls, because a root error $e$ at a critical point needs
+a displacement of order $\sqrt e$. The radical and rank-one constructions
+cover the second axis of the stratification, non-regular conjugacy classes,
+where a repeated class is a low-rank perturbation of a scalar matrix.
+
+The numerical fallback mostly handles perturbations of these strata:
+1,820 of the 2,000 sampled rows that reach it have a spectral gap between
+`1e-14` and `1e-4`.
+
+### A single-qubit middle gate does not suffice
+
+The one-sided family $O=L_qP$, a middle gate $u\otimes I$, is closed under
+the symmetries of the problem. Right multiplication reduces to it through
+the diagonal sign $\mathrm{diag}(1,-1,-1,-1)$, conjugation by a permutation
+preserves the pair of normal $SU(2)$ factors, and transposition exchanges
+$c$ and $g$. The Klein construction searches this whole family in closed
+form. An independent search over all 24 permutations, both target signs, and
+12 quaternion starts each found a one-sided solution for 59 of 60 Klein rows
+but for only 2 of 60 radical rows, 6 of 60 interior rows, 17 of 60 edge rows,
+and 14 of 60 face rows. The family $u\otimes u$ fixes a magic-basis vector,
+so it reaches only targets containing a product $a_ib_j$. Neither
+three-dimensional family covers the feasible region.
+
+### The numerical fallback works on 1+3 walls
+
+Of the 2,744 rows that reach numerical recovery, 2,338 have a routed product
+$a_ib_j$ within `1e-10` of a target root, possibly after the central sign.
+Such a target lies on the 1+3 wall, where the triangle can keep coordinate
+$i$ fixed, and the fixed-root search solves the complementary block. The
+block is a $3\times3$ problem with a one-dimensional fiber: a unitary
+$3\times3$ matrix with fixed determinant $d$ has $e_2=d\,\overline{e_1}$, so
+only $e_1=a^TPb$ remains, with $P=O\circ O$.
+
+A $3\times3$ doubly stochastic $P$ is orthostochastic exactly when the
+numbers $u_j=\sqrt{p_{1j}p_{2j}}$ form a degenerate triangle,
+$u_j=u_k+u_l$ for some $j$: two real unit rows with these squared entries can
+then be orthogonal, and the third row is their cross product. Fixing $e_1$
+cuts the four-dimensional Birkhoff polytope to a polygon, and the fiber is
+the zero set of $g_j=u_k+u_l-u_j$ on that polygon. A prototype that locates
+sign changes of $g_j$ on a grid and bisects along the crossing edge found
+candidates for 1,649 of the 2,338 wall rows. The remaining rows have a zero
+set that touches the polygon only tangentially: their $e_1$ lies on the
+boundary of the $3\times3$ reachable set, a deeper 2+1+1 stratum, where the
+square-root behavior of critical values returns. The single chart
+$G_{01}G_{12}$ forces $p_{20}=0$ and reaches only 1,137 rows.
+
+### Exact strata and the multiplicity threshold
+
+The radical constructions assume exact repeated roots. Among rows whose merged
+roots coincide to `1e-14`, only six that reach them fall through to later
+constructions, two of them the certified infeasible rows. The earlier
+multiplicity test merged roots within `1.5e-8`, so it also sent inputs up to
+that distance from a stratum to these formulas. All 2,307 other radical
+failures were such inputs. Radical still succeeds on most inputs within
+`1e-11` of a stratum, after refinement, and fails on most inputs farther away.
+The test now merges roots within `1e-11`. The near-rank-one construction keeps
+the looser triple test, because it is designed for spectra near a triple.
+
+### A homotopy over the feasible polytope
+
+For fixed $c$ and $g$ the reachable target classes form a convex polytope in
+alcove coordinates, and every point of it has a real witness. This gives one
+construction that needs no chart atlas. Choose a random frame $O_0$; its
+target $t_0$ is an interior point with a known witness. Move $t$ along the
+segment from $t_0$ to the requested target and carry the witness with
+minimum-norm Gauss-Newton steps on $(e_1,e_2)$. The segment stays feasible by
+convexity, and its open part stays off the alcove walls. Along it, the
+spectral map loses rank only at reducible frames, whose images meet the
+segment in a curve inside a three-dimensional fiber, so a random start misses
+them with probability one. Only the endpoint can be singular. There the
+lifted path has an expansion in $\sqrt{1-s}$, so the path is sampled at
+$1-s=10^{-3},\,2.5\times10^{-4},\,6.25\times10^{-5}$, extrapolated to $s=1$
+by Richardson's rule for that variable, and finished by Newton on
+$V^TM(O)V=\mathrm{diag}(\tau)$ jointly in the frame and the eigenbasis.
+
+A prototype with finite-difference Jacobians, at most four random starts and
+both central signs, was run on 200 corpus rows from each construction. Without
+the endgame, tracking reached the target within `1e-10` on all Klein and
+interior rows but on only 83 radical rows and about 150 edge and face rows;
+the losses were all within `1e-3` of the endpoint. With the endgame the
+counts below `1e-13` were 200 Klein, 200 interior, 200 radical, 199 face, 194
+rank-one, 174 vertex, and 127 numerical rows, and 40 of the 46 edge rows
+completed before the run was stopped. Every remaining failure is a row whose
+target is a corner or a repeated class, where the endpoint expansion has a
+larger exponent than the one assumed. The prototype takes 0.5 to 4 ms per
+row against 7 µs for the production cascade, so it is evidence about
+coverage, not a replacement. It shows that the cascade's many constructions
+are accelerators for one mechanism, and that the mechanism's only hard part
+is the endpoint singularity that the strata above describe.
+
+### Rows with residual errors near `1e-13`
+
+After the polishing changes of September 2026, 179 corpus rows keep actual
+spectral errors above `2e-14`, all between rows 1,068,617 and 1,090,479, and
+175 of them have a pair of roots closer than `1e-6` in $c$, $g$, or $t$.
+
+They are feasible. `tests/margins.py` evaluates the complete quantum-Horn
+inequality list of `tests/generate.py` in exact rational arithmetic on the
+binary64 inputs: over the whole corpus, only four historical regression rows
+violated an inequality by more than `1e-15`, and they have since been removed
+(see the corpus revision in the [optimization record](optimization.md)). The
+other 8,103 negative margins are between `-4e-16` and zero, rounding on rows
+generated on the boundary. Of the
+179 rows, 118 have tight inequalities of ranks 1, 2, and 3 at once, 15 have
+no tight inequality at all, and 42 have exact margins near `-1e-16`.
+
+The residual errors are therefore failures of refinement, not of the inputs.
+Newton at 50 digits from the production witness stops at residuals between
+`6e-14` and `2e-13` on six of these rows, and random offsets up to `1e-3` do
+not help: the witness sits in a basin whose floor is above zero, at a critical
+point of the spectral map where a nearly repeated pair makes the fiber
+singular. The polytope homotopy below, which starts from a random regular
+point instead, reaches errors below `1e-14` on 77 of the 179 rows and below
+`1e-13` on 97; its 47 outright failures are rows whose target is itself a
+repeated or corner class, where its endgame assumes the wrong exponent.
+
+### Where the precision floor is
+
+Measured on 2026-09-24, with GULPS's tolerances consolidated to three scales
+(`INPUT_ATOL`, `CLASS_TOL`, `MEMBERSHIP_TOL`; see gulps
+`crates/core/src/lib.rs`). On the corpus, accepted witnesses have spectral
+error `1e-15` at the median and `1.05e-14` at the 99.9th percentile. GULPS
+factors and stitches them into circuits whose entrywise error against the
+target is below `1e-14` on its fixed benchmark workloads; that is about ten
+roundings of a 4×4 product chain, the floor for binary64.
+
+Two things stand between this and a solver that is exact to working
+precision, and both meet at the acceptance ceiling `SPECTRAL_TOLERANCE = 1e-13`:
+
+1. The 179 rows above are accepted at errors up to `1.2e-13`. They are
+   feasible, so the ceiling can drop only when the solver reaches `1e-14` on
+   them. That needs refinement that does not stall at a singular fiber: a
+   restart from a regular point (the homotopy), or a construction that reads
+   the tight inequality and solves the split problem it certifies, since a
+   tight inequality of rank $r$ forces an invariant $r$-dimensional subspace.
+2. GULPS derives its reachability slack from the ceiling
+   (`MEMBERSHIP_TOL = SPECTRAL_TOLERANCE / 2π`), so the ceiling also sets how
+   far outside a region a target may lie before GULPS reports it unreachable.
+
+The grader's infeasibility certificate uses four rank-two inequalities. The
+complete list is already in `tests/generate.py`; moving it into the grader
+and the solver's precheck, with a threshold derived from the ceiling (a
+violation $\delta$ in turns forces a root error of at least about $0.23\,\delta$,
+from the coefficient bounds of the inequalities), makes the certificate
+exact for every input, not only the historical four rows.
+
 ## Previous work
 
 Earlier studies, experiments, scripts, and data are preserved under
