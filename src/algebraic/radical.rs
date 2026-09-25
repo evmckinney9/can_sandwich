@@ -331,6 +331,12 @@ fn free_pair_beta(
     let zero = C::default();
     let pp2 = pp * pp;
     let (k1, k2) = (m1c.min(2), m2c.min(2));
+    // Removing the pins and mirrors from the degree-12 closure, then
+    // dividing by m^2 - pp, leaves degree 2d = 10 - 2(k1 + k2).
+    let d = 5 - k1 - k2;
+    if !(1..=3).contains(&d) {
+        return None;
+    }
     // The closure F = pp^2 P qt^2 - Pt q^2 carries its trivial roots (the
     // pins and their mirrors, at data multiplicity) in EACH TERM separately:
     // P and its reversal vanish at the pins/mirrors as exact data roots, and
@@ -338,36 +344,34 @@ fn free_pair_beta(
     // BEFORE the subtraction -- deflating the assembled difference instead
     // divides the subtraction's cancellation noise by near-zero factors and
     // was the margin band's closure floor.
-    let deflate = |poly: &mut [C; 9], len: &mut usize, r: C| {
-        // synthetic division by (m - r) at an exact root, high-first
-        for i in 1..(*len - 1) {
+    let deflate = |poly: &mut [C; 4], r: C| {
+        // Synthetic division is triangular: the leading four coefficients
+        // of the quotient depend only on the leading four of the dividend.
+        for i in 1..4 {
             let prev = poly[i - 1];
             poly[i] += prev * r;
         }
-        *len -= 1;
     };
     // P deflated at the pins; Pt (the pp-reversal) deflated at the mirrors.
-    let mut pdef = [zero; 9];
-    pdef.copy_from_slice(&p_poly[..9]);
-    let mut plen = 9usize;
+    let mut pdef = [zero; 4];
+    pdef.copy_from_slice(&p_poly[..4]);
     for _ in 0..k1 {
-        deflate(&mut pdef, &mut plen, t1);
+        deflate(&mut pdef, t1);
     }
     for _ in 0..k2 {
-        deflate(&mut pdef, &mut plen, t2);
+        deflate(&mut pdef, t2);
     }
-    let mut pt = [zero; 9];
+    let mut pt = [zero; 4];
     let mut ppi = C::new(1.0, 0.0);
     for (i, slot) in pt.iter_mut().enumerate() {
         *slot = p_poly[8 - i] * ppi;
         ppi *= pp;
     }
-    let mut ptlen = 9usize;
     for _ in 0..k1 {
-        deflate(&mut pt, &mut ptlen, pp / t1);
+        deflate(&mut pt, pp / t1);
     }
     for _ in 0..k2 {
-        deflate(&mut pt, &mut ptlen, pp / t2);
+        deflate(&mut pt, pp / t2);
     }
     // remaining symbolic factors: q^2 keeps (m-t1)^{2-k1}(m-t2)^{2-k2};
     // qt^2 = t1^2 t2^2 (m-pp/t1)^2 (m-pp/t2)^2 keeps the mirror complement.
@@ -388,32 +392,26 @@ fn free_pair_beta(
     };
     let (q2d, q2len) = poly_from(&[(t1, 2 - k1), (t2, 2 - k2)], C::new(1.0, 0.0));
     let (qt2d, qt2len) = poly_from(&[(pp / t1, 2 - k1), (pp / t2, 2 - k2)], t1 * t1 * t2 * t2);
-    // f = pp^2 * Pdef * qt2def - Ptdef * q2def  (both conditioned now)
-    let mut f = [zero; 13];
-    let len = plen + qt2len - 1;
-    debug_assert_eq!(len, ptlen + q2len - 1);
-    for i in 0..plen {
-        for j in 0..qt2len {
+    // The beta reduction uses only the leading d+1 coefficients.
+    // f = pp^2 * Pdef * qt2def - Ptdef * q2def (both conditioned now).
+    let mut f = [zero; 4];
+    for i in 0..=d {
+        for j in 0..qt2len.min(d + 1 - i) {
             f[i + j] += pdef[i] * qt2d[j] * pp2;
         }
     }
-    for i in 0..ptlen {
-        for j in 0..q2len {
+    for i in 0..=d {
+        for j in 0..q2len.min(d + 1 - i) {
             f[i + j] -= pt[i] * q2d[j];
         }
     }
     // divide by m^2 - pp
-    let vlen = len - 2;
-    let mut v = [zero; 11];
-    for i in 0..vlen {
+    let mut v = [zero; 4];
+    for i in 0..=d {
         v[i] = f[i] + if i >= 2 { pp * v[i - 2] } else { zero };
     }
     // v is self-inversive of degree 2d (weight pp^d); the beta polynomial
     // (beta = m + pp/m) for the three possible degrees
-    if vlen < 3 || vlen.is_multiple_of(2) {
-        return None;
-    }
-    let d = (vlen - 1) / 2;
     let mut b = [zero; 4];
     let bd = match d {
         3 => {
@@ -622,6 +620,7 @@ struct ProblemBase {
     cis: [C; 4],
     ph: [C; 8],
     np: usize,
+    polynomial: std::cell::OnceCell<[C; 9]>,
 }
 
 /// Given a monic degree-2D polynomial N and the D roots of a monic factor B,
@@ -690,7 +689,12 @@ fn problem_base(delta: &[C; 4], dcl: &Clusters4, w: &[C; 4]) -> ProblemBase {
             np += 1;
         }
     }
-    ProblemBase { cis, ph, np }
+    ProblemBase {
+        cis,
+        ph,
+        np,
+        polynomial: std::cell::OnceCell::new(),
+    }
 }
 
 /// Roots of a small monic complex polynomial (degree <= 4), coefficients
@@ -1012,12 +1016,18 @@ fn mirror_completion(
             }
         }
     } else {
-        let mut nhat = poly_from_roots(C::new(1.0, 0.0), &ph[..np]);
+        let mut nhat = *pb
+            .polynomial
+            .get_or_init(|| poly_from_roots(C::new(1.0, 0.0), &ph[..np]));
         let plen = np + 1;
         let rr = rho1 * rho2;
+        // The degree-nm quotient uses only coefficients 0..=nm of N-hat.
         for i in 0..ghlen {
             for j in 0..ghlen {
-                nhat[plen - 2 * ghlen + 1 + i + j] += rr * gcoef[i] * gcoef[j];
+                let k = plen - 2 * ghlen + 1 + i + j;
+                if k <= nm {
+                    nhat[k] += rr * gcoef[i] * gcoef[j];
+                }
             }
         }
         let (bstar, bslen) = monic_complement(&nhat[..plen], &muhat[..nm])?;
