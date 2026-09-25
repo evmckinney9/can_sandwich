@@ -1,5 +1,7 @@
 # can_sandwich
 
+[![CI](https://github.com/evmckinney9/can_sandwich/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/evmckinney9/can_sandwich/actions/workflows/ci.yml)
+
 can_sandwich is the Rust solver used by
 [GULPS](https://github.com/evmckinney9/gulps), a quantum circuit synthesis
 package that finds minimum-cost decompositions of two-qubit unitaries using
