@@ -41,7 +41,12 @@ The spectral acceptance ceiling and polynomial residual limit are `1e-13`;
 frame and endpoint checks use `1e-12`. Numerical construction stops at the
 spectral ceiling. Final polishing aims for root distances below `1e-14` and
 retains useful partial progress. When refinement stalls at a vertex, edge, or
-face frame, it restarts along the null space of the root Jacobian. Polishing
+face frame, it restarts along the null space of the root Jacobian. If the
+polished frame still misses the target and a routed root $a_ib_j$ lies within
+`1e-11` of a target root, the two nearest such routes are refined again with
+that root held fixed, from 24 random starts of the complementary $SO(3)$
+block. This reaches targets on a rank-1 Horn wall, where free refinement
+stalls at a singular fiber. Polishing
 measures frames with a joint eigenbasis: a basis with a large residual is
 finished by Jacobi rotations of the complex matrix. A polished frame replaces
 the original only when its error bound is below the original's lower bound,

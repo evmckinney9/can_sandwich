@@ -604,6 +604,43 @@ identical to `2d4576a`. The 155,884 radical-route rows ran 2.17 to 2.41%
 faster in three paired runs; full-corpus solver time fell 1.07%. Corpus
 SHA-256 `e070dc09971557bb4c77fae078dc32a8caa26a4fe1ffd6d5a70f605556e56ce3`.
 
+## Split restart on rank-1 walls, 2026-09-25
+
+Baseline `01580a3`, corpus SHA-256
+`e070dc09971557bb4c77fae078dc32a8caa26a4fe1ffd6d5a70f605556e56ce3`,
+`rustc 1.97.1`. Errors below are measured at 80 digits.
+
+At baseline, 179 rows had actual errors above `2e-14` (116 above `3e-14`,
+maximum `9.5e-14`). After the existing polish, a new restart holds a routed
+root within `1e-11` of a target root fixed and refines the complementary
+$SO(3)$ block, using the block refinement the numerical fallback already had.
+Result: 42 rows above `2e-14`, 13 above `3e-14`, maximum `7.7e-14`. All 446
+rows whose output changed have lower actual error; none is higher. The Schur
+checker reports one row as larger; at 80 digits it fell from `1.0e-14` to
+`3.0e-15`. Solver time rose 6.1% (7.65 to 8.12 s).
+
+| Variant | Rows above `1e-14` of the 179 | Time | Decision |
+|---|---|---|---|
+| Python prototype: recursive split, second-order lift, coefficient Newton | 77 | offline | Reject |
+| Prototype, then production `refine` | 61 | offline | Reject |
+| Coefficient Newton from the production witness | 174 | offline | Reject |
+| Split restart, all routes, 24 starts | 42 | +36% | Reject |
+| Split restart, all routes, 8 starts | 45 | +12% | Reject |
+| Two nearest routes, 8 starts | 43 | +2.7% | Reject |
+| Two nearest routes, 24 starts | 42 | +6.1% | Keep |
+| One nearest route, 24 starts | 45 | not timed | Reject |
+
+The wall witness itself carries the gain: the prototype returning its exact
+wall witness, with no step toward the actual target, beats the version that
+Newton-steps to the target (99 against 79 rows below `1e-14`).
+
+Sorting routes by distance must not reach the numerical fallback's own split
+search. Doing so changed fallback witnesses and raised 23 rows from about
+`5e-16` to as much as `9.9e-15`; the error estimate ranked those witnesses
+wrongly, and no acceptance rule on the estimate removed the regressions.
+Gating the restart on the estimate above 1.5 to 3 times the target also lost
+improvements without removing them.
+
 ## Retired interfaces
 
 Runtime chart deduplication and `init_tables` were removed with the runtime

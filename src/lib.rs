@@ -149,5 +149,27 @@ fn witness(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<(Problem, Solution)>
             }
         }
     }
+    // Targets on a Horn wall, where a routed root equals a target root, can
+    // stall above the refinement target in every free frame. Retaining that
+    // root exactly while refining the complementary SO(3) block reaches it.
+    // Routed roots within the multiplicity threshold (`1e-11`) qualify.
+    if solution.state.error > numerical::ROOT_TOLERANCE {
+        let current = problem.joint(&solution.o, solution.state, 0.0);
+        if current.root_error > numerical::ROOT_TOLERANCE
+            && let Some(o) = problem.split(
+                numerical::seed(c, g, t),
+                1e-11,
+                numerical::ROOT_TOLERANCE,
+                Some(2),
+            )
+            && let Some(state) = spectral::verify(&problem, &o)
+            && problem.joint(&o, state, 0.0).error
+                < (current.root_error - 4.0 * current.off_diagonal_error).max(0.5 * current.error)
+        {
+            solution.o = o;
+            solution.residual = state.error;
+            solution.state = state;
+        }
+    }
     Some((problem, solution))
 }

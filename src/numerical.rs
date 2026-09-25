@@ -142,6 +142,58 @@ impl Problem {
         best
     }
 
+    /// A routed root within `gate` of a target root can be retained exactly
+    /// while solving the complementary SO(3) block. Free rotations would only
+    /// preserve that boundary root to second order, which stalls refinement
+    /// near repeated spectra. `closest` limits the search to the routes whose
+    /// roots are nearest a target root.
+    pub(crate) fn split(
+        &self,
+        mut seed: u64,
+        gate: f64,
+        tolerance: f64,
+        closest: Option<usize>,
+    ) -> Option<R4> {
+        let mut routes = Vec::new();
+        for fixed in 0..4 {
+            for column in 0..4 {
+                for sign in [-1.0, 1.0] {
+                    let root = self.left[fixed] * self.right[column];
+                    let distance = self.target_roots[0]
+                        .iter()
+                        .map(|z| (root - z * sign).norm())
+                        .fold(f64::INFINITY, f64::min);
+                    if distance <= gate {
+                        routes.push((distance, fixed, column, sign));
+                    }
+                }
+            }
+        }
+        if let Some(count) = closest {
+            routes.sort_by(|a, b| a.0.total_cmp(&b.0));
+            routes.truncate(count);
+        }
+        for &(_, fixed, column, sign) in &routes {
+            for _ in 0..24 {
+                let mut start = R4::identity();
+                start.swap_columns(fixed, column);
+                if start.determinant() < 0.0 {
+                    start.column_mut(0).neg_mut();
+                }
+                for (p, q) in PLANES {
+                    if p != fixed && q != fixed {
+                        rotate(&mut start, p, q, (2.0 * random(&mut seed) - 1.0) * PI);
+                    }
+                }
+                let (o, state) = self.refine_fixed(start, sign, Some(fixed), tolerance, false);
+                if converged(&state, tolerance) {
+                    return Some(o);
+                }
+            }
+        }
+        None
+    }
+
     fn measure(&self, o: &R4, branch: f64, joint: bool) -> State {
         let state = self.state(o, branch);
         if joint {
@@ -303,6 +355,14 @@ fn orthogonalize(o: R4) -> R4 {
     o * ((R4::identity() * 3.0 - o.transpose() * o) * 0.5)
 }
 
+pub(crate) fn seed(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> u64 {
+    let mut seed = 0x123456789abcdefu64;
+    for value in c.into_iter().chain(g).chain(t) {
+        seed = seed.rotate_left(7) ^ value.to_bits();
+    }
+    seed
+}
+
 fn random(state: &mut u64) -> f64 {
     *state = state.wrapping_add(0x9e3779b97f4a7c15);
     let mut z = *state;
@@ -328,41 +388,9 @@ fn solve_primary(problem: &Problem, c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Op
     if let Some(o) = problem.early() {
         return Some(o);
     }
-    let mut seed = 0x123456789abcdefu64;
-    for value in c.into_iter().chain(g).chain(t) {
-        seed = seed.rotate_left(7) ^ value.to_bits();
-    }
-    // A routed root can be retained exactly while solving the complementary
-    // SO(3) block. Free rotations would only preserve that boundary root to
-    // second order, which stalls refinement near repeated spectra.
-    let mut fixed_seed = seed;
-    for fixed in 0..4 {
-        for column in 0..4 {
-            for sign in [-1.0, 1.0] {
-                let root = problem.left[fixed] * problem.right[column];
-                if problem.target_roots[0]
-                    .iter()
-                    .all(|z| (root - z * sign).norm() > 1e-14)
-                {
-                    continue;
-                }
-                for _ in 0..24 {
-                    let mut start = R4::identity();
-                    start.swap_columns(fixed, column);
-                    if start.determinant() < 0.0 {
-                        start.column_mut(0).neg_mut();
-                    }
-                    for (p, q) in PLANES {
-                        if p != fixed && q != fixed {
-                            rotate(&mut start, p, q, (2.0 * random(&mut fixed_seed) - 1.0) * PI);
-                        }
-                    }
-                    if let Some(o) = problem.iterate_fixed(start, sign, Some(fixed)) {
-                        return Some(o);
-                    }
-                }
-            }
-        }
+    let mut seed = seed(c, g, t);
+    if let Some(o) = problem.split(seed, 1e-14, SPECTRAL_TOLERANCE, None) {
+        return Some(o);
     }
     if let Some(o) = random_starts(problem, &mut seed, &[0.0]) {
         return Some(o);

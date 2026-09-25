@@ -458,7 +458,7 @@ is the endpoint singularity that the strata above describe.
 
 ### Rows with residual errors near `1e-13`
 
-After the polishing changes of September 2026, 179 corpus rows keep actual
+After the polishing changes of September 2026, 179 corpus rows kept actual
 spectral errors above `2e-14`, all between rows 1,068,617 and 1,090,479, and
 175 of them have a pair of roots closer than `1e-6` in $c$, $g$, or $t$.
 
@@ -481,6 +481,11 @@ singular. The polytope homotopy above, which starts from a random regular
 point instead, reaches errors below `1e-14` on 77 of the 179 rows and below
 `1e-13` on 97; its 47 outright failures are rows whose target is itself a
 repeated or corner class, where its endgame assumes the wrong exponent.
+
+The split restart described in the [source guide](architecture.md), which
+holds a routed root within `1e-11` of a target root fixed, brings 137 of the
+179 rows below `2e-14`. Measured at 80 digits, 42 corpus rows remain above
+`2e-14`, 13 above `3e-14`, and the largest error is `7.7e-14`.
 
 ### The generic problem has degree 16 and is not solvable by radicals
 
@@ -657,7 +662,10 @@ prototype that reads the tightest rank-1 signature, fixes that coordinate,
 solves the complementary $3\times3$ problem by minimum-norm Gauss-Newton,
 recurses when the block has its own tight signature, and finishes with a
 full $SO(4)$ polish reaches errors below `1e-15` on rows where the
-production cascade stalls at `3e-14`.
+production cascade stalls at `3e-14`. On the 179 residual rows, the fixed
+root matters and the recursion and second-order lift do not: the prototype
+followed by production refinement brings 118 below `1e-14`, while production
+refinement with the root held fixed, from random block starts, brings 137.
 
 ### Toward one mechanism: the atlas as the solver
 
@@ -730,13 +738,11 @@ roundings of a 4×4 product chain, the floor for binary64.
 Two things stand between this and a solver that is exact to working
 precision, and both meet at the acceptance ceiling `SPECTRAL_TOLERANCE = 1e-13`:
 
-1. The 179 rows above are accepted with actual errors between `2e-14` and
-   the ceiling. They are
-   feasible, so the ceiling can drop only when the solver reaches `1e-14` on
-   them. That needs refinement that does not stall at a singular fiber: a
-   restart from a regular point (the homotopy), or a construction that reads
-   the tight inequality and solves the split problem it certifies, since a
-   tight inequality of rank $r$ forces an invariant $r$-dimensional subspace.
+1. The 42 rows above are accepted with actual errors between `2e-14` and
+   the ceiling. They are feasible, so the ceiling can drop only when the
+   solver reaches `1e-14` on them. The rank-1 split restart does not; a
+   restart from a regular point (the homotopy), or a split on a rank-2
+   signature, are the candidates.
 2. GULPS derives its reachability slack from the ceiling
    (`MEMBERSHIP_TOL = SPECTRAL_TOLERANCE / 2π`), so the ceiling also sets how
    far outside a region a target may lie before GULPS reports it unreachable.
