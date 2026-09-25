@@ -198,7 +198,7 @@ from 84 packages to 25, without package upgrades.
 
 Acceptance limits are now stricter:
 
-| Check | Before | Current |
+| Check | Before | After this pass |
 |---|---|---|
 | Spectral roots | `8e-9` | `1e-12` |
 | Numerical acceptance | `4e-9` | `1e-13` |
@@ -206,6 +206,9 @@ Acceptance limits are now stricter:
 | Final frame checks | `1e-11` | `1e-12` |
 | Endpoint reconstruction | `8e-9` | `1e-12` |
 | Independent corpus checker | `1e-8` | `1e-12` |
+
+The spectral ceiling was later tightened to `1e-13`; see
+[Refinement below the acceptance ceiling](#refinement-below-the-acceptance-ceiling).
 
 Tightening exposed cancellation in the one- and two-block rotation formulas.
 They now use products of sines instead of differences of nearly equal traces.
@@ -235,7 +238,8 @@ requires rejection when it certifies infeasibility. It uses no row lookup;
 the corpus bytes are unchanged. The numerical fallback rejects a certified
 violation before spending its restart budget. The generator’s feasibility
 slack is now `1e-13`, reduced from `1e-7`; the corpus was not regenerated.
-See the [grader contract](researcher.md).
+See the [grader contract](researcher.md). These four rows were later removed;
+see [Corpus revision](#corpus-revision-feasible-inputs-only).
 
 Rejected experiments included replacing QZ rescue with local polynomial
 Newton steps, removing repeated-root repair, and unstructured perturbations
@@ -586,6 +590,29 @@ The new SHA-256 is
 The grader's certificate and its unit test are unchanged; no corpus row
 exercises the rejection path any more.
 
+## Repeated-spectrum polynomial trimming, 2026-09-25
+
+Commit `9b97cbd`. `free_pair_beta` checks the closure degree
+`d = 5 - k1 - k2` before any polynomial work and carries only the leading
+`d + 1` coefficients (at most 4) through deflation, the closure product, and
+division by `m^2 - pp`; synthetic division is triangular, so those
+coefficients depend only on the leading dividend coefficients. The problem
+polynomial is built once per problem and reused across mirror completions.
+
+All 1,093,687 rows pass with spectral, orthogonality, and determinant errors
+identical to `2d4576a`. The 155,884 radical-route rows ran 2.17 to 2.41%
+faster in three paired runs; full-corpus solver time fell 1.07%. Corpus
+SHA-256 `e070dc09971557bb4c77fae078dc32a8caa26a4fe1ffd6d5a70f605556e56ce3`.
+
+## Retired interfaces
+
+Runtime chart deduplication and `init_tables` were removed with the runtime
+chart table, because the production schedules contain distinct classes.
+Removing QZ root rescue, transported charts, and repeated-root repair was
+rejected on accuracy grounds. The retired row-in-plane, resonance, and
+two-pair solvers, waypoint experiments, and paired-edge ablation APIs remain
+in the source snapshot at `b3dbb7f`.
+
 ## Validation
 
 The full corpus test checks spectral matching, orthogonality, determinant,
@@ -593,7 +620,9 @@ and endpoint reconstruction. The independent comparison also checks every
 returned frame against the original baseline. Passing these finite tests is
 not a general completeness proof.
 
-The `solve` and `solve_with_factors` signatures are unchanged. The optional
-experimental diagnostic interface changed; see the [source guide](architecture.md).
+The simplification kept the `solve` and `solve_with_factors` signatures and
+changed only the diagnostic interface (see Retired interfaces above).
+`solve_with_factors` later changed from `Option` to `Result<_, Decline>` in
+`da568b6`.
 This experiment measures the standalone solver. GULPS synthesis performance
 still depends on how the returned endpoint factors affect later decompositions.

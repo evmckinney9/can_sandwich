@@ -38,7 +38,7 @@ Put this in your candidate's `src/main.rs`:
 use nalgebra::Matrix4;
 
 fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<Matrix4<f64>> {
-    // Smoke test: this deliberately compares production with itself.
+    // This deliberately compares production with itself.
     // Replace this body with your algorithm.
     can_sandwich::solve(c, g, t)
 }
@@ -167,14 +167,15 @@ Near repeated roots, Schur rounding errors can distort individual error
 measurements even when iteration converges. Investigate apparent regressions
 with an independent eigensolver or higher precision before changing the solver.
 
-The corpus retains four historical near-feasible inputs that violate necessary
-rank-two Horn inequalities. For ordered alcove coordinates, let
-`a = c0 + c2 + g0 + g2`. The inequalities require
+Every corpus row is feasible, as `tests/margins.py` verifies exactly. The
+runner still checks one necessary rank-two Horn inequality, for corpora that
+include infeasible rows. For ordered alcove coordinates, let
+`a = c0 + c2 + g0 + g2`. The inequality requires
 `abs(t1 + t2) <= min(a, 1-a)` for both central lifts. A violation exceeding
 `1e-12` in phase turns certifies infeasibility at the root-error tolerance.
 Such a row passes only when the solver returns `None`; its CSV status is
 `rejected_infeasible`. Other declines remain failures. This partial certificate
-does not claim to classify every infeasible input, and uses no row indices.
+does not classify every infeasible input, and uses no row indices.
 
 For other rows, the runner labels a rejected matrix `invalid` and a `None`
 result `declined`. It reports p50, p99, p99.9, and maximum errors among the

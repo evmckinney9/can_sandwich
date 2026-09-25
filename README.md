@@ -115,9 +115,8 @@ make lint
 
 The tests check returned matrices and endpoint reconstruction against
 1,093,687 cases in `tests/cases.bin`, using an independent checker with a
-`1e-12` tolerance. Four historical near-feasible inputs violate necessary
-Horn inequalities; the checker requires the solver to reject them. The corpus
-bytes are unchanged. The comparison runner uses the same spectral checker and
+`1e-12` tolerance. Every row is feasible: `tests/margins.py` evaluates the
+complete quantum-Horn inequalities exactly on the stored inputs. The comparison runner uses the same spectral checker and
 reports measured errors alongside pass counts, including differences between
 algorithms that both pass.
 

@@ -35,9 +35,7 @@ Each search has a bounded
 budget and can decline even when a solution exists.
 
 `nalgebra` supplies matrix operations and bounded Schur eigensolves. It is the
-only direct dependency. Runtime chart deduplication was removed because the
-production schedules contain distinct classes. Removing the root rescue,
-transported charts, and repeated-root repair was rejected on accuracy grounds.
+only direct dependency.
 
 The spectral acceptance ceiling and polynomial residual limit are `1e-13`;
 frame and endpoint checks use `1e-12`. Numerical construction stops at the
@@ -57,10 +55,8 @@ drift with a polar Newton step.
 Every accepted frame passes `spectral.rs` against the original spectrum.
 `Solution` stores the real frame and its verification state together, so
 endpoint recovery uses the same eigenbasis without another decomposition.
-A successful result always has that state. `solve` reports failure as `None`,
-and `solve_with_factors` as a `Decline` containing the inputs and a `kind` of
-`DeclineKind::NoWitness` or `DeclineKind::Reconstruction`. Its error message
-includes the inputs, crate version, and issue URL.
+A successful result always has that state. The README defines how each
+function reports a decline.
 
 ## Diagnostics
 
@@ -68,22 +64,13 @@ With the `diagnostics` feature, `solve_report` returns `Option<Solution>` with
 the real frame, successful `Rung`, and spectral residual. `branch_signature`
 classifies the inputs, and `certify_frame` checks a proposed complex frame
 through the production acceptance path. Set `PROF=1` and call `prof::dump()`
-for stage timings. `init_tables` was removed with the runtime chart table.
-
-The retired row-in-plane, resonance, and two-pair solvers, waypoint experiments,
-and paired-edge ablation APIs remain in the source snapshot at commit `b3dbb7f`.
-They are no longer part of the diagnostic interface. The two public solver
-function signatures are unchanged.
+for stage timings.
 
 ## Iterating
 
-Use the corpus to measure correctness, endpoint reconstruction, accuracy,
-and latency before and after a change. Entire constructions may be removed
-when simpler remaining paths preserve their accuracy and coverage. Keep the
-checker independent. Tolerances may be tightened, never loosened. Record rejected approaches as well
-as improvements so later work can build on the measurements.
-The [September 2026 simplification](optimization.md) records the
-stage-removal experiments, numerical search changes, and measured results.
+The [experiment log](optimization.md) records removed stages, rejected
+approaches, and their measurements. `AGENTS.md` gives the rules for changing
+the solver.
 
 Changes to factor extraction also need measurements in GULPS, where different
 valid endpoint choices can affect later decompositions and synthesis time.
