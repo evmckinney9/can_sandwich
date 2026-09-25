@@ -47,12 +47,12 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Returns `None` for nonfinite inputs or when the bounded search finds no
 /// accepted witness. A decline does not establish that the input is infeasible.
 pub fn solve(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<Matrix4<f64>> {
-    witness(c, g, t).ok().map(|(_, solution)| solution.o)
+    witness(c, g, t).map(|(_, solution)| solution.o)
 }
 
 /// Why [`solve_with_factors`] returned no result.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Decline {
+pub enum DeclineKind {
     /// The input is nonfinite, or the bounded search found no frame that
     /// passes spectral verification.
     NoWitness,
@@ -60,12 +60,35 @@ pub enum Decline {
     Reconstruction,
 }
 
+/// A [`solve_with_factors`] decline with the inputs that produced it.
+///
+/// `Display` renders a bug report: the reason, the inputs, and the crate
+/// version, followed by the issue URL. Debug formatting preserves the finite
+/// input values so they can be copied into a reproducer.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Decline {
+    /// Why the solver declined.
+    pub kind: DeclineKind,
+    /// Left gate monodromy coordinates.
+    pub c: [f64; 3],
+    /// Right gate monodromy coordinates.
+    pub g: [f64; 3],
+    /// Target monodromy coordinates.
+    pub t: [f64; 3],
+}
+
 impl std::fmt::Display for Decline {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::NoWitness => "no witness",
-            Self::Reconstruction => "endpoint reconstruction failed",
-        })
+        let reason = match self.kind {
+            DeclineKind::NoWitness => "no witness",
+            DeclineKind::Reconstruction => "endpoint reconstruction failed",
+        };
+        write!(
+            f,
+            "can_sandwich {VERSION} declined ({reason}) for c={:?}, g={:?}, t={:?}. \
+             Please report this message at https://github.com/evmckinney9/can_sandwich/issues/1",
+            self.c, self.g, self.t
+        )
     }
 }
 
@@ -83,32 +106,31 @@ pub fn solve_with_factors(
     g: [f64; 3],
     t: [f64; 3],
 ) -> Result<(Matrix4<f64>, Matrix4<f64>, Matrix4<f64>, f64), Decline> {
-    let (problem, solution) = witness(c, g, t)?;
+    let decline = |kind| Decline { kind, c, g, t };
+    let (problem, solution) = witness(c, g, t).ok_or_else(|| decline(DeclineKind::NoWitness))?;
     solution
         .state
         .factors(&problem, t, solution.o)
-        .ok_or(Decline::Reconstruction)
+        .ok_or_else(|| decline(DeclineKind::Reconstruction))
 }
 
-fn witness(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Result<(Problem, Solution), Decline> {
+fn witness(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<(Problem, Solution)> {
     if c.iter().chain(&g).chain(&t).any(|x| !x.is_finite()) {
-        return Err(Decline::NoWitness);
+        return None;
     }
     let tp = prof::start();
     let problem = Problem::new(c, g, t);
     prof::rec(prof::SEG_PREPARE, tp);
-    let mut solution = algebraic::solve(&problem)
-        .or_else(|| {
-            let o = numerical::solve(&problem, c, g, t)?;
-            let state = spectral::verify(&problem, &o)?;
-            Some(Solution {
-                o,
-                rung: Rung::Numerical,
-                residual: state.error,
-                state,
-            })
+    let mut solution = algebraic::solve(&problem).or_else(|| {
+        let o = numerical::solve(&problem, c, g, t)?;
+        let state = spectral::verify(&problem, &o)?;
+        Some(Solution {
+            o,
+            rung: Rung::Numerical,
+            residual: state.error,
+            state,
         })
-        .ok_or(Decline::NoWitness)?;
+    })?;
     // Polish when the verified bound exceeds the refinement target. Measure
     // both frames with the joint eigenbasis and require improvement beyond
     // both of its residuals. A large residual can reflect orthogonality
@@ -127,5 +149,5 @@ fn witness(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Result<(Problem, Solution),
             }
         }
     }
-    Ok((problem, solution))
+    Some((problem, solution))
 }

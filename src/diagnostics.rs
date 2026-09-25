@@ -30,7 +30,7 @@ pub fn branch_signature(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> String {
 /// Solve and report the accepted construction and its spectral error.
 #[cfg(feature = "diagnostics")]
 pub fn solve_report(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<Solution> {
-    crate::witness(c, g, t).ok().map(|(_, solution)| solution)
+    crate::witness(c, g, t).map(|(_, solution)| solution)
 }
 
 /// Re-certify an externally selected frame against the original sandwich.

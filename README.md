@@ -93,8 +93,11 @@ The solver uses binary64 arithmetic, combining algebraic constructions with
 Levenberg–Marquardt refinement and restarts. `solve` returns `None` if the
 inputs are nonfinite or it cannot produce a verified result within its search
 budget. The input may still be feasible. `solve_with_factors` returns a
-`Decline`: `NoWitness` for the same cases, or `Reconstruction` when a verified
-frame gives no valid `L` and `R`. The [source guide](docs/architecture.md)
+`Decline` holding the inputs and a `DeclineKind`: `NoWitness` for the same
+cases, or `Reconstruction` when a verified frame gives no valid `L` and `R`.
+Its `Display` text includes the inputs, crate version, and
+[issue URL](https://github.com/evmckinney9/can_sandwich/issues/1) for reporting
+the decline. The [source guide](docs/architecture.md)
 describes the implementation and the internal measurements available with
 the `diagnostics` feature.
 

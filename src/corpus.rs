@@ -473,6 +473,23 @@ mod tests {
         let wrong = [0.21, 0.03, -0.08];
         for (left, right) in [(c, [0.0; 3]), ([0.0; 3], c)] {
             assert!(solve(left, right, wrong).is_none());
+            let decline = crate::solve_with_factors(left, right, wrong).unwrap_err();
+            assert_eq!(decline.kind, crate::DeclineKind::NoWitness);
+            assert_eq!([decline.c, decline.g, decline.t], [left, right, wrong]);
+            let message = decline.to_string();
+            for detail in [
+                format!("can_sandwich {}", crate::VERSION),
+                "no witness".to_owned(),
+                format!("c={left:?}"),
+                format!("g={right:?}"),
+                format!("t={wrong:?}"),
+                "https://github.com/evmckinney9/can_sandwich/issues/1".to_owned(),
+            ] {
+                assert!(
+                    message.contains(&detail),
+                    "missing {detail:?} in {message:?}"
+                );
+            }
         }
     }
 
