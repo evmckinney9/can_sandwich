@@ -31,7 +31,14 @@ pub(crate) fn solve_face(problem: &Problem) -> Option<Solution> {
     // the complement of pair t is pair 5-t.
     let d2p: [C; 6] = std::array::from_fn(|t| d2[PLANES[t].0] * d2[PLANES[t].1]);
     let lamp: [C; 6] = std::array::from_fn(|t| lam4[PLANES[t].0] * lam4[PLANES[t].1]);
+    // The rho lift negates and permutes the roots, so its pair products are
+    // exactly the first lift's, permuted with complements kept paired: a
+    // lift without any block-determinant match implies the same for both.
+    let mut matched = false;
     for (bi, w) in target_specs.iter().enumerate() {
+        if bi > 0 && !matched {
+            break;
+        }
         let wp: [C; 6] = std::array::from_fn(|t| w[PLANES[t].0] * w[PLANES[t].1]);
         // p6 ranges over the pairs containing index 0: one representative per
         // partition (p6 <-> 5-p6 with q6/t6 swapped is the same configuration).
@@ -49,6 +56,7 @@ pub(crate) fn solve_face(problem: &Problem) -> Option<Solution> {
                     if (wp[5 - t6] - det_cd).norm_sqr() > 1e-24 {
                         continue;
                     }
+                    matched = true;
                     let (k, _) = complement(i, j);
                     let (x, y) = PLANES[q6];
                     let (z, v) = PLANES[5 - q6];
@@ -178,6 +186,11 @@ pub(crate) fn solve_edge(
                 let u = (t[0] - a_coef) / b_coef;
                 if u.im.abs() > 1e-3 || u.re < -1.0001 || u.re > 1.0001 {
                     continue; // not a real in-range cos2θ -> target isn't on this edge
+                }
+                // The frame's e₁ misses the target by |B|·|u - clamp(Re u)|;
+                // beyond twice ACCEPT the compound residual must reject it.
+                if b_coef.norm() * (u - C::new(u.re.clamp(-1.0, 1.0), 0.0)).norm() > 2.0 * ACCEPT {
+                    continue;
                 }
                 let theta = u.re.clamp(-1.0, 1.0).acos() / 2.0;
                 let mut o = signed_perm(p);
@@ -433,16 +446,7 @@ pub(crate) fn solve_radical(
         // Search six pin cells in each orientation before the remaining
         // characteristics. Keep the complete pass: shallow-only search sends
         // more rows to slower numerical recovery.
-        const PASS_MAJOR: [(usize, usize); 8] = [
-            (0, 0),
-            (0, 1),
-            (0, 2),
-            (0, 3),
-            (1, 0),
-            (1, 1),
-            (1, 2),
-            (1, 3),
-        ];
+        const PASS_MAJOR: [(usize, usize); 4] = [(0, 0), (0, 1), (0, 2), (0, 3)];
         const TARGET_COMPLETE_FIRST: [(usize, usize); 4] = [(0, 2), (1, 2), (0, 3), (1, 3)];
         let target_only =
             strata.target[bi].is_rank_two() && !strata.g.is_repeated() && !strata.c.is_repeated();

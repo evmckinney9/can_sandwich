@@ -62,6 +62,17 @@ pub(crate) fn compiler_solution(
     rung: Rung,
     residual: f64,
 ) -> Option<Solution> {
+    compiler_solution_with(problem, o, rung, residual, false)
+}
+
+/// `compiler_solution` for a frame that may be a direct Klein chart frame.
+fn compiler_solution_with(
+    problem: &Problem,
+    o: Mat4,
+    rung: Rung,
+    residual: f64,
+    klein_frame: bool,
+) -> Option<Solution> {
     if !residual.is_finite()
         || o.iter()
             .any(|z| !z.re.is_finite() || !z.im.is_finite() || z.im.abs() > FRAME_ACCEPT)
@@ -69,15 +80,21 @@ pub(crate) fn compiler_solution(
         return None;
     }
     let mut real = o.map(|z| z.re);
-    let determinant = real.determinant();
-    if !determinant.is_finite()
-        || (determinant.abs() - 1.0).abs() > FRAME_ACCEPT
-        || (real.transpose() * real - nalgebra::Matrix4::identity()).amax() > FRAME_ACCEPT
-    {
-        return None;
-    }
-    if determinant < 0.0 {
-        real.column_mut(0).neg_mut();
+    // A Klein frame is L_q P with the permutation sign absorbed, so its
+    // Gram matrix is |q|^2 I up to rounding and det = |q|^4 > 0: with |q|^2
+    // (any column's norm) within 1e-13 of one, both frame checks pass.
+    let klein_unit = klein_frame && (real.column(0).norm_squared() - 1.0).abs() <= 1e-13;
+    if !klein_unit {
+        let determinant = real.determinant();
+        if !determinant.is_finite()
+            || (determinant.abs() - 1.0).abs() > FRAME_ACCEPT
+            || (real.transpose() * real - nalgebra::Matrix4::identity()).amax() > FRAME_ACCEPT
+        {
+            return None;
+        }
+        if determinant < 0.0 {
+            real.column_mut(0).neg_mut();
+        }
     }
     let certify = |real| {
         let state = crate::spectral::verify(problem, &real)?;
@@ -88,20 +105,37 @@ pub(crate) fn compiler_solution(
             state,
         })
     };
-    if let Some(solution) = certify(real) {
-        return Some(solution);
+    // The checks above are the verifier's frame checks at the same bound
+    // (negating a column preserves |det| and the Gram residual exactly).
+    if let Some(state) = crate::spectral::verify_frame(
+        problem,
+        &real,
+        matches!(rung, Rung::Vertex | Rung::Edge | Rung::Face),
+    ) {
+        return Some(Solution {
+            o: real,
+            rung,
+            residual: state.error,
+            state,
+        });
     }
     // Refine a constructed witness before discarding it under the strict
     // spectral tolerance. Rotations preserve its existing frame accuracy.
-    if let Some(refined) = problem.iterate(real, 0.0)
-        && let Some(solution) = certify(refined)
-    {
-        return Some(solution);
-    }
-    let roots = problem.target_roots[0];
-    if !(0..4).any(|i| (i + 1..4).any(|j| (roots[i] - roots[j]).norm() < 1e-3)) {
+    // A signed permutation is a critical point of the spectral map, where
+    // refinement stalls; later strata own those rows.
+    if matches!(rung, Rung::Vertex | Rung::Edge) {
         return None;
     }
+    certify(problem.iterate(real, 0.0)?)
+}
+
+/// Spectral retargets of a real frame, one per target lift: the sandwich's
+/// real eigenframe with the exact target roots, peeled by D_c and
+/// Takagi-factored against the known spectrum of D_g^2.
+pub(crate) fn retargets(
+    problem: &Problem,
+    real: &nalgebra::Matrix4<f64>,
+) -> Vec<nalgebra::Matrix4<f64>> {
     let o = real.map(|x| C::new(x, 0.0));
     let master = Mat4::from_fn(|i, j| {
         let mut entry = C::default();
@@ -111,29 +145,52 @@ pub(crate) fn compiler_solution(
         problem.dc[(i, i)] * entry * problem.dc[(j, j)]
     });
     let inverse_dc = problem.dc.map(|z| z.conj());
+    let mut out = Vec::new();
     for roots in &problem.target_roots {
         let Some(target_master) = klein::retarget_symmetric(&master, roots) else {
             continue;
         };
         let peeled = inverse_dc * target_master * inverse_dc;
-        let Some(mut real) = klein::takagi_real(&peeled, &problem.right) else {
+        let Some(mut frame) = klein::takagi_real(&peeled, &problem.right) else {
             continue;
         };
-        if real.determinant() < 0.0 {
-            real.column_mut(0).neg_mut();
+        if frame.determinant() < 0.0 {
+            frame.column_mut(0).neg_mut();
         }
-        if let Some(solution) = certify(real) {
-            return Some(solution);
-        }
+        out.push(frame);
     }
-    None
+    out
 }
 
 /// Try the bounded algebraic constructions before numerical recovery.
 pub(crate) fn solve(problem: &Problem) -> Option<Solution> {
     solve_scalar_factor(problem)
         .or_else(|| solve_rank_one_31(problem))
-        .or_else(|| solve_prefix(problem))
+        .or_else(|| solve_prefix(problem, None))
+}
+
+/// The same dispatch with one rung's sections skipped: the next stratum's
+/// witness when the first one certified only to a near-miss.
+pub(crate) fn solve_excluding(problem: &Problem, skip: Rung) -> Option<Solution> {
+    let skip = Some(skip);
+    (if allowed(skip, Rung::Vertex) {
+        solve_scalar_factor(problem)
+    } else {
+        None
+    })
+    .or_else(|| {
+        if allowed(skip, Rung::RankOne31) && allowed(skip, Rung::NearRankOne31) {
+            solve_rank_one_31(problem)
+        } else {
+            None
+        }
+    })
+    .or_else(|| solve_prefix(problem, skip))
+}
+
+#[inline]
+fn allowed(skip: Option<Rung>, rung: Rung) -> bool {
+    skip.is_none_or(|s| std::mem::discriminant(&s) != std::mem::discriminant(&rung))
 }
 
 #[inline]
@@ -398,13 +455,15 @@ fn solve_rank_one_31(problem: &Problem) -> Option<Solution> {
         ] {
             // The near-rank-one limit applies to spectra within `1e-7` of a
             // triple, beyond the exact multiplicity threshold.
+            if distance != proximity {
+                continue;
+            }
             let kind = if proximity == Near {
                 problem::spectrum_kind_within(&distinguished, f64::EPSILON)
             } else {
                 kind
             };
             if kind == SpectrumKind::Triple31
-                && distance == proximity
                 && let Some(hit) =
                     solve_rank_one_side(problem, distinguished, other, transpose, tolerance, rung)
             {
@@ -563,7 +622,7 @@ fn polynomial_derivative_at(coeff: &[C; 5], z: C, order: usize) -> C {
 }
 
 /// Try support, Klein, confluent, and three-Givens constructions in order.
-fn solve_prefix(problem: &Problem) -> Option<Solution> {
+fn solve_prefix(problem: &Problem, skip: Option<Rung>) -> Option<Solution> {
     let tpre = prof::start();
     // A vertex or one-Givens edge preserves routed eigenvalues a_i*g_j. Test
     // that necessary spectral signature before enumerating support incidences.
@@ -573,7 +632,9 @@ fn solve_prefix(problem: &Problem) -> Option<Solution> {
     let edge_gate = support_strata::edge_gate(&problem.routed, &problem.target_roots);
     prof::rec(prof::SEG_EDGEGATE, teg);
     let tvx = prof::start();
-    if let Some(viable) = edge_gate.as_ref() {
+    if allowed(skip, Rung::Vertex)
+        && let Some(viable) = edge_gate.as_ref()
+    {
         for p in *PERMS24 {
             // A vertex needs all four routed roots on the same target branch.
             let branch_mask = (0..4).fold(0b11u8, |mask, k| mask & viable[k][p[k]]);
@@ -592,7 +653,9 @@ fn solve_prefix(problem: &Problem) -> Option<Solution> {
     prof::rec(prof::PRELUDE, tpre);
     // Exhaust the lower support strata before a broader section can cannibalize
     // their cheaper, better-conditioned formulas.
-    if let Some(viable) = edge_gate.as_ref() {
+    if allowed(skip, Rung::Edge)
+        && let Some(viable) = edge_gate.as_ref()
+    {
         let tp = prof::start();
         let hit = support_strata::solve_edge(
             &problem.left,
@@ -611,11 +674,19 @@ fn solve_prefix(problem: &Problem) -> Option<Solution> {
             return Some(solution);
         }
     }
-    let tp = prof::start();
-    let hit = support_strata::solve_face(problem);
-    prof::rec(prof::FACE, tp);
-    if let Some(solution) = hit {
-        return Some(solution);
+    solve_beyond_edge(problem, skip)
+}
+
+/// The dispatch above the vertex and one-Givens edge strata: face, Klein,
+/// multiplicity and boundary sections.
+pub(crate) fn solve_beyond_edge(problem: &Problem, skip: Option<Rung>) -> Option<Solution> {
+    if allowed(skip, Rung::Face) {
+        let tp = prof::start();
+        let hit = support_strata::solve_face(problem);
+        prof::rec(prof::FACE, tp);
+        if let Some(solution) = hit {
+            return Some(solution);
+        }
     }
     // Klein-circulant acceleration: a one-sided section of the same realization
     // relation, with e1 linear in the orthostochastic diagonal and e2 reduced
@@ -630,13 +701,14 @@ fn solve_prefix(problem: &Problem) -> Option<Solution> {
         &problem.targets,
     );
     prof::rec(prof::KLEIN_TOTAL, tk);
-    if let Some((o, r)) = klein_hit
-        && let Some(solution) = compiler_solution(problem, o, Rung::Klein, r)
+    if allowed(skip, Rung::Klein)
+        && let Some((o, r)) = klein_hit
+        && let Some(solution) = compiler_solution_with(problem, o, Rung::Klein, r, true)
     {
         return Some(solution);
     }
     // Try multiplicity formulas after the cheaper support and Klein sections.
-    if problem.strata.has_confluence() {
+    if allowed(skip, Rung::Radical) && problem.strata.has_confluence() {
         let started = prof::start();
         let hit = support_strata::solve_radical(
             &problem.left,
@@ -655,6 +727,7 @@ fn solve_prefix(problem: &Problem) -> Option<Solution> {
         }
     }
     if let Some((o, residual, rung)) = solve_boundary_accelerators(problem)
+        && allowed(skip, rung)
         && let Some(solution) = compiler_solution(problem, o, rung, residual)
     {
         return Some(solution);

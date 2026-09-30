@@ -641,6 +641,94 @@ wrongly, and no acceptance rule on the estimate removed the regressions.
 Gating the restart on the estimate above 1.5 to 3 times the target also lost
 improvements without removing them.
 
+## Held-out hillclimb on speed and accuracy, 2026-09-30
+
+Baseline `bb68989`, corpus SHA-256
+`e070dc09971557bb4c77fae078dc32a8caa26a4fe1ffd6d5a70f605556e56ce3`,
+`rustc 1.98.1` (`x86_64-pc-windows-gnu`).
+
+The changes were accepted with an evaluation harness kept outside the
+repository. Its case sets:
+
+- **Train:** 199,607 rows sampled from `tests/cases.bin`, stratified by
+  generator family.
+- **Gated test:** 98,337 rows regenerated from `tests/generate.py` with seed
+  20260929, including gap scales absent from `SCALES`.
+- **Stress:** 6,292 planted rows, each with a known witness: Horn slack
+  `1e-9` to `1e-14`, repeated and near-repeated spectra, reducible frames,
+  near-identity gates.
+- **Held out:** seven round-final seeds regenerated the same way. Six were
+  each first graded once, at a round's final; the five-seed panel of the
+  last round (97531, 86420, 75319, 64208, 53197) was graded only there.
+
+Its checker is a frozen copy of the corpus checks plus a Hermitian-projection
+test. Coefficient matching alone at `1e-12` accepted root errors up to
+`1.5e-6` at repeated roots. Errors below are binary64 measurements by that
+checker, not 80-digit ones.
+
+A change was kept only if every train, gated-test, and stress row passed at
+the current tolerance, which only tightened. It also had to leave every
+accuracy metric (max, p99.9, p99, median, rows within `1e-14`) and every
+speed metric (total, median, p99, max) no worse, with at least one better.
+Timing used paired, interleaved, 7-rep runs pinned to one core; other
+processes kept 2 to 6 host cores busy, so timings carry about 1% noise.
+Typical-case decisions used an in-process row-interleaved timer, because the
+runner's row timer ticks at 100 ns.
+
+| Metric | `bb68989` | This change |
+|---|---|---|
+| Train total | 3,724 ms | 1,828 ms (−50.9%) |
+| Train median | 3.0 µs | 2.6 µs (−13.3%) |
+| Train p99 / max | 338 µs / 18.7 ms | 72 µs / 7.1 ms |
+| Stress total / p99 | 9.74 s / 64.8 ms | 1.28 s / 1.95 ms |
+| Stress declines | 70 | 0 |
+| Max error: train, gated test, stress | 7.58e-14, 9.15e-14, 9.89e-14 | 1.78e-14, 2.01e-14, 1.25e-14 |
+| Max error: full corpus | 1.81e-13 | 1.78e-14 |
+| Max error: five-seed panel | 3.9e-13 (220 rows above `3e-14`) | 2.06e-14 (none) |
+| Source tokens | 48,630 | 58,761 |
+
+Kept, in order of acceptance, with the effect measured when each was
+accepted:
+
+1. Delete the Klein retarget fallback and skip refinement of vertex frames,
+   which are critical points of the spectral map (train total −12.6%). Skip
+   refinement of edge frames (−6.6%). Stop the LM on a gain below `1e-4`
+   over 6 steps instead of `1e-8` over 9. Use 8 random restarts per fixed
+   split route instead of 24. Drop the uncapped second radical pass. These
+   last three are constants; each passed the accuracy rule.
+2. Exact Horn-wall 3×3 frames, and near-wall starts from them. Train p99
+   −17.7%. Stress 6,222 → 6,275 rows.
+3. Root-matched Levenberg–Marquardt after the polish, polar orthogonality
+   repair, and the flat-direction escape. Max error 9.94e-14 → 7.58e-14.
+   The corpus orthogonality outlier at 1.81e-13 is fixed.
+4. Sparse and known-spectrum certificates, the ρ-lift face-scan symmetry,
+   and removal of duplicated checks. Frames are bit-identical to before.
+   In-process typical row −16%.
+5. Tail candidates: transpose dual, dispatch without the near-miss rung,
+   spectral retargets. Train max 7.58e-14 → 2.29e-14. Stress declines
+   17 → 13.
+6. Second-order vertex frames. Stress declines 13 → 0. Stress total −68%.
+7. Sheet reflections and the stabilizer gauge search, with the tail moved
+   out of line. Panel max 6.58e-14 → 2.06e-14. Train total within 0.3% of
+   step 6.
+
+`DUAL_TRIGGER` was lowered from `3e-14` to `2e-14` in step 6 and cost 1.4%
+of train total. Step 7 recovered that cost.
+
+Rejected:
+
+| Variant | Measurement | Reason |
+|---|---|---|
+| Delete both post-solve polishes | train total −32% | fails `1e-13`; p99 error ×6.8 |
+| Polish without saddle-escape restarts | train total −12.5% | held-out p99.9 error ×3.4 |
+| Delete the split polish only | train total about −20% | held-out p99 error ×5.4 |
+| Setup trigonometry from base angles by complex products | faster setup | not bit-identical; loses near-wall rows |
+| Certify edge candidates before the compound screen | edge rows −17% | moves boundary rows to `6.8e-14` |
+| Tighter LM damping, iteration, and window caps | each small | each loses one near-wall row |
+| Jacobi-basis verifier | faster verify | changes which rows are polished; accuracy drops |
+| Refinement before the Horn-wall split in polish | grid families faster | +14% to +31% total |
+| Root-LM random starts for the 17 declines | 0 of 17 in Rust; MINPACK LM 8 of 16 in Python | superseded by second-order vertex frames |
+
 ## Retired interfaces
 
 Runtime chart deduplication and `init_tables` were removed with the runtime

@@ -73,13 +73,24 @@ pub(crate) fn spectrum_kind_within(s: &[C; 4], tolerance: f64) -> SpectrumKind {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 pub(crate) fn spectrum_proximity(s: &[C; 4]) -> SpectrumProximity {
+    proximity_from_minimum(min_pair_distance(s))
+}
+
+#[inline]
+fn min_pair_distance(s: &[C; 4]) -> f64 {
     let mut minimum = f64::INFINITY;
     for i in 0..4 {
         for j in (i + 1)..4 {
             minimum = minimum.min((s[i] - s[j]).norm_sqr());
         }
     }
+    minimum
+}
+
+#[inline]
+fn proximity_from_minimum(minimum: f64) -> SpectrumProximity {
     if minimum <= (64.0 * f64::EPSILON).powi(2) {
         SpectrumProximity::Exact
     } else if minimum <= 1.0e-14 {
@@ -107,12 +118,28 @@ pub(crate) struct StratumSignature {
 
 impl StratumSignature {
     pub(crate) fn new(c: &[C; 4], g: &[C; 4], target: &[[C; 4]; 2]) -> Self {
+        // One pass of pair distances serves both labels: with every pair
+        // farther than the merge tolerance the kind is `Distinct`. The rho
+        // reflection negates and permutes roots, so both target lifts share
+        // their pair distances.
+        let (c_min, g_min, t_min) = (
+            min_pair_distance(c),
+            min_pair_distance(g),
+            min_pair_distance(&target[0]),
+        );
+        let kind = |s: &[C; 4], minimum: f64| {
+            if minimum > 1e-22 {
+                SpectrumKind::Distinct
+            } else {
+                spectrum_kind(s)
+            }
+        };
         Self {
-            c: spectrum_kind(c),
-            g: spectrum_kind(g),
-            target: std::array::from_fn(|branch| spectrum_kind(&target[branch])),
-            c_proximity: spectrum_proximity(c),
-            g_proximity: spectrum_proximity(g),
+            c: kind(c, c_min),
+            g: kind(g, g_min),
+            target: std::array::from_fn(|branch| kind(&target[branch], t_min)),
+            c_proximity: proximity_from_minimum(c_min),
+            g_proximity: proximity_from_minimum(g_min),
             #[cfg(feature = "diagnostics")]
             target_proximity: std::array::from_fn(|branch| spectrum_proximity(&target[branch])),
             #[cfg(feature = "diagnostics")]

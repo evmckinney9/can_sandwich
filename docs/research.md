@@ -738,11 +738,12 @@ roundings of a 4×4 product chain, the floor for binary64.
 Two things stand between this and a solver that is exact to working
 precision, and both meet at the acceptance ceiling `SPECTRAL_TOLERANCE = 1e-13`:
 
-1. The 42 rows above are accepted with actual errors between `2e-14` and
-   the ceiling. They are feasible, so the ceiling can drop only when the
-   solver reaches `1e-14` on them. The rank-1 split restart does not; a
-   restart from a regular point (the homotopy), or a split on a rank-2
-   signature, are the candidates.
+1. Some rows were accepted with actual errors between `2e-14` and the
+   ceiling: 42 rows at 80 digits after the rank-1 split restart. The tail
+   candidates below remove them by the binary64 measure. As of 2026-09-30
+   the corpus maximum is `1.78e-14`, and the maximum over five fresh
+   generated seeds is `2.06e-14` ([log](optimization.md#held-out-hillclimb-on-speed-and-accuracy-2026-09-30)).
+   These maxima have not been confirmed at 80 digits.
 2. GULPS derives its reachability slack from the ceiling
    (`MEMBERSHIP_TOL = SPECTRAL_TOLERANCE / 2π`), so the ceiling also sets how
    far outside a region a target may lie before GULPS reports it unreachable.
@@ -754,6 +755,45 @@ violation $\delta$ in turns forces a root error of at least about $0.23\,\delta$
 from the coefficient bounds of the inequalities), makes the certificate
 exact for every input, not only the four infeasible rows since removed
 from the corpus.
+
+### Symmetries that move a stalled witness
+
+The accuracy tail had one cause. The returned frame sat at or near a
+critical point of the spectral map, so refinement could not move the roots
+the rest of the way. Each fix below is an exact identity that moves the
+frame off that point.
+
+- **Transpose duality.** $\operatorname{spec}(D_c^2 O D_g^2 O^T) =
+  \operatorname{spec}(D_g^2 O^T D_c^2 O)$, so $O^T$ solves the problem with
+  $c$ and $g$ exchanged. Refinement acts by left rotations, which move only
+  the $c$ side. Refining $O^T$ in the exchanged problem moves the $g$ side,
+  so it leaves critical points of the left action.
+- **Sheet reflection.** Let $D(c)^2$ or $D(g)^2$ have a near-double
+  eigenvalue pair. Up to the pair gap, the product spectrum is then
+  symmetric under conjugation, and the fold has two sheets. The first-order
+  shift of the roots off the symmetric spectrum points one way on each
+  sheet. A frame on the wrong sheet stalls at an error equal to the target's
+  own distance from symmetry. A quarter turn in the pair's coordinate plane
+  is a symmetry up to the gap and swaps the sheets. Newton then converges
+  from the swapped frame.
+- **Stabilizer gauge search.** The same idea for any cluster of $k$
+  near-equal eigenvalues. Rotations in $SO(k)$ on the cluster's coordinates
+  preserve the spectrum up to the cluster width. Searching them reaches the
+  3+1 and 2+1+1 cases that the quarter turn misses. Seed 24680 went from
+  `9.76e-14` to `1.99e-14`.
+- **Second-order vertex frames.** At a signed-permutation frame the
+  spectral map is critical, so the root shifts are quadratic in the rotation
+  angles. Solving for the squared angles $B_{kj}^2$ by nonnegative least
+  squares gives a frame directly. This solved every stress row that all
+  other stages declined, at `2.1e-15` or less.
+- **Horn-wall 3×3 reduction.** On a Horn wall, fixing one row of $O$ to a
+  coordinate vector splits the sandwich. On the unit circle
+  $e_2 = e_3\,\overline{e_1}$, so a single complex equation
+  $a^T B l = w_1 + w_2 + w_3$ remains. Nine two-Givens charts with a
+  quadratic root isolation solve it. In a census of 484 wall routes from
+  300 train rows, the charts solved 185. Of the other 299, 154 have a
+  solution only with every entry of $B$ positive, which the charts cannot
+  produce.
 
 ## Previous work
 

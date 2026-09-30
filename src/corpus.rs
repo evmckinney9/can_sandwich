@@ -34,7 +34,7 @@ fn cases(path: &Path) -> io::Result<Vec<Case>> {
         ));
     }
     let mut rows = Vec::with_capacity(bytes.len() / 72);
-    for row in bytes.chunks_exact(72) {
+    for row in bytes.as_chunks::<72>().0 {
         let case: Case = std::array::from_fn(|i| {
             std::array::from_fn(|j| {
                 let offset = (3 * i + j) * 8;

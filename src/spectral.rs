@@ -22,6 +22,13 @@ pub(crate) struct State {
     sign: f64,
 }
 impl Problem {
+    /// Diagonal of the sandwich projected onto a given real basis: the roots
+    /// to second order in the basis's off-diagonal coupling.
+    pub(crate) fn roots_in_basis(&self, o: &R4, v: &R4) -> [Z; 4] {
+        let d = project(&self.sandwich(o), v);
+        std::array::from_fn(|i| d[(i, i)])
+    }
+
     pub(crate) fn match_roots(&self, roots: [Z; 4]) -> f64 {
         let mut best = f64::INFINITY;
         for sign in [-1.0, 1.0] {
@@ -90,6 +97,134 @@ impl Problem {
         self.assign(roots, eigenvectors, off, branch)
     }
 
+    /// Closed-form state of a vertex or one-Givens edge frame. An exactly
+    /// diagonal sandwich is its own eigenbasis. With one coupled plane the
+    /// real and imaginary parts of the 2x2 block commute, so one Jacobi
+    /// rotation is its eigenbasis; that state is kept only when its residual
+    /// is far below every downstream refinement trigger.
+    pub(crate) fn sparse_state(&self, o: &R4, branch: f64) -> Option<State> {
+        let s = self.sandwich(o);
+        let mut coupled = PLANES
+            .iter()
+            .filter(|&&(i, j)| s[(i, j)].re != 0.0 || s[(i, j)].im != 0.0);
+        match (coupled.next(), coupled.next(), coupled.next()) {
+            (None, _, _) => Some(self.assign(
+                std::array::from_fn(|i| s[(i, i)]),
+                R4::identity(),
+                0.0,
+                branch,
+            )),
+            // One coupled plane, or two disjoint ones (a two-block face
+            // frame): each block is diagonalized by its own rotation.
+            (Some(_), None, _) | (Some(_), Some(_), None) if coupled_planes_disjoint(&s) => {
+                let (v, diag) = jacobi(R4::identity(), s);
+                let off = coupling(&diag);
+                let state = self.assign(std::array::from_fn(|i| diag[(i, i)]), v, off, branch);
+                (state.error <= 2e-15).then_some(state)
+            }
+            _ => None,
+        }
+    }
+
+    /// Closed-form state of a constructed frame whose spectrum is known: the
+    /// real projection `h` has eigenvalues at the projected target roots, and
+    /// each eigenvector spans the adjugate of `h - mu I`. The basis is scored
+    /// by the same coupling bound as `state`; it is kept only when that bound
+    /// is far below every downstream refinement trigger.
+    pub(crate) fn targeted_state(&self, o: &R4) -> Option<State> {
+        let s = self.sandwich(o);
+        let trace = (0..4).map(|i| s[(i, i)]).sum::<Z>();
+        let sum = self.target_roots[0].iter().sum::<Z>();
+        let (plus, minus) = ((trace - sum).norm_sqr(), (trace + sum).norm_sqr());
+        if (plus - minus).abs() <= 1e-6 * (plus + minus) {
+            // e1 cannot name the sign branch; try both.
+            return self
+                .targeted_state_signed(&s, 1.0)
+                .or_else(|| self.targeted_state_signed(&s, -1.0));
+        }
+        self.targeted_state_signed(&s, if plus <= minus { 1.0 } else { -1.0 })
+    }
+
+    fn targeted_state_signed(&self, s: &Matrix4<Z>, sign: f64) -> Option<State> {
+        let roots = self.target_roots[0].map(|root| root * sign);
+        // Real projection with the widest relative root separation.
+        let mut weight = 0.0;
+        let mut best = -1.0;
+        for w in [
+            0.6180339887498949,
+            -std::f64::consts::SQRT_2,
+            0.0,
+            std::f64::consts::E,
+            1.0,
+            -0.5,
+            0.3,
+            -3.0,
+        ] {
+            let p = roots.map(|r| r.re + w * r.im);
+            let spread = p.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+                - p.iter().copied().fold(f64::INFINITY, f64::min);
+            let mut gap = f64::INFINITY;
+            for (i, j) in PLANES {
+                gap = gap.min((p[i] - p[j]).abs());
+            }
+            let separation = gap / spread;
+            if separation > best {
+                best = separation;
+                weight = w;
+            }
+        }
+        if !(best > 1e-3) {
+            return None;
+        }
+        let mut h = R4::from_fn(|i, j| s[(i, j)].re + weight * s[(i, j)].im);
+        let center = h.trace() / 4.0;
+        for i in 0..4 {
+            h[(i, i)] -= center;
+        }
+        let scale = h.amax();
+        if !(scale > 0.0) || !scale.is_finite() {
+            return None;
+        }
+        h /= scale;
+        let mut v = R4::zeros();
+        for (k, root) in roots.iter().enumerate() {
+            let mu = (root.re + weight * root.im - center) / scale;
+            let mut m = h;
+            for i in 0..4 {
+                m[(i, i)] -= mu;
+            }
+            v.set_column(k, &null_vector(&m)?);
+        }
+        // One Newton-Schulz step restores orthogonality to second order.
+        let gram = v.transpose() * v;
+        v = v * (R4::identity() * 3.0 - gram) * 0.5;
+        let mut diag = project(s, &v);
+        let mut off = coupling(&diag);
+        if off > 1e-15 {
+            // First-order eigenvector correction: rotate each plane by the
+            // real ratio D_il / (D_ll - D_ii) (the parts commute), then
+            // re-orthogonalize. No trigonometry is needed.
+            let mut e = R4::identity();
+            for (i, l) in PLANES {
+                let spread = diag[(l, l)] - diag[(i, i)];
+                let denominator = spread.norm_sqr();
+                if !(denominator > 0.0) {
+                    return None;
+                }
+                let angle = (diag[(i, l)] * spread.conj()).re / denominator;
+                e[(i, l)] = angle;
+                e[(l, i)] = -angle;
+            }
+            v *= e;
+            let gram = v.transpose() * v;
+            v = v * (R4::identity() * 3.0 - gram) * 0.5;
+            diag = project(s, &v);
+            off = coupling(&diag);
+        }
+        let state = self.assign(std::array::from_fn(|i| diag[(i, i)]), v, off, 0.0);
+        (state.cost.is_finite() && state.error <= 5e-15).then_some(state)
+    }
+
     /// Finish a basis with a large residual by Jacobi rotations of the complex
     /// matrix. One real projection cannot separate roots whose projected
     /// values nearly coincide.
@@ -144,6 +279,76 @@ impl Problem {
             sign: chosen_sign,
         }
     }
+}
+
+/// Whether the coupled off-diagonal entries of `s` form at most two planes
+/// with no shared index.
+fn coupled_planes_disjoint(s: &Matrix4<Z>) -> bool {
+    let mut used = [false; 4];
+    for (i, j) in PLANES {
+        if s[(i, j)].re != 0.0 || s[(i, j)].im != 0.0 {
+            if used[i] || used[j] {
+                return false;
+            }
+            used[i] = true;
+            used[j] = true;
+        }
+    }
+    true
+}
+
+/// Unit null vector of a symmetric matrix of corank one: the adjugate is
+/// `c v v^T`, so its largest diagonal entry names the best column. The
+/// adjugate is formed from the twelve 2x2 minors of the row pairs.
+fn null_vector(m: &R4) -> Option<nalgebra::Vector4<f64>> {
+    let a = |i: usize, j: usize| m[(i, j)];
+    let s0 = a(0, 0) * a(1, 1) - a(1, 0) * a(0, 1);
+    let s1 = a(0, 0) * a(1, 2) - a(1, 0) * a(0, 2);
+    let s2 = a(0, 0) * a(1, 3) - a(1, 0) * a(0, 3);
+    let s3 = a(0, 1) * a(1, 2) - a(1, 1) * a(0, 2);
+    let s4 = a(0, 1) * a(1, 3) - a(1, 1) * a(0, 3);
+    let s5 = a(0, 2) * a(1, 3) - a(1, 2) * a(0, 3);
+    let c5 = a(2, 2) * a(3, 3) - a(3, 2) * a(2, 3);
+    let c4 = a(2, 1) * a(3, 3) - a(3, 1) * a(2, 3);
+    let c3 = a(2, 1) * a(3, 2) - a(3, 1) * a(2, 2);
+    let c2 = a(2, 0) * a(3, 3) - a(3, 0) * a(2, 3);
+    let c1 = a(2, 0) * a(3, 2) - a(3, 0) * a(2, 2);
+    let c0 = a(2, 0) * a(3, 1) - a(3, 0) * a(2, 1);
+    let adj = [
+        [
+            a(1, 1) * c5 - a(1, 2) * c4 + a(1, 3) * c3,
+            -a(0, 1) * c5 + a(0, 2) * c4 - a(0, 3) * c3,
+            a(3, 1) * s5 - a(3, 2) * s4 + a(3, 3) * s3,
+            -a(2, 1) * s5 + a(2, 2) * s4 - a(2, 3) * s3,
+        ],
+        [
+            -a(1, 0) * c5 + a(1, 2) * c2 - a(1, 3) * c1,
+            a(0, 0) * c5 - a(0, 2) * c2 + a(0, 3) * c1,
+            -a(3, 0) * s5 + a(3, 2) * s2 - a(3, 3) * s1,
+            a(2, 0) * s5 - a(2, 2) * s2 + a(2, 3) * s1,
+        ],
+        [
+            a(1, 0) * c4 - a(1, 1) * c2 + a(1, 3) * c0,
+            -a(0, 0) * c4 + a(0, 1) * c2 - a(0, 3) * c0,
+            a(3, 0) * s4 - a(3, 1) * s2 + a(3, 3) * s0,
+            -a(2, 0) * s4 + a(2, 1) * s2 - a(2, 3) * s0,
+        ],
+        [
+            -a(1, 0) * c3 + a(1, 1) * c1 - a(1, 2) * c0,
+            a(0, 0) * c3 - a(0, 1) * c1 + a(0, 2) * c0,
+            -a(3, 0) * s3 + a(3, 1) * s1 - a(3, 2) * s0,
+            a(2, 0) * s3 - a(2, 1) * s1 + a(2, 2) * s0,
+        ],
+    ];
+    let mut j = 0;
+    for k in 1..4 {
+        if adj[k][k].abs() > adj[j][j].abs() {
+            j = k;
+        }
+    }
+    let column = nalgebra::Vector4::new(adj[0][j], adj[1][j], adj[2][j], adj[3][j]);
+    let norm = column.norm();
+    (norm > 0.0 && norm.is_finite()).then(|| column / norm)
 }
 
 fn project(s: &Matrix4<Z>, v: &R4) -> Matrix4<Z> {
@@ -204,11 +409,34 @@ pub(crate) fn verify(problem: &Problem, o: &R4) -> Option<State> {
     {
         return None;
     }
-    let state = problem.state(o, 0.0);
+    verify_frame(problem, o, false)
+}
+
+/// Spectral screen for a frame whose finiteness, orthogonality, and
+/// determinant were already checked at the same `1e-12` bound.
+pub(crate) fn verify_frame(problem: &Problem, o: &R4, sparse: bool) -> Option<State> {
+    let fast = if sparse {
+        problem.sparse_state(o, 0.0)
+    } else {
+        problem.targeted_state(o)
+    };
+    let state = match fast {
+        Some(state) => state,
+        None => problem.state(o, 0.0),
+    };
     (state.cost.is_finite() && state.error < SPECTRAL_TOLERANCE).then_some(state)
 }
 
 impl State {
+    /// Root residuals indexed by target position, with the sign branch.
+    pub(crate) fn residual_by_target(&self) -> (f64, [Z; 4]) {
+        let mut residual = [Z::new(0.0, 0.0); 4];
+        for i in 0..4 {
+            residual[self.order[i]] = self.roots[i] - self.target[i];
+        }
+        (self.sign, residual)
+    }
+
     pub(crate) fn ordered_basis(&self) -> R4 {
         let mut left = R4::zeros();
         for i in 0..4 {
