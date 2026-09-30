@@ -17,7 +17,14 @@ use crate::solve;
 type Case = [[f64; 3]; 3];
 type Frame = Matrix4<f64>;
 type Solver = fn([f64; 3], [f64; 3], [f64; 3]) -> Option<Frame>;
-const TOLERANCE: f64 = 1e-12;
+/// Ceiling on the spectral matching error. The Schur eigensolve below
+/// overstates errors at clustered spectra: at 80 digits the corpus maximum is
+/// `1.01e-14`, but this measurement reaches `1.64e-13`. The ceiling keeps a
+/// factor of three above that measurement floor.
+const SPECTRAL_CHECK: f64 = 5e-13;
+/// Ceiling on the orthogonality and determinant defects of every returned
+/// matrix and on endpoint reconstruction. The corpus maximum is `1.27e-14`.
+const FRAME_CHECK: f64 = 5e-14;
 const HELP: &str = "Compare a candidate with can_sandwich::solve.
 Usage: candidate --corpus PATH [--case INDEX] [--report PATH]
   --corpus PATH  Nine little-endian f64 values per row (c, g, t).
@@ -71,7 +78,7 @@ fn errors([c, g, t]: Case, o: &Frame) -> [f64; 3] {
         finite((o.determinant() - 1.0).abs()),
     ];
     // Do not send malformed matrices to the eigensolver.
-    if result[1] > TOLERANCE || result[2] > TOLERANCE {
+    if result[1] > FRAME_CHECK || result[2] > FRAME_CHECK {
         return result;
     }
     let [a, b, target] = [c, g, t].map(spectrum);
@@ -132,6 +139,11 @@ fn errors([c, g, t]: Case, o: &Frame) -> [f64; 3] {
     result
 }
 
+/// Whether `[spectral, orthogonality, determinant]` errors are within their ceilings.
+fn within([spectral, orthogonality, determinant]: [f64; 3]) -> bool {
+    spectral <= SPECTRAL_CHECK && orthogonality <= FRAME_CHECK && determinant <= FRAME_CHECK
+}
+
 struct Outcome {
     elapsed: Duration,
     errors: Option<[f64; 3]>,
@@ -142,8 +154,7 @@ impl Outcome {
         if self.infeasible {
             self.errors.is_none()
         } else {
-            self.errors
-                .is_some_and(|e| e.into_iter().all(|v| v <= TOLERANCE))
+            self.errors.is_some_and(within)
         }
     }
     fn status(&self) -> &'static str {
@@ -352,7 +363,7 @@ fn run(candidate: Solver) -> Result<bool, Box<dyn std::error::Error>> {
         )?;
     }
     println!(
-        "corpus: {} ({} rows); testing {}; tolerance: {TOLERANCE:e}",
+        "corpus: {} ({} rows); testing {}; spectral ceiling: {SPECTRAL_CHECK:e}; frame ceiling: {FRAME_CHECK:e}",
         path.display(),
         rows.len(),
         range.len()
@@ -445,8 +456,8 @@ mod tests {
             Matrix4::from_diagonal(&nalgebra::Vector4::from(d))
         };
         for factor in [&left, &right] {
-            assert!((factor.transpose() * factor - Frame::identity()).amax() < TOLERANCE);
-            assert!((factor.determinant() - 1.0).abs() < TOLERANCE);
+            assert!((factor.transpose() * factor - Frame::identity()).amax() < FRAME_CHECK);
+            assert!((factor.determinant() - 1.0).abs() < FRAME_CHECK);
         }
         let complex = |v| Complex::new(v, 0.0);
         let actual = diagonal(c) * o.map(complex) * diagonal(g);
@@ -455,7 +466,7 @@ mod tests {
         assert!(
             (actual - reconstructed)
                 .iter()
-                .all(|v| v.norm() < TOLERANCE)
+                .all(|v| v.norm() < FRAME_CHECK)
         );
         Some(o)
     }
@@ -495,7 +506,7 @@ mod tests {
 
     #[test]
     fn checker() {
-        let check = |case, o: &Frame| errors(case, o).into_iter().all(|e| e <= TOLERANCE);
+        let check = |case, o: &Frame| within(errors(case, o));
         let identity = Frame::identity();
         assert!(check([[0.0; 3]; 3], &identity));
         assert!(check([[0.0; 3], [0.0; 3], [0.5; 3]], &identity));

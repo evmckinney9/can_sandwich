@@ -3,27 +3,31 @@
 Ranked; take the top item. Each item says what decides it. Delete an item
 when it is done or rejected; its result goes in the doc that owns it.
 
-1. **Confirm the tail at 80 digits.** By the binary64 measure, the corpus
-   maximum is `1.78e-14`
-   ([log](optimization.md#held-out-hillclimb-on-speed-and-accuracy-2026-09-30)).
-   The 80-digit check is still a scratch script (mpmath eigenvalues of
-   $D(c)^2OD(g)^2O^T$, best of 24 bijections and both signs, on dumped
-   witnesses). First give the runner a way to write witnesses, and add the
-   script under `tests/`. Decided by: the 80-digit maximum and the count
-   above `2e-14`.
-2. **Lower the spectral ceiling.** Needs the owner's decision. The corpus
-   passes at `2e-14` by the binary64 measure, and every harness row passes
-   at `3e-14`. GULPS derives `MEMBERSHIP_TOL` from `SPECTRAL_TOLERANCE`
-   ([research](research.md#where-the-precision-floor-is)), so the change
-   needs a matching GULPS commit. Decided by: item 1, then the whole corpus
-   at the lower ceiling.
-3. **Strengthen the corpus spectral check.** Matching characteristic
-   polynomial coefficients at `1e-12` accepted root errors up to `1.5e-6` at
-   repeated roots in the external harness. That harness adds a
-   Hermitian-projection test at the same tolerance. The check is a checker
-   definition ([researcher guide](researcher.md)), so it needs the owner's
-   decision. Decided by: no false accept in a mutation test, and the corpus
-   still passing.
+1. **Replace the checker's Schur eigensolve.** On 2026-09-30 the complex
+   Schur call in `corpus.rs` measured `1.64e-13` on the corpus.
+   LAPACK `zgeev` and 80 digits give at most `1.01e-14` on the same 27
+   witnesses. On 6,292 planted near-wall stress rows it failed to converge
+   on 6 and overstated 113 more above `2e-14`; their true maximum is
+   `8.3e-15`. Tighter deflation (`f64::EPSILON`, 10,000 iterations) made
+   both worse. The matrix is unitary up to the orthogonality defect, so a
+   normal-matrix solver is available: eigenvectors from a Hermitian
+   projection $(e^{-i\theta}M + e^{i\theta}M^*)/2$, then eigenvalues of the
+   small clustered blocks of $V^*MV$. Decided by: agreement with 80 digits
+   on the flagged rows, and no false accept in a mutation test. That would
+   let `SPECTRAL_CHECK` drop from `5e-13` toward `3e-14` and let the stress
+   rows join `tests/cases.bin`.
+2. **Lower the solver ceiling `SPECTRAL_TOLERANCE`.** Needs the owner's
+   decision. GULPS derives `MEMBERSHIP_TOL` from it
+   ([research](research.md#where-the-precision-floor-is)), so lowering it
+   also shrinks GULPS's reachability slack. Targets on region boundaries
+   need that slack. Test in the GULPS tree first, with the submodule
+   ceiling at the candidate value: `make test`, and the benchmark compared
+   against the current solver, with identical costs and depths. Decided by:
+   that GULPS run, then the whole corpus at the lower ceiling.
+3. **Put an 80-digit check under `tests/`.** It is still a scratch script
+   (mpmath eigenvalues of $D(c)^2OD(g)^2O^T$, best of 24 bijections and both
+   signs, on dumped witnesses). First give the runner a way to write
+   witnesses. Decided by: the script reproducing the item 1 numbers.
 4. **Remove the band-row gauge cost.** About 40 train rows sit near
    `2.2e-14` after polish. The gauge search on them costs about 9 ms per
    train pass, which is the train-total gap to the build before it. Candidates:

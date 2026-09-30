@@ -661,10 +661,12 @@ repository. Its case sets:
   each first graded once, at a round's final; the five-seed panel of the
   last round (97531, 86420, 75319, 64208, 53197) was graded only there.
 
-Its checker is a frozen copy of the corpus checks plus a Hermitian-projection
-test. Coefficient matching alone at `1e-12` accepted root errors up to
-`1.5e-6` at repeated roots. Errors below are binary64 measurements by that
-checker, not 80-digit ones.
+Its checker grades orthogonality, the determinant, and characteristic
+polynomial coefficients over both target lifts. It adds a Hermitian-projection
+test, because coefficient matching alone at `1e-12` accepted root errors up
+to `1.5e-6` at repeated roots. It does not use the corpus checker's Schur
+eigensolve. Errors below are binary64 measurements by that checker, not
+80-digit ones.
 
 A change was kept only if every train, gated-test, and stress row passed at
 the current tolerance, which only tightened. It also had to leave every
@@ -693,9 +695,12 @@ accepted:
 1. Delete the Klein retarget fallback and skip refinement of vertex frames,
    which are critical points of the spectral map (train total −12.6%). Skip
    refinement of edge frames (−6.6%). Stop the LM on a gain below `1e-4`
-   over 6 steps instead of `1e-8` over 9. Use 8 random restarts per fixed
-   split route instead of 24. Drop the uncapped second radical pass. These
-   last three are constants; each passed the accuracy rule.
+   over 6 steps instead of `1e-8` over 9. Cut the split restart from 24
+   random starts to 8 (train total −8.7%); round 2 then cut the polish's
+   designated-route split to 2 starts after the exact wall frames (−8.0%),
+   leaving 8 only in the numerical ladder's own split. Drop the uncapped
+   second radical pass. These last three are constants; each passed the
+   accuracy rule.
 2. Exact Horn-wall 3×3 frames, and near-wall starts from them. Train p99
    −17.7%. Stress 6,222 → 6,275 rows.
 3. Root-matched Levenberg–Marquardt after the polish, polar orthogonality
@@ -728,6 +733,31 @@ Rejected:
 | Jacobi-basis verifier | faster verify | changes which rows are polished; accuracy drops |
 | Refinement before the Horn-wall split in polish | grid families faster | +14% to +31% total |
 | Root-LM random starts for the 17 declines | 0 of 17 in Rust; MINPACK LM 8 of 16 in Python | superseded by second-order vertex frames |
+
+## Checker ceilings split and tightened, 2026-09-30
+
+Baseline `0a87eac`, same corpus. The single `1e-12` checker tolerance became
+two ceilings: `SPECTRAL_CHECK = 5e-13` and `FRAME_CHECK = 5e-14`.
+`FRAME_CHECK` covers orthogonality and the determinant of $O$ and of both
+endpoint factors, and endpoint reconstruction.
+
+Measured maxima over the full corpus with the production solver:
+
+| Term | Corpus maximum | Ceiling |
+|---|---|---|
+| Spectrum (Schur checker) | `1.64e-13` (row 1071773) | `5e-13` |
+| Spectrum (80 digits, the 27 rows above `2e-14`) | `1.01e-14` | |
+| Orthogonality of $O$ | `1.07e-14` | `5e-14` |
+| Determinant of $O$ | `5.6e-15` | `5e-14` |
+| Orthogonality of the endpoint factors | `1.13e-14` | `5e-14` |
+| Determinant of the endpoint factors | `6.2e-15` | `5e-14` |
+| Endpoint reconstruction | `1.27e-14` | `5e-14` |
+
+The spectral ceiling is set by the checker's measurement floor, not by the
+solver. Tighter Schur deflation (`f64::EPSILON` or `0`, 10,000 iterations)
+increased overstatement; with `0` it rejected 5,119 of 6,292 planted stress
+rows. `SPECTRAL_TOLERANCE`, the solver's own ceiling, is unchanged because
+GULPS derives its reachability slack from it.
 
 ## Retired interfaces
 

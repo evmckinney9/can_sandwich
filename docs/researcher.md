@@ -154,9 +154,9 @@ Both algorithms receive the same inputs. The checker measures:
 
 | Error | Definition | Acceptance |
 |---|---|---|
-| Spectrum | Smallest maximum complex-root distance over all 24 bijections and both global signs | At most `1e-12` |
-| Orthogonality | Largest absolute entry of $O^TO-I$ | At most `1e-12` |
-| Determinant | $|\det O-1|$ | At most `1e-12` |
+| Spectrum | Smallest maximum complex-root distance over all 24 bijections and both global signs | At most `5e-13` (`SPECTRAL_CHECK`) |
+| Orthogonality | Largest absolute entry of $O^TO-I$ | At most `5e-14` (`FRAME_CHECK`) |
+| Determinant | $|\det O-1|$ | At most `5e-14` (`FRAME_CHECK`) |
 
 A returned matrix passes only if it meets all three bounds. The independent
 complex Schur calculation shifts and scales the matrix before computing its
@@ -166,13 +166,18 @@ These transforms preserve the eigenvalue problem and acceptance threshold.
 Near repeated roots, Schur rounding errors can distort individual error
 measurements even when iteration converges. Investigate apparent regressions
 with an independent eigensolver or higher precision before changing the solver.
+On 2026-09-30 the Schur measurement reached `1.64e-13` on the corpus, while
+80-digit and LAPACK `zgeev` evaluations of the same 27 witnesses give at most
+`1.01e-14`. That floor, not the solver, sets `SPECTRAL_CHECK`. `FRAME_CHECK`
+keeps a factor of four above the corpus maximum of `1.27e-14` over the
+orthogonality, determinant, and endpoint terms.
 
 Every corpus row is feasible, as `tests/margins.py` verifies exactly. The
 runner still checks one necessary rank-two Horn inequality, for corpora that
 include infeasible rows. For ordered alcove coordinates, let
 `a = c0 + c2 + g0 + g2`. The inequality requires
 `abs(t1 + t2) <= min(a, 1-a)` for both central lifts. A violation exceeding
-`1e-12` in phase turns certifies infeasibility at the root-error tolerance.
+`1e-12` in phase turns certifies infeasibility at the root-error ceiling.
 Such a row passes only when the solver returns `None`; its CSV status is
 `rejected_infeasible`. Other declines remain failures. This partial certificate
 does not classify every infeasible input, and uses no row indices.

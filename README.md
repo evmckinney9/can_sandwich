@@ -115,7 +115,10 @@ make lint
 
 The tests check returned matrices and endpoint reconstruction against
 1,093,687 cases in `tests/cases.bin`, using an independent checker with a
-`1e-12` tolerance. Every row is feasible: `tests/margins.py` evaluates the
+spectral ceiling of `5e-13` and a ceiling of `5e-14` on orthogonality,
+determinant, and endpoint errors
+([checker definitions](docs/researcher.md#read-the-comparison)). Every row
+is feasible: `tests/margins.py` evaluates the
 complete quantum-Horn inequalities exactly on the stored inputs. The comparison runner uses the same spectral checker and
 reports measured errors alongside pass counts, including differences between
 algorithms that both pass.
