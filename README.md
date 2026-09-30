@@ -114,20 +114,29 @@ make lint
 ```
 
 The tests check returned matrices and endpoint reconstruction against
-1,093,687 cases in `tests/cases.bin`, using an independent checker with a
-spectral ceiling of `5e-13` and a ceiling of `5e-14` on orthogonality,
-determinant, and endpoint errors
-([checker definitions](docs/researcher.md#read-the-comparison)). Every row
-is feasible: `tests/margins.py` evaluates the
-complete quantum-Horn inequalities exactly on the stored inputs. The comparison runner uses the same spectral checker and
+1,099,979 cases in `tests/cases.bin`, using an independent checker with a
+ceiling of `5e-14` on spectral, orthogonality, determinant, and endpoint
+errors ([checker definitions](docs/researcher.md#read-the-comparison)). Every
+row is feasible up to the rounding of its stored inputs. `tests/margins.py`
+evaluates the complete quantum-Horn inequalities exactly on them: 8,259 rows
+violate one by at most `3.9e-16`, and none by more. The exception is rows
+1,096,187 to 1,096,228, which keep the non-alcove coordinates they were
+planted in, where that test does not apply; each has an explicit witness. The
+comparison runner uses the same spectral checker and
 reports measured errors alongside pass counts, including differences between
 algorithms that both pass.
 
 Each corpus row stores nine little-endian `f64` values without a header:
 `[c0,c1,c2,g0,g1,g2,t0,t1,t2]`. The file is included in the repository, so
 running the solver and its tests requires only Rust. To regenerate the cases
-from their construction code, run `python3 tests/generate.py` with NumPy and
-SciPy installed.
+from their construction code, install NumPy, SciPy, and pandas, then run
+`python3 tests/generate.py` followed by `python3 tests/stress.py --append`.
+The first command writes rows 0 to 1,093,686. The second appends 6,292 stress
+rows (near Horn walls, on them, and at repeated or clustered spectra), each
+built from an explicit matrix. `tests/heldout.py --seed S` writes rows from
+the same constructions with a new seed, for checking a change on rows it was
+not tuned on. `tests/check80.py` recomputes a run's spectral errors at 80
+digits from `--witnesses` output (requires mpmath).
 
 GULPS uses a specific commit of this repository as a Git submodule. To use a
 newer solver commit in GULPS, follow its contributor guide's instructions for

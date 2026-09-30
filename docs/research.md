@@ -743,9 +743,10 @@ precision, and both meet at the acceptance ceiling `SPECTRAL_TOLERANCE = 1e-13`:
    candidates below remove them by the binary64 measure. As of 2026-09-30
    the corpus maximum is `1.78e-14`, and the maximum over five fresh
    generated seeds is `2.06e-14` ([log](optimization.md#held-out-hillclimb-on-speed-and-accuracy-2026-09-30)).
-   At 80 digits, the 27 corpus witnesses the Schur checker places above
-   `2e-14` have errors of at most `1.01e-14`. The remaining corpus rows
-   have not been evaluated at 80 digits.
+   The checker's normal-matrix eigensolve agrees with 80 digits to `1e-15`.
+   At 80 digits, the corpus maximum is `1.77e-14`, taken over every row
+   whose LAPACK error exceeds `1e-14`. The 6,292 stress rows appended on
+   that date reach `1.24e-14`.
 2. GULPS derives its reachability slack from the ceiling
    (`MEMBERSHIP_TOL = SPECTRAL_TOLERANCE / 2π`), so the ceiling also sets how
    far outside a region a target may lie before GULPS reports it unreachable.

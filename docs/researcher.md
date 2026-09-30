@@ -154,25 +154,37 @@ Both algorithms receive the same inputs. The checker measures:
 
 | Error | Definition | Acceptance |
 |---|---|---|
-| Spectrum | Smallest maximum complex-root distance over all 24 bijections and both global signs | At most `5e-13` (`SPECTRAL_CHECK`) |
+| Spectrum | Smallest maximum complex-root distance over all 24 bijections and both global signs | At most `5e-14` (`SPECTRAL_CHECK`) |
 | Orthogonality | Largest absolute entry of $O^TO-I$ | At most `5e-14` (`FRAME_CHECK`) |
 | Determinant | $|\det O-1|$ | At most `5e-14` (`FRAME_CHECK`) |
 
-A returned matrix passes only if it meets all three bounds. The independent
-complex Schur calculation shifts and scales the matrix before computing its
-roots. If convergence stalls, multiplication by `i`, then by `0.6 + 0.8i`,
-supplies alternate QR paths. The rotation is undone before matching roots.
-These transforms preserve the eigenvalue problem and acceptance threshold.
-Near repeated roots, Schur rounding errors can distort individual error
-measurements even when iteration converges. Investigate apparent regressions
-with an independent eigensolver or higher precision before changing the solver.
-On 2026-09-30 the Schur measurement reached `1.64e-13` on the corpus, while
-80-digit and LAPACK `zgeev` evaluations of the same 27 witnesses give at most
-`1.01e-14`. That floor, not the solver, sets `SPECTRAL_CHECK`. `FRAME_CHECK`
-keeps a factor of four above the corpus maximum of `1.27e-14` over the
-orthogonality, determinant, and endpoint terms.
+A returned matrix passes only if it meets all three bounds. The spectrum is
+computed independently of the solver. $M=D(c)^2OD(g)^2O^T$ is unitary up to
+the orthogonality defect of $O$, so it is normal up to rounding. The checker
+shifts $M$ by its mean eigenvalue and scales it to unit largest entry. The
+eigenvectors $V$ of a Hermitian projection
+$(e^{-i\theta}M+e^{i\theta}M^*)/2$ then diagonalize it, except within groups
+whose projected values nearly coincide. Of eight angles $\theta$, the one with
+the widest gap between projected values is used. Each group's diagonal block
+of $V^*MV$ is solved the same way, and a block of two in closed form. A
+Hermitian eigensolve always converges, and the couplings dropped between
+groups move an eigenvalue only at second order. This replaced a complex Schur
+eigensolve on 2026-09-30. That solve overstated errors near repeated roots, up
+to `1.64e-13` on the corpus, and did not converge on some stress rows.
 
-Every corpus row is feasible, as `tests/margins.py` verifies exactly. The
+On the corpus, the measured spectral maximum is `1.78e-14`. It is within
+`1e-15` of an 80-digit evaluation on the worst rows, and agrees with LAPACK
+`zgeev` to `3e-15` on every row checked. `SPECTRAL_CHECK` keeps a factor of
+2.8 above it. `FRAME_CHECK` keeps a factor of four above the corpus maximum
+of `1.27e-14` over the orthogonality, determinant, and endpoint terms. To
+check a run at higher precision, write its matrices with `--witnesses PATH`
+and run `python3 tests/check80.py tests/cases.bin PATH`. The script recomputes
+at 80 digits every row whose binary64 error exceeds `1e-14`.
+
+Every corpus row is feasible up to the rounding of its stored inputs.
+`tests/margins.py` verifies this exactly, apart from rows 1,096,187 to
+1,096,228: they are planted in non-alcove coordinates and have explicit
+witnesses. The
 runner still checks one necessary rank-two Horn inequality, for corpora that
 include infeasible rows. For ordered alcove coordinates, let
 `a = c0 + c2 + g0 + g2`. The inequality requires

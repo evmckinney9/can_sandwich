@@ -4,7 +4,7 @@
 //! `docs/researcher.md` for the mathematical contract and command-line options.
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
-use nalgebra::{Complex, Matrix4};
+use nalgebra::{Complex, DMatrix, Matrix4, SymmetricEigen};
 use std::{
     fs::File,
     io::{self, BufWriter, Write},
@@ -17,19 +17,19 @@ use crate::solve;
 type Case = [[f64; 3]; 3];
 type Frame = Matrix4<f64>;
 type Solver = fn([f64; 3], [f64; 3], [f64; 3]) -> Option<Frame>;
-/// Ceiling on the spectral matching error. The Schur eigensolve below
-/// overstates errors at clustered spectra: at 80 digits the corpus maximum is
-/// `1.01e-14`, but this measurement reaches `1.64e-13`. The ceiling keeps a
-/// factor of three above that measurement floor.
-const SPECTRAL_CHECK: f64 = 5e-13;
+/// Ceiling on the spectral matching error. The corpus maximum is `1.78e-14`,
+/// within `1e-15` of an 80-digit evaluation.
+const SPECTRAL_CHECK: f64 = 5e-14;
 /// Ceiling on the orthogonality and determinant defects of every returned
 /// matrix and on endpoint reconstruction. The corpus maximum is `1.27e-14`.
 const FRAME_CHECK: f64 = 5e-14;
 const HELP: &str = "Compare a candidate with can_sandwich::solve.
-Usage: candidate --corpus PATH [--case INDEX] [--report PATH]
+Usage: candidate --corpus PATH [--case INDEX] [--report PATH] [--witnesses PATH]
   --corpus PATH  Nine little-endian f64 values per row (c, g, t).
   --case INDEX   Run one zero-based corpus row and print its input.
   --report PATH  Create a CSV with both results for every tested row.
+  --witnesses PATH  Create a file of 16 little-endian f64 per tested row: the
+                 candidate's matrix in column-major order, NaN if declined.
 Exit: 0 = candidate passed all tested rows; 1 = candidate failures; 2 = runner error.";
 
 fn cases(path: &Path) -> io::Result<Vec<Case>> {
@@ -92,33 +92,14 @@ fn errors([c, g, t]: Case, o: &Frame) -> [f64; 3] {
     let o = o.map(|v| Complex::new(v, 0.0));
     let a = Matrix4::from_diagonal(&nalgebra::Vector4::from(a));
     let b = Matrix4::from_diagonal(&nalgebra::Vector4::from(b));
-    // Shift and scale clustered spectra before the independent complex Schur
-    // solve. Near a scalar matrix, unscaled QR can stall despite a valid frame.
+    // The sandwich is unitary up to the orthogonality defect of `o`, so its
+    // eigenvalues come from a normal-matrix solve that always converges.
     let matrix = a * o * b * o.transpose();
-    let center = matrix.trace() / 4.0;
-    let shifted = matrix - Matrix4::identity() * center;
-    let scale = shifted.iter().map(|z| z.norm()).fold(0.0, f64::max);
-    let actual = if scale == 0.0 {
-        nalgebra::Vector4::repeat(center)
-    } else {
-        let normalized = shifted / Complex::new(scale, 0.0);
-        // An oblique rotation also changes the QR path when swapping real
-        // and imaginary parts is insufficient near a repeated root.
-        let Some(roots) = [
-            Complex::new(1.0, 0.0),
-            Complex::new(0.0, 1.0),
-            Complex::new(0.6, 0.8),
-        ]
-        .into_iter()
-        .find_map(|phase| {
-            nalgebra::linalg::Schur::try_new(normalized * phase, 1e-14, 1000)
-                .and_then(|schur| schur.eigenvalues())
-                .map(|roots| roots.map(|z| z / phase))
-        }) else {
-            return result;
-        };
-        roots.map(|z| z * scale + center)
+    let Some(roots) = normal_eigenvalues(&DMatrix::from_iterator(4, 4, matrix.iter().copied()), 4)
+    else {
+        return result;
     };
+    let actual: [Complex<f64>; 4] = std::array::from_fn(|n| roots[n]);
     // All 24 bijections and both global signs preserve root multiplicities.
     for i in 0..4 {
         for j in 0..4 {
@@ -139,6 +120,80 @@ fn errors([c, g, t]: Case, o: &Frame) -> [f64; 3] {
     result
 }
 
+/// Eigenvalues of a matrix that is normal up to rounding.
+///
+/// After shifting by the mean eigenvalue and rescaling, the eigenvectors of
+/// one Hermitian projection $(e^{-i\theta}S + e^{i\theta}S^*)/2$ diagonalize
+/// $S$, apart from groups whose projections coincide. The angle with the
+/// widest projection gap is used, and each group's block of $V^*SV$ is solved
+/// the same way. The Hermitian eigensolver converges unconditionally, and
+/// dropping the couplings between groups changes an eigenvalue only at second
+/// order. `depth` bounds the recursion.
+fn normal_eigenvalues(m: &DMatrix<Complex<f64>>, depth: usize) -> Option<Vec<Complex<f64>>> {
+    // Projection values closer than this, after rescaling, share a block.
+    const GROUP: f64 = 1e-3;
+    let n = m.nrows();
+    if n == 1 {
+        return Some(vec![m[(0, 0)]]);
+    }
+    #[allow(clippy::cast_precision_loss)]
+    let mean = m.trace() / n as f64;
+    let shifted = m - DMatrix::<Complex<f64>>::identity(n, n) * mean;
+    let scale = shifted.iter().map(|z| z.norm()).fold(0.0, f64::max);
+    if !scale.is_finite() {
+        return None;
+    }
+    if scale == 0.0 || depth == 0 {
+        return Some(vec![mean; n]);
+    }
+    let s = shifted / Complex::new(scale, 0.0);
+    let roots: Vec<Complex<f64>> = if n == 2 {
+        let (p, q) = ((s[(0, 0)] - s[(1, 1)]) * 0.5, (s[(0, 0)] + s[(1, 1)]) * 0.5);
+        let r = (p * p + s[(0, 1)] * s[(1, 0)]).sqrt();
+        vec![q + r, q - r]
+    } else {
+        let mut best: Option<(f64, DMatrix<Complex<f64>>, Vec<f64>)> = None;
+        for j in 0..8 {
+            #[allow(clippy::cast_precision_loss)]
+            let theta = std::f64::consts::PI * (j as f64 + 0.381_966_011_250_105) / 8.0;
+            let phase = Complex::from_polar(1.0, -theta);
+            let h = (&s * phase + s.adjoint() * phase.conj()) * Complex::new(0.5, 0.0);
+            let Some(eigen) = SymmetricEigen::try_new(h, f64::EPSILON, 10_000) else {
+                continue;
+            };
+            let mut order: Vec<usize> = (0..n).collect();
+            order.sort_by(|&x, &y| eigen.eigenvalues[x].total_cmp(&eigen.eigenvalues[y]));
+            let values: Vec<f64> = order.iter().map(|&k| eigen.eigenvalues[k]).collect();
+            let gap = values
+                .windows(2)
+                .map(|w| w[1] - w[0])
+                .fold(f64::INFINITY, f64::min);
+            if best.as_ref().is_none_or(|(g, _, _)| gap > *g) {
+                let vectors = DMatrix::from_fn(n, n, |r, k| eigen.eigenvectors[(r, order[k])]);
+                best = Some((gap, vectors, values));
+            }
+        }
+        let (_, v, values) = best?;
+        let rotated = v.adjoint() * &s * &v;
+        let mut roots = Vec::with_capacity(n);
+        let mut start = 0;
+        for k in 1..=n {
+            if k == n || values[k] - values[k - 1] > GROUP {
+                let size = k - start;
+                if size == n {
+                    roots.extend((0..n).map(|i| rotated[(i, i)]));
+                } else {
+                    let block = rotated.view((start, start), (size, size)).into_owned();
+                    roots.extend(normal_eigenvalues(&block, depth - 1)?);
+                }
+                start = k;
+            }
+        }
+        roots
+    };
+    Some(roots.into_iter().map(|z| z * scale + mean).collect())
+}
+
 /// Whether `[spectral, orthogonality, determinant]` errors are within their ceilings.
 fn within([spectral, orthogonality, determinant]: [f64; 3]) -> bool {
     spectral <= SPECTRAL_CHECK && orthogonality <= FRAME_CHECK && determinant <= FRAME_CHECK
@@ -146,6 +201,7 @@ fn within([spectral, orthogonality, determinant]: [f64; 3]) -> bool {
 
 struct Outcome {
     elapsed: Duration,
+    frame: Option<Frame>,
     errors: Option<[f64; 3]>,
     infeasible: bool,
 }
@@ -191,6 +247,7 @@ fn evaluate(case: Case, solver: Solver) -> Outcome {
     let elapsed = start.elapsed();
     Outcome {
         elapsed,
+        frame: o,
         errors: o.map(|o| errors(case, &o)),
         infeasible: proven_infeasible(case),
     }
@@ -311,6 +368,7 @@ fn run(candidate: Solver) -> Result<bool, Box<dyn std::error::Error>> {
     let mut corpus = None;
     let mut selected = None;
     let mut report = None;
+    let mut witnesses = None;
     let mut args = std::env::args_os().skip(1);
     while let Some(arg) = args.next() {
         if arg == "--help" || arg == "-h" {
@@ -333,6 +391,11 @@ fn run(candidate: Solver) -> Result<bool, Box<dyn std::error::Error>> {
             Some("--report") if report.is_none() => {
                 report = Some(PathBuf::from(args.next().ok_or("--report needs a path")?))
             }
+            Some("--witnesses") if witnesses.is_none() => {
+                witnesses = Some(PathBuf::from(
+                    args.next().ok_or("--witnesses needs a path")?,
+                ))
+            }
             _ => {
                 return Err(format!(
                     "unknown or repeated argument: {}\n{HELP}",
@@ -354,6 +417,9 @@ fn run(candidate: Solver) -> Result<bool, Box<dyn std::error::Error>> {
     };
     // Never overwrite an existing report, corpus, or source file.
     let mut report = report
+        .map(|p| File::create_new(p).map(BufWriter::new))
+        .transpose()?;
+    let mut witnesses = witnesses
         .map(|p| File::create_new(p).map(BufWriter::new))
         .transpose()?;
     if let Some(w) = &mut report {
@@ -402,6 +468,12 @@ fn run(candidate: Solver) -> Result<bool, Box<dyn std::error::Error>> {
                 std::cmp::Ordering::Greater => 2,
             }] += 1;
         }
+        if let Some(w) = &mut witnesses {
+            let frame = results[1].frame.unwrap_or(Frame::from_element(f64::NAN));
+            for v in frame.as_slice() {
+                w.write_all(&v.to_le_bytes())?;
+            }
+        }
         for (slot, name) in ["production", "candidate"].iter().enumerate() {
             let result = &results[slot];
             summaries[slot].add(index, result);
@@ -421,6 +493,9 @@ fn run(candidate: Solver) -> Result<bool, Box<dyn std::error::Error>> {
         }
     }
     if let Some(w) = &mut report {
+        w.flush()?;
+    }
+    if let Some(w) = &mut witnesses {
         w.flush()?;
     }
     for (summary, name) in summaries.iter().zip(["production", "candidate"]) {
@@ -522,7 +597,8 @@ mod tests {
         ]);
         assert!(check(case, &frame));
         // Independent LAPACK verification gives a 6.7e-15 spectral error.
-        // The first two Schur phases exhaust their iteration budgets here.
+        // The Schur eigensolve this checker replaced exhausted two of its
+        // three iteration budgets here.
         assert!(check(
             [
                 [

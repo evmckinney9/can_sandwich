@@ -759,6 +759,51 @@ increased overstatement; with `0` it rejected 5,119 of 6,292 planted stress
 rows. `SPECTRAL_TOLERANCE`, the solver's own ceiling, is unchanged because
 GULPS derives its reachability slack from it.
 
+## Normal-matrix checker and stress rows, 2026-09-30
+
+Baseline `0a3bd7c`; solver unchanged. The checker's complex Schur eigensolve
+was replaced by the normal-matrix eigensolve described in
+[the comparison guide](researcher.md#read-the-comparison), and
+`SPECTRAL_CHECK` fell from `5e-13` to `5e-14`.
+
+Validation of the eigensolve against LAPACK `zgeev`:
+
+- It was checked on 52,887 witnesses: every stress row, every corpus row above
+  `5e-15`, and a stride sample of the rest.
+- It was also checked on 105,774 copies of those witnesses rotated by `1e-13`
+  or `1e-12` in a coordinate plane.
+- Measured errors differ from LAPACK by at most `2.8e-15` in both sets.
+- The rotated copies read `2.07e-13` and `2.01e-12` at most, so perturbations
+  are measured at their size and none is hidden.
+- On the 40 worst corpus rows the eigensolve is within `9.1e-16` of 80 digits.
+
+The 6,292 rows of `tests/stress.py` (seed `20260930`) were appended as rows
+1,093,687 to 1,099,978. The corpus now has 1,099,979 rows, SHA-256
+`61e29171e038a9b551ece779f5daf3c61e82375ecf5aecb8c27a31a6738c9416`. They
+were chosen for stated difficulties:
+
+- planted frames near or on Horn walls, with exact margins from `1e-9` down
+  to rounding level;
+- the 42 near-wall rows `bb68989` declined;
+- targets with repeated or nearly repeated spectra;
+- data near a (3,1) spectrum or near the identity gate.
+
+`bb68989` declined 70 of them; the current solver declines none.
+
+Maxima with the production solver:
+
+| Term | Rows 0 to 1,093,686 | Appended rows | Ceiling |
+|---|---|---|---|
+| Spectrum | `1.78e-14` | `1.24e-14` | `5e-14` |
+| Spectrum at 80 digits, rows above `1e-14` in LAPACK | `1.77e-14` | | |
+| Orthogonality of $O$ | `1.07e-14` | `2.2e-15` | `5e-14` |
+| Determinant of $O$ | `5.6e-15` | `2.2e-15` | `5e-14` |
+
+In one unpinned full-corpus run, the solver took 10.26 s in total, with a
+median of 3.2 µs per row. The slowest row, 1,094,103, is a near-wall stress
+row at 55 ms. The runner gained `--witnesses PATH`, and `tests/check80.py`
+reads its output.
+
 ## Retired interfaces
 
 Runtime chart deduplication and `init_tables` were removed with the runtime
