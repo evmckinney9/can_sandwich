@@ -441,7 +441,7 @@ fn polish_with(
             solution.state = state;
         }
     }
-    // Frames still above 2e-14 after both polishes: Gauss–Newton on the roots.
+    // Frames still above 1e-14 after both polishes: Gauss–Newton on the roots.
     if solution.state.root_error > 1e-14 {
         let o = problem.newton_polish(solution.o);
         if let Some(state) = spectral::verify(problem, &o)
