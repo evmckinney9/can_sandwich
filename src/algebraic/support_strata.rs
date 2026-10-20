@@ -88,7 +88,7 @@ pub(crate) fn solve_face(problem: &Problem) -> Option<Solution> {
                                 break 'orders;
                             }
                             if r < ACCEPT
-                                && let Some(solution) = compiler_solution(problem, o, Rung::Face, r)
+                                && let Some(solution) = compiler_solution(problem, o, Rung::Face)
                             {
                                 return Some(solution);
                             }

@@ -156,7 +156,6 @@ fn recover(problem: Problem, c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<(P
             Some(Solution {
                 o,
                 rung: Rung::Numerical,
-                residual: state.error,
                 state,
             })
         })
@@ -309,7 +308,6 @@ fn stratum_candidates(
                 let found = Solution {
                     o: candidate,
                     rung: b.rung,
-                    residual: state.error,
                     state,
                 };
                 best = better(best, Some(polish_with(problem, c, g, t, found, false)));
@@ -327,7 +325,6 @@ fn stratum_candidates(
         let found = Solution {
             o,
             rung: Rung::Numerical,
-            residual: state.error,
             state,
         };
         best = better(best, Some(polish_with(problem, c, g, t, found, false)));
@@ -359,7 +356,6 @@ fn transported(_from: &Problem, to: &Problem, solution: Solution) -> Option<Solu
     Some(Solution {
         o,
         rung: solution.rung,
-        residual: state.error,
         state,
     })
 }
@@ -409,7 +405,6 @@ fn polish_with(
                 < (current.root_error - 4.0 * current.off_diagonal_error).max(0.5 * current.error)
         {
             solution.o = o;
-            solution.residual = state.error;
             solution.state = state;
             constructed = false;
         }
@@ -427,7 +422,6 @@ fn polish_with(
                 && problem.joint(&o, state, 0.0).error < lower_error.max(0.5 * current.error)
             {
                 solution.o = o;
-                solution.residual = state.error;
                 solution.state = state;
                 constructed = false;
             }
@@ -447,7 +441,6 @@ fn polish_with(
             && state.root_error <= solution.state.root_error.max(drift)
         {
             solution.o = o;
-            solution.residual = state.error;
             solution.state = state;
         }
     }
@@ -458,7 +451,6 @@ fn polish_with(
             && state.root_error < solution.state.root_error
         {
             solution.o = o;
-            solution.residual = state.error;
             solution.state = state;
         }
     }
@@ -548,7 +540,6 @@ fn reflected(
             let found = Solution {
                 o,
                 rung: b.rung,
-                residual: state.error,
                 state,
             };
             if state.root_error <= numerical::ROOT_TOLERANCE {
@@ -576,7 +567,6 @@ fn vertex_quadratic(problem: &Problem) -> Option<Solution> {
                 Some(Solution {
                     o,
                     rung: Rung::Numerical,
-                    residual: state.error,
                     state,
                 }),
             );
@@ -755,7 +745,6 @@ fn gauge_search(
             let found = Solution {
                 o,
                 rung: b.rung,
-                residual: state.error,
                 state,
             };
             if state.root_error <= numerical::ROOT_TOLERANCE {

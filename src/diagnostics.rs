@@ -1,9 +1,7 @@
 //! Route reports, candidate verification, and optional stage timing.
 #[cfg(feature = "diagnostics")]
 use crate::{
-    ComplexMatrix as Mat4, Rung, Solution,
-    algebraic::{ACCEPT, compiler_solution},
-    problem::Problem,
+    ComplexMatrix as Mat4, Rung, Solution, algebraic::compiler_solution, problem::Problem,
 };
 
 /// Stable, endpoint-computable branch bin used by corpus census tooling.
@@ -45,7 +43,7 @@ pub fn certify_frame(
     rung: Rung,
 ) -> Option<Solution> {
     let problem = Problem::new(c, g, t);
-    compiler_solution(&problem, o, rung, ACCEPT)
+    compiler_solution(&problem, o, rung)
 }
 
 /// PROF=1 instrumentation: per-stage aggregate ns/calls across a corpus run.

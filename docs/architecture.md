@@ -104,7 +104,7 @@ function reports a decline.
 ## Diagnostics
 
 With the `diagnostics` feature, `solve_report` returns `Option<Solution>` with
-the real frame, successful `Rung`, and spectral residual. `branch_signature`
+the real frame and the successful `Rung`. `branch_signature`
 classifies the inputs, and `certify_frame` checks a proposed complex frame
 through the production acceptance path. Set `PROF=1` and call `prof::dump()`
 for stage timings.

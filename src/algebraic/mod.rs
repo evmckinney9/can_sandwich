@@ -56,13 +56,8 @@ fn certify_frame_against_targets(
 /// roots. If it fails, verify its refinement, then its retargets near repeated
 /// roots, so the returned frame can differ from `o`. Keep the verified
 /// eigenbasis for endpoint reconstruction.
-pub(crate) fn compiler_solution(
-    problem: &Problem,
-    o: Mat4,
-    rung: Rung,
-    residual: f64,
-) -> Option<Solution> {
-    compiler_solution_with(problem, o, rung, residual, false)
+pub(crate) fn compiler_solution(problem: &Problem, o: Mat4, rung: Rung) -> Option<Solution> {
+    compiler_solution_with(problem, o, rung, false)
 }
 
 /// `compiler_solution` for a frame that may be a direct Klein chart frame.
@@ -70,12 +65,10 @@ fn compiler_solution_with(
     problem: &Problem,
     o: Mat4,
     rung: Rung,
-    residual: f64,
     klein_frame: bool,
 ) -> Option<Solution> {
-    if !residual.is_finite()
-        || o.iter()
-            .any(|z| !z.re.is_finite() || !z.im.is_finite() || z.im.abs() > FRAME_ACCEPT)
+    if o.iter()
+        .any(|z| !z.re.is_finite() || !z.im.is_finite() || z.im.abs() > FRAME_ACCEPT)
     {
         return None;
     }
@@ -101,7 +94,6 @@ fn compiler_solution_with(
         Some(Solution {
             o: real,
             rung,
-            residual: state.error,
             state,
         })
     };
@@ -115,7 +107,6 @@ fn compiler_solution_with(
         return Some(Solution {
             o: real,
             rung,
-            residual: state.error,
             state,
         });
     }
@@ -391,8 +382,6 @@ pub struct Solution {
     /// Construction that produced the verified frame.
     #[cfg_attr(not(feature = "diagnostics"), allow(dead_code))]
     pub rung: Rung,
-    #[cfg_attr(not(feature = "diagnostics"), allow(dead_code))]
-    pub residual: f64,
     pub(crate) state: crate::spectral::State,
 }
 
@@ -420,7 +409,7 @@ fn solve_scalar_factor(problem: &Problem) -> Option<Solution> {
     let expected: [C; 4] = other.map(|z| scalar * z);
     let error = problem.match_roots(expected);
     (error <= ACCEPT)
-        .then(|| compiler_solution(problem, Mat4::identity(), Rung::Vertex, error))
+        .then(|| compiler_solution(problem, Mat4::identity(), Rung::Vertex))
         .flatten()
 }
 
@@ -600,7 +589,7 @@ fn solve_rank_one_side(
         }
         let residual = compound_residual(&problem.dc, &problem.lam, &o, target);
         if residual <= ACCEPT {
-            candidate = compiler_solution(problem, o, rung, residual);
+            candidate = compiler_solution(problem, o, rung);
             if candidate.is_some() {
                 return candidate;
             }
@@ -643,7 +632,7 @@ fn solve_prefix(problem: &Problem, skip: Option<Rung>) -> Option<Solution> {
             }
             let r = perm_vertex_residual(&problem.left, &problem.right, &problem.targets, &p);
             if r < ACCEPT
-                && let Some(solution) = compiler_solution(problem, signed_perm(p), Rung::Vertex, r)
+                && let Some(solution) = compiler_solution(problem, signed_perm(p), Rung::Vertex)
             {
                 return Some(solution);
             }
@@ -668,8 +657,8 @@ fn solve_prefix(problem: &Problem, skip: Option<Rung>) -> Option<Solution> {
             PERMS24,
         );
         prof::rec(prof::EDGE, tp);
-        if let Some((o, r)) = hit
-            && let Some(solution) = compiler_solution(problem, o, Rung::Edge, r)
+        if let Some((o, _)) = hit
+            && let Some(solution) = compiler_solution(problem, o, Rung::Edge)
         {
             return Some(solution);
         }
@@ -702,8 +691,8 @@ pub(crate) fn solve_beyond_edge(problem: &Problem, skip: Option<Rung>) -> Option
     );
     prof::rec(prof::KLEIN_TOTAL, tk);
     if allowed(skip, Rung::Klein)
-        && let Some((o, r)) = klein_hit
-        && let Some(solution) = compiler_solution_with(problem, o, Rung::Klein, r, true)
+        && let Some((o, _)) = klein_hit
+        && let Some(solution) = compiler_solution_with(problem, o, Rung::Klein, true)
     {
         return Some(solution);
     }
@@ -720,15 +709,15 @@ pub(crate) fn solve_beyond_edge(problem: &Problem, skip: Option<Rung>) -> Option
             problem.strata,
         );
         prof::rec(prof::RADICAL_TOTAL, started);
-        if let Some((o, r)) = hit
-            && let Some(solution) = compiler_solution(problem, o, Rung::Radical, r)
+        if let Some((o, _)) = hit
+            && let Some(solution) = compiler_solution(problem, o, Rung::Radical)
         {
             return Some(solution);
         }
     }
-    if let Some((o, residual, rung)) = solve_boundary_accelerators(problem)
+    if let Some((o, _, rung)) = solve_boundary_accelerators(problem)
         && allowed(skip, rung)
-        && let Some(solution) = compiler_solution(problem, o, rung, residual)
+        && let Some(solution) = compiler_solution(problem, o, rung)
     {
         return Some(solution);
     }
@@ -750,11 +739,11 @@ fn rejects_invalid_solutions() {
         nan_imaginary,
         Mat4::repeat(C::new(f64::NAN, 0.0)),
     ] {
-        assert!(compiler_solution(&problem, frame, Rung::Interior, 0.0).is_none());
+        assert!(compiler_solution(&problem, frame, Rung::Interior).is_none());
     }
-    assert!(compiler_solution(&problem, Mat4::identity(), Rung::Interior, 0.0).is_some());
+    assert!(compiler_solution(&problem, Mat4::identity(), Rung::Interior).is_some());
     let wrong_target = Problem::new([0.0; 3], [0.0; 3], [0.125, 0.0, 0.0]);
-    assert!(compiler_solution(&wrong_target, Mat4::identity(), Rung::Interior, 0.0).is_none());
+    assert!(compiler_solution(&wrong_target, Mat4::identity(), Rung::Interior).is_none());
 }
 
 #[test]
