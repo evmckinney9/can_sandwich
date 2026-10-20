@@ -681,19 +681,20 @@ pub(crate) fn solve_beyond_edge(problem: &Problem, skip: Option<Rung>) -> Option
     // to a real quartic.  This is not a separate completeness branch; it runs
     // here because it cheaply owns a large part of both the generic and
     // confluent populations.
-    let tk = prof::start();
-    let klein_hit = klein::solve(
-        &problem.left,
-        &problem.right,
-        &problem.routed,
-        &problem.targets,
-    );
-    prof::rec(prof::KLEIN_TOTAL, tk);
-    if allowed(skip, Rung::Klein)
-        && let Some((o, _)) = klein_hit
-        && let Some(solution) = compiler_solution_with(problem, o, Rung::Klein, true)
-    {
-        return Some(solution);
+    if allowed(skip, Rung::Klein) {
+        let tk = prof::start();
+        let hit = klein::solve(
+            &problem.left,
+            &problem.right,
+            &problem.routed,
+            &problem.targets,
+        );
+        prof::rec(prof::KLEIN_TOTAL, tk);
+        if let Some((o, _)) = hit
+            && let Some(solution) = compiler_solution_with(problem, o, Rung::Klein, true)
+        {
+            return Some(solution);
+        }
     }
     // Try multiplicity formulas after the cheaper support and Klein sections.
     if allowed(skip, Rung::Radical) && problem.strata.has_confluence() {
