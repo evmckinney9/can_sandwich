@@ -139,19 +139,16 @@ fn witness(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<(Problem, Solution)>
 #[cold]
 #[inline(never)]
 fn recover(problem: Problem, c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<(Problem, Solution)> {
-    let algebraic: Option<Solution> = None;
     // A second-order vertex frame that already meets the refinement target
     // needs neither the numerical ladder nor a polish.
-    let vertex = std::cell::OnceCell::new();
-    if algebraic.is_none()
-        && let Some(v) = *vertex.get_or_init(|| vertex_quadratic(&problem))
+    let vertex = vertex_quadratic(&problem);
+    if let Some(v) = vertex
         && v.state.root_error <= numerical::ROOT_TOLERANCE
     {
         return Some((problem, v));
     }
-    let found = algebraic
-        .or_else(|| {
-            let o = numerical::solve(&problem, c, g, t)?;
+    let found = numerical::solve(&problem, c, g, t)
+        .and_then(|o| {
             let state = spectral::verify(&problem, &o)?;
             Some(Solution {
                 o,
@@ -160,7 +157,7 @@ fn recover(problem: Problem, c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<(P
             })
         })
         // The second-order vertex frames, before a decline.
-        .or_else(|| *vertex.get_or_init(|| vertex_quadratic(&problem)));
+        .or(vertex);
     let primary = found.map(|solution| polish(&problem, c, g, t, solution));
     if primary
         .as_ref()
