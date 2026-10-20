@@ -380,7 +380,6 @@ pub enum Rung {
 pub struct Solution {
     pub o: nalgebra::Matrix4<f64>,
     /// Construction that produced the verified frame.
-    #[cfg_attr(not(feature = "diagnostics"), allow(dead_code))]
     pub rung: Rung,
     pub(crate) state: crate::spectral::State,
 }
