@@ -210,23 +210,23 @@ fn tail(
     if let Some(p) = primary {
         best = better(
             best,
-            transported(&problem, &dual, p)
+            transported(&dual, p)
                 .map(|s| polish_with(&dual, g, c, t, s, false))
-                .and_then(|s| transported(&dual, &problem, s)),
+                .and_then(|s| transported(&problem, s)),
         );
     }
     // The dual's own algebraic witness: kept as is when it already beats
     // the candidates, polished only if the tail persists (or on a decline).
     let native = algebraic::solve(&dual);
     if let Some(native) = native {
-        best = better(best, transported(&dual, &problem, native));
+        best = better(best, transported(&problem, native));
         if best
             .as_ref()
             .is_none_or(|b| b.state.root_error > DUAL_TRIGGER)
         {
             best = better(
                 best,
-                transported(&dual, &problem, polish_with(&dual, g, c, t, native, false)),
+                transported(&problem, polish_with(&dual, g, c, t, native, false)),
             );
         }
     }
@@ -237,11 +237,11 @@ fn tail(
     if let Some(b) = best
         && b.state.root_error > DUAL_TRIGGER
     {
-        let dual_best = transported(&problem, &dual, b);
+        let dual_best = transported(&dual, b);
         best = better(
             best,
             stratum_candidates(&dual, g, c, t, dual_best, native, false)
-                .and_then(|s| transported(&dual, &problem, s)),
+                .and_then(|s| transported(&problem, s)),
         );
     }
     best.map(|solution| (problem, solution))
@@ -347,7 +347,7 @@ fn better(first: Option<Solution>, second: Option<Solution>) -> Option<Solution>
 }
 
 /// The transposed witness, verified on the other problem of the dual pair.
-fn transported(_from: &Problem, to: &Problem, solution: Solution) -> Option<Solution> {
+fn transported(to: &Problem, solution: Solution) -> Option<Solution> {
     let o = solution.o.transpose();
     let state = spectral::verify(to, &o)?;
     Some(Solution {
