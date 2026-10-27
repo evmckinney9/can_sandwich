@@ -933,6 +933,17 @@ seldom meets it. Which degeneration defeats the algebraic rungs is finer
 than the tight inequality's rank. Fast chord sections solve 6% of these
 rows.
 
+By reducibility signature, at 1e-9, 2,440 of the 2,777 rows carry a 1+3
+signature (a routed product `a_i b_j` equal to a target root), 73 only a
+2+2 signature (a pair product `a_I b_J` equal to a product of two target
+roots), and 264 neither. `split` solves most 1+3 rows cheaply. The 210 rows
+that get past `split` to `inverse_algebraic` and the random starts are a
+different mix: 115 near a wall with no exact signature, 44 with only 2+2,
+28 with both, and 23 with only 1+3. Two constructions are missing. The first
+is a 2+2 wall frame whose invariant planes need not be coordinate-aligned,
+where Face covers only aligned blocks. The second is a continuation from the
+nearest wall's split witness for rows just off a wall.
+
 ### Where the precision floor is
 
 Measured on 2026-09-24, with GULPS's tolerances consolidated to three scales
