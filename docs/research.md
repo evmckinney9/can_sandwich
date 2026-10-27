@@ -921,6 +921,18 @@ misses every such slice. Covering them algebraically needs sections that do
 not pass through vertices, as the spanning-tree miss start does
 numerically.
 
+These rows sit on Horn walls. On seed 9101 (`tests/margins.py` margins), the
+median margin is `2.7e-10` for Numerical rows against `0.062` over all
+rows. 81% of Numerical rows lie within `1e-6` of a wall (27% of all rows),
+and 97% within `1e-2` (32%). The wall type does not separate them from the
+24,174 on-wall rows the algebraic rungs solve. Exactly one tight inequality
+holds for 38% of Numerical against 33% of solved wall rows. The highest
+tight QLR rank is 1 for 21% against 11%, 2 for 3% against 16%, and 3 for 76%
+against 73%. The fiber degenerates on a wall, so a fixed section or chord
+seldom meets it. Which degeneration defeats the algebraic rungs is finer
+than the tight inequality's rank. Fast chord sections solve 6% of these
+rows.
+
 ### Where the precision floor is
 
 Measured on 2026-09-24, with GULPS's tolerances consolidated to three scales
