@@ -179,13 +179,21 @@ impl Problem {
             if distance >= tolerance {
                 continue;
             }
+            let restarts = if closest.is_some() { 2 } else { 8 };
+            if !self.wall_reachable(fixed, column, sign, tolerance) {
+                // Keep later routes' restarts on the same random sequence.
+                for _ in 0..3 * restarts {
+                    random(&mut seed);
+                }
+                continue;
+            }
             for start in self.wall_frames(fixed, column, sign) {
                 let (o, state) = self.refine_fixed(start, sign, Some(fixed), tolerance, false);
                 if converged(&state, tolerance) {
                     return Some(o);
                 }
             }
-            for _ in 0..(if closest.is_some() { 2 } else { 8 }) {
+            for _ in 0..restarts {
                 let mut start = R4::identity();
                 start.swap_columns(fixed, column);
                 if start.determinant() < 0.0 {
@@ -205,6 +213,62 @@ impl Problem {
         None
     }
 
+    /// The `e1` the 3×3 block must reach on the wall: the target roots
+    /// except the one nearest the routed root.
+    fn wall_e1(&self, fixed: usize, column: usize, sign: f64) -> Z {
+        let routed = self.left[fixed] * self.right[column];
+        let targets = self.target_roots[0].map(|z| z * sign);
+        let distance = |k: usize| (targets[k] - routed).norm();
+        let matched = (0..4)
+            .min_by(|&i, &j| distance(i).total_cmp(&distance(j)))
+            .unwrap_or(0);
+        let e1: Z = (0..4).filter(|&k| k != matched).map(|k| targets[k]).sum();
+        e1
+    }
+
+    /// Whether a frame with row `fixed` equal to `±e_column` can meet the
+    /// targets. Its remaining block gives `e1 = aᵀBl` with `B` orthostochastic,
+    /// hence bistochastic, so `e1` lies in the hull of the six permutation
+    /// sums. A frame converged to `tolerance` misses each root by less than
+    /// it and keeps the routed root within it of its target, so its block
+    /// misses `e1` by less than `5 * tolerance`; false only beyond
+    /// `8 * tolerance + 1e-12`.
+    fn wall_reachable(&self, fixed: usize, column: usize, sign: f64, tolerance: f64) -> bool {
+        let rows: Vec<usize> = (0..4).filter(|&i| i != fixed).collect();
+        let cols: Vec<usize> = (0..4).filter(|&j| j != column).collect();
+        let e1 = self.wall_e1(fixed, column, sign);
+        let corners: [Z; 6] = [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ]
+        .map(|p| {
+            (0..3)
+                .map(|k| self.left[rows[k]] * self.right[cols[p[k]]])
+                .sum()
+        });
+        let cross = |u: Z, v: Z| (u * v.conj()).im;
+        let margin = 8.0 * tolerance + 1e-12;
+        for i in 0..6 {
+            for j in 0..6 {
+                let edge = corners[j] - corners[i];
+                let length = edge.norm();
+                if i == j || length < 1e-9 {
+                    continue;
+                }
+                // A supporting line through two corners with e1 beyond it.
+                let side = |z: Z| cross(edge, z - corners[i]) / length;
+                if corners.iter().all(|&z| side(z) >= -1e-15) && side(e1) < -margin {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
     /// Exact frames through a Horn wall, where the routed root
     /// `left[fixed] * right[column]` equals a target root. With row `fixed`
     /// of O equal to ±e_column the sandwich splits into that root and a 3×3
@@ -218,13 +282,7 @@ impl Problem {
     fn wall_frames(&self, fixed: usize, column: usize, sign: f64) -> Vec<R4> {
         let rows: Vec<usize> = (0..4).filter(|&i| i != fixed).collect();
         let cols: Vec<usize> = (0..4).filter(|&j| j != column).collect();
-        let routed = self.left[fixed] * self.right[column];
-        let targets = self.target_roots[0].map(|z| z * sign);
-        let distance = |k: usize| (targets[k] - routed).norm();
-        let matched = (0..4)
-            .min_by(|&i, &j| distance(i).total_cmp(&distance(j)))
-            .unwrap_or(0);
-        let e1: Z = (0..4).filter(|&k| k != matched).map(|k| targets[k]).sum();
+        let e1 = self.wall_e1(fixed, column, sign);
         let mut frames = Vec::new();
         for zero_row in 0..3 {
             for zero_column in 0..3 {
@@ -650,10 +708,10 @@ fn solve_primary(problem: &Problem, c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Op
     if let Some(o) = problem.split(seed, 1e-14, SPECTRAL_TOLERANCE, None) {
         return Some(o);
     }
-    if let Some(o) = problem.near_wall(1e-6) {
+    if let Some(o) = random_starts(problem, &mut seed, &[0.0]) {
         return Some(o);
     }
-    if let Some(o) = random_starts(problem, &mut seed, &[0.0]) {
+    if let Some(o) = problem.near_wall(1e-6) {
         return Some(o);
     }
     let swapped = Problem::new(g, c, t);
@@ -662,6 +720,16 @@ fn solve_primary(problem: &Problem, c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Op
         .or_else(|| random_starts(&swapped, &mut seed, &[0.0]))
         .map(|o| o.transpose())
         .or_else(|| random_starts(problem, &mut seed, &[1.0, -1.0]))
+}
+
+/// `inverse_factor` from the inverse problem's algebraic witness instead of
+/// its numerical ladder: the cyclic rotation often moves a target that has
+/// no algebraic frame onto a stratum that has one.
+fn inverse_algebraic(original: &Problem, c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<R4> {
+    let dual = Problem::new(c.map(|x| -x), t, g);
+    let frame = crate::algebraic::solve(&dual)?.o;
+    let o = dual.state(&frame, 0.0).ordered_basis();
+    converged(&original.state(&o, 0.0), SPECTRAL_TOLERANCE).then_some(o)
 }
 
 /// Reorder the real eigenbasis of A^-1/2 W C W^T A^-1/2 to B's spectrum.
@@ -728,7 +796,8 @@ pub(crate) fn solve(problem: &Problem, c: [f64; 3], g: [f64; 3], t: [f64; 3]) ->
     {
         return None;
     }
-    solve_primary(problem, c, g, t)
+    inverse_algebraic(problem, c, g, t)
+        .or_else(|| solve_primary(problem, c, g, t))
         .or_else(|| near_commuting(problem))
         .or_else(|| inverse_factor(problem, c, g, t))
         .or_else(|| inverse_factor(&Problem::new(g, c, t), g, c, t).map(|o| o.transpose()))

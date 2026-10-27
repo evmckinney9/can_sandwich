@@ -905,6 +905,158 @@ Every row passes in both. 2,498 rows' spectral errors change, 1,267 up and
 `1.780e-14`. On the changed rows, orthogonality and determinant defects are
 at most `6.7e-16`.
 
+## Fewer damping retries in refine_fixed, 2026-10-27
+
+Baseline `d2e66d7`, same corpus SHA-256, one runner process. Rejected.
+
+`PROF=1` over every fourth corpus row put post-solve polish at 19% of solver
+time. Most of it is in `refine_fixed`, at 4.1 iterations and 7.2 `measure`
+calls per call. 43% of those calls are rejected steps, mostly from calls
+that stall without converging and then spend all 12 damping retries before
+stopping. A different starting damping or a different growth factor left
+about 80,000 rejections on the sample.
+
+Four retries instead of 12: two alternating full-corpus runs took 6.615 and
+6.726 s at the baseline, and 6.165 and 5.971 s for the candidate (−8.5%).
+But row 1,076,048 failed at `7.67e-14`, and rows above `1e-14` went from 557
+to 561, as the earlier cap experiments found. Four retries only once
+`root_error <= 2e-14`, 12 otherwise: every row passed, the maximum went from
+`1.780e-14` to `1.782e-14`, and one run took 6.551 s. That is within the
+baseline's own spread, so the stalls that cost time are above `2e-14`, the
+same rows that need the retries.
+
+## Algebraic complex square root in the radical rung, 2026-10-27
+
+Baseline `aacdd1f`, same corpus SHA-256, one runner process. Rejected. No code.
+
+`num_complex::Complex::sqrt` takes the polar form, so each call pays
+`hypot`, `atan2`, `sin` and `cos`; in `two_step`, `hypot` was 22% of
+self samples and most came from `lift_beta_roots`. The candidate replaced
+the eleven complex square roots in `radical.rs` with
+`t = sqrt((|z| + |Re z|) / 2)`, `(t, Im z / 2t)` or `(|Im z| / 2t, ±t)`.
+Radical time on every tenth Radical row fell 9.5% under `PROF=1`.
+
+Two alternating full-corpus runs: 6.644 and 6.758 s at the baseline, 6.574
+and 6.675 s for the candidate, within run to run noise. All rows passed.
+114,673 rows changed spectral error, 57,938 smaller and 56,735 larger. Rows
+over `1e-14` went from 557 to 564, and row 757,173 went from `5.1e-16` to
+`1.06e-14`. Computing `m.norm()` once in `lift_beta_roots`, which is
+bit-identical, saved 1% of Radical time.
+
+## Face e1 parallelogram gate, 2026-10-27
+
+Baseline `9e08ab4`, same corpus SHA-256, one runner process. Kept.
+
+`PROF=1` over the full corpus put Face at 1,064 ms. On rows with
+`strata.has_confluence()`, Face missed 189,190 times at 2.43 µs each, 459
+ms in all. On Radical rows its two lifts matched block determinants equally
+often, 564,232 times each, and 201,267 frames reached `compound_residual`.
+All of them failed, 201,020 of them above `1e-4`, and all but 160 had a
+block with `|sin α sin β| < 1e-9`. There `block_angle` returns 0 for any
+root, so the frame is a vertex or edge frame. Skipping such blocks is not
+lossless: 2,451 of the 272,876 Face wins come from them.
+
+Every frame of a match is block diagonal, so its e1 is the sum of the two
+block traces. Each trace lies on the segment from its `cos θ = 1` value
+`d_a λ_x + d_b λ_y` to its `sin θ = 1` value `d_a λ_y + d_b λ_x`, whichever
+order, sign and angle the loop picks. `compound_residual` is at least
+`|Δe1|`, so a match whose target e1 lies more than `ACCEPT + 1e-12` from
+the parallelogram of the two segments has no accepted frame. The gate skips
+those matches before any `block_angle`, frame or residual. `matched` is
+still set first, so the second lift runs exactly as before.
+
+Two alternating full-corpus runs took 6.598 and 6.726 s at the baseline, and
+6.352 and 6.219 s for the candidate (−5.6%). Every row's spectral,
+orthogonality and determinant error is bit-identical in both pairs.
+
+## Bernstein pre-check on the admissible-region cubics, 2026-10-27
+
+Rejected. `admissible_components` solves five cubics per chart, and its
+rejections (58% of the 340,018 charts that reach it) save the 1 µs sextic
+rooter on 197,000 charts. Skipping a cubic whose four Bernstein coefficients
+on `[0, 1]` share a sign cut its time from 0.49 to 0.44 µs per call on the
+Interior rows. That is about 0.4% of the corpus, and two charts changed
+outcome, so it is not bit-identical.
+
+## Random starts before near-wall starts, 2026-10-27
+
+Baseline `31e0cd3`, same corpus SHA-256, one runner process. Kept.
+
+After `d2e66d7`, 3,235 corpus rows reach `numerical::solve`. `PROF=1` there
+showed `near_wall` reached on 2,017 rows at 102 µs a call, 206 ms in all,
+and winning only 199. The random starts that follow it won 1,816 of the
+1,818 rows they saw, at 67 µs. `solve_primary` now tries the random starts
+first. `near_wall` still runs when they fail.
+
+Two alternating full-corpus runs, with another benchmark on the machine:
+6.751 and 6.844 s at the baseline, 7.189 and 6.484 s for the candidate.
+That spread is load, so time is compared on the 5,751 rows production
+routes to `Numerical`, where only this change acts. They took 821 and 814 ms
+at the baseline, 671 and 640 ms for the candidate (−20% there, about −2.4%
+of the corpus). Every row passes. 194 spectral errors change, 92 up. Rows
+above `1e-14` stay at 557, and the maximum stays at `1.780e-14`. The largest
+increase is row 17, from `2.1e-15` to `1.01e-14`.
+
+## Algebraic witness of the inverse problem before random starts, 2026-10-27
+
+Baseline `812c8cc`, same corpus SHA-256, binaries built before the runs.
+Kept for the latency tail.
+
+The corpus's slowest row, 1,095,409 at 28 ms, fails `solve_primary`, the
+swapped problem and `near_commuting`, and `inverse_factor` finally solves
+it. That runs the numerical ladder on the cyclic rotation `(−c, t, g)`.
+Production's algebraic rungs solve that rotation outright for 1,622 of the
+5,751 rows production sends to `Numerical`. `numerical::solve` now tries
+`algebraic::solve` on the rotation first. It lifts the frame with
+`ordered_basis` as `inverse_factor` does and keeps it only when it verifies.
+The second rotation, from the transposed problem, cost more than it saved
+on those rows and is not included.
+
+Two alternating full-corpus runs: 6.103 and 6.015 s at the baseline, 5.986
+and 6.069 s for the candidate, which is within noise. On the Numerical rows,
+605 and 600 ms against 575 and 594 ms. The maximum row latency fell from
+28.1 and 28.3 ms (row 1,095,409) to 6.6 and 9.8 ms (row 1,080,143). Every
+row passes. 1,147 spectral errors change, 864 up, at the rounding level of
+lifted frames. Rows above `1e-14` stay at 557, and the maximum stays at
+`1.780e-14`.
+
+## Horn-wall route hull gate, 2026-10-27
+
+Baseline `8030ef4`, same corpus SHA-256, one runner process. Kept.
+
+`Problem::split` refines each live route, a routed root within the root
+tolerance of a target root, from the exact wall frames and then from random
+starts. On every fourth corpus row, 2,249 calls had a live route; the 447
+that returned no frame took 193 µs each, 86 of split's 127 ms, spent in
+`refine_fixed` runs that could not converge. `refine_fixed` keeps row
+`fixed` at `±e_column`, so the complementary block's $e_1$ is
+$a^\top B l$ with $B$ orthostochastic, hence bistochastic, and lies in the
+hull of the six permutation sums. A converged frame misses that $e_1$ by
+less than `5 * tolerance`. Routes whose target $e_1$ lies outside the hull by
+more than `8 * tolerance + 1e-12` are skipped, and their random draws are
+consumed so later routes see the same starts.
+
+On every fourth row the wall and random wins stay at 1,372 and 430, failing
+calls take 5.4 µs, and `refine_fixed` calls fall from 4,503 to 1,991. Two
+alternating full-corpus runs from prebuilt binaries: 6.024 and 5.946 s at the
+baseline, 5.653 and 5.651 s for the candidate (−5.6%). Rows over 50 µs at the
+baseline take 1,489 ms, 1,132 ms after. Every row's spectral, orthogonality
+and determinant error is bit-identical in both pairs.
+
+## Factoring the refinement Jacobian once per step, 2026-10-27
+
+Baseline `149f4c3`, same corpus SHA-256, one runner process. Rejected. No code.
+
+On the 241 rows over 1 ms, `refine_fixed` was 91% of samples and the 36×6
+Householder QR of `[J; √D]`, redone for each of up to 12 damping retries,
+about a third. The candidate factored the 30×6 `J` once per step and solved
+`[R; √D] s = [Qᵀ(−r); 0]`, a 12×6 QR, per retry. Five passes over those rows
+took 1.98 and 2.00 s against 2.09 and 2.21 s. Two alternating full-corpus
+runs: 5.677 and 5.631 s at the baseline, 5.662 and 5.663 s for the
+candidate. 10,511 rows changed spectral error, 5,306 smaller and 5,205
+larger, and the corpus maximum rose from `1.78e-14` to `1.87e-14` on row
+1,073,805.
+
 ## Retired interfaces
 
 Runtime chart deduplication and `init_tables` were removed with the runtime

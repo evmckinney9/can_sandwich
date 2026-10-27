@@ -86,6 +86,21 @@ pub(crate) fn solve_face(problem: &Problem) -> Option<Solution> {
                     let (k, _) = complement(i, j);
                     let (x, y) = PLANES[q6];
                     let (z, v) = PLANES[5 - q6];
+                    // Every frame of this match is block diagonal, so its e1 is
+                    // the sum of the two block traces, each on the segment
+                    // from its cos θ = 1 to its sin θ = 1 value whatever the
+                    // order, sign or angle. compound_residual is at least
+                    // |Δe1|, so a target e1 outside that parallelogram by more
+                    // than ACCEPT has no accepted frame in this match.
+                    let origin =
+                        d2[a] * lam4[x] + d2[b] * lam4[y] + d2[c] * lam4[z] + d2[d] * lam4[v];
+                    let span = [
+                        d2[a] * lam4[y] + d2[b] * lam4[x] - d2[a] * lam4[x] - d2[b] * lam4[y],
+                        d2[c] * lam4[v] + d2[d] * lam4[z] - d2[c] * lam4[z] - d2[d] * lam4[v],
+                    ];
+                    if parallelogram_distance(targets[bi][0] - origin, span) > ACCEPT + 1e-12 {
+                        continue;
+                    }
                     // Reversing a block's order gives a sign-conjugate frame with
                     // the same spectrum. The variants differ only by roundoff, which
                     // matters to refinement only near acceptance.
@@ -125,6 +140,32 @@ pub(crate) fn solve_face(problem: &Problem) -> Option<Solution> {
         }
     }
     None
+}
+
+/// Distance from `p` to the parallelogram `{s u + t v : s, t ∈ [0, 1]}`.
+fn parallelogram_distance(p: C, [u, v]: [C; 2]) -> f64 {
+    let cross = |a: C, b: C| a.re * b.im - a.im * b.re;
+    let area = cross(u, v);
+    if area.abs() > 1e-300 {
+        let (s, t) = (cross(p, v) / area, cross(u, p) / area);
+        if (0.0..=1.0).contains(&s) && (0.0..=1.0).contains(&t) {
+            return 0.0;
+        }
+    }
+    // Outside, or collapsed to a segment: the four edges cover the boundary.
+    let segment = |a: C, d: C| {
+        let len = d.norm_sqr();
+        let h = if len > 0.0 {
+            ((p - a).re * d.re + (p - a).im * d.im) / len
+        } else {
+            0.0
+        };
+        (p - a - d * h.clamp(0.0, 1.0)).norm()
+    };
+    segment(C::new(0.0, 0.0), u)
+        .min(segment(C::new(0.0, 0.0), v))
+        .min(segment(u, v))
+        .min(segment(v, u))
 }
 
 /// Lossless row-level gate for every vertex and one-Givens edge.

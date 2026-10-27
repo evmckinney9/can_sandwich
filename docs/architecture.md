@@ -67,8 +67,12 @@ retains useful partial progress. When refinement stalls at a vertex, edge, or
 face frame, it restarts along the null space of the root Jacobian. If the
 polished frame still misses the target and a routed root $a_ib_j$ lies within
 `1e-11` of a target root, the two nearest such routes are refined again with
-that root held fixed. It first tries the exact Horn-wall frames, then 2
-random starts of the complementary $SO(3)$ block. The numerical ladder's own
+that root held fixed. A route is skipped when the remaining target roots'
+sum lies outside the hull of the six permutation sums of the complementary
+roots by more than `8 * tolerance + 1e-12`, since the complementary block's
+$e_1$ is a bistochastic combination of them. Otherwise it first tries the
+exact Horn-wall frames, then 2 random starts of the complementary $SO(3)$
+block. The numerical ladder's own
 split, which has no designated route, uses 8 random starts. This reaches targets on a rank-1 Horn wall, where free refinement
 stalls at a singular fiber. Polishing
 measures frames with a joint eigenbasis: a basis with a large residual is
