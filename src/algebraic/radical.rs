@@ -1714,8 +1714,23 @@ pub(crate) fn two_step<R>(
             // passes the inheritance gate only if a free root lands on that
             // copy. On the corpus 118,058 such pairs lost and one won, a row
             // that a later rung then solves, so these pairs are not tried.
-            // This is an empirical prune, not a proof: such a pair can win.
+            // This is an empirical prune, not a proof: such a pair can win
+            // where the closure vanishes exactly at v + pp/v, a codimension-one
+            // set. Every accepted one-copy frame measured lies above FAST_ACCEPT
+            // ([research](../../docs/research.md)), so under the Radical policy
+            // none was kept.
+            // Equal pins put a double root into mu. A witness's mu is the
+            // spectrum of a unitary one rank-one peel from both delta and w, so
+            // a double mu value lies in both: a coincident data letter
+            // ([research](../../docs/research.md#mu-repeats-only-at-coincident-letters)).
+            let coincident = |z: C| {
+                w.iter().any(|&y| (y - z).norm_sqr() < XTOL * XTOL)
+                    && delta.iter().any(|&y| (y - z).norm_sqr() < XTOL * XTOL)
+            };
             for pair in pairs[..npairs].iter().filter(|pair| {
+                if (pair.t1 - pair.t2).norm_sqr() < XTOL * XTOL && !coincident(pair.t1) {
+                    return false;
+                }
                 let in_pass = if cap == usize::MAX {
                     pair.raw_index >= 6
                 } else {
@@ -1798,6 +1813,16 @@ pub(crate) fn two_step<R>(
                         continue;
                     }
                     let mu = [t1, t2, m_free, pp / m_free];
+                    // A repeated mu value off the coincident letters cannot be
+                    // a witness (see the pair filter above): this drops the
+                    // pins themselves and the collision points m = pp/m as
+                    // free roots, and any root landing on a pin.
+                    if (0..4).any(|i| {
+                        (i + 1..4).any(|j| (mu[i] - mu[j]).norm_sqr() < XTOL * XTOL)
+                            && !coincident(mu[i])
+                    }) {
+                        continue;
+                    }
                     // The inheritance gate (confluent three laws): an
                     // admissible mu on clustered data must carry each cluster
                     // value with multiplicity s-1 (proven); candidates without

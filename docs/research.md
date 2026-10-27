@@ -771,6 +771,156 @@ own angle selection missed in the first ordering.
 As a solver the atlas is slower and less accurate than the cascade
 ([log](optimization.md#sparse-column-atlas-as-a-solver-2026-10-26)).
 
+### One-copy pin pairs only reach near-misses
+
+In `two_step` on clustered data, the inheritance gate needs `s − 1` copies
+of each delta cluster value in `mu = [t1, t2, m, pp/m]`. A pin pair whose
+pins leave exactly one copy `v` uncovered can pass only if a free root
+equals `v`. Then `beta = m + pp/m` is the closure root `beta* = v + pp/v`
+exactly, which is a codimension-one condition on the data. The gate
+compares with tolerance `1e-4`, so a free root near `v` passes it without
+solving the problem.
+
+Measured at `e9bcf65`, before the prune: one-copy pairs reached `accept`
+2,699 times on the corpus and 4,463 and 4,218 times on held-out seeds 9101
+and 9202. They were accepted 1, 10 and 10 times, with residuals from
+`1.42e-14` to `9.9e-14` and none below `FAST_ACCEPT`. Under the current
+Radical policy, which keeps frames only below `FAST_ACCEPT` (`551b1f4`),
+none of these pairs yields a kept frame on any measured row.
+
+Conjecture: a one-copy pin pair yields an exact witness only on the
+codimension-one set where the closure vanishes at `beta*`. Its companion
+pairs `(t1, v)` and `(t2, v)` have the same multiset. On corpus row
+1,074,079 the companion did not recover it at `ACCEPT`, and the row went to
+Interior. So redundancy on that set is unproven.
+
+### Mu repeats only at coincident letters
+
+`Frame::matrix` is `M = D (c I + ρ1 v1 v1ᵀ + ρ2 v2 v2ᵀ) D` with
+`D = diag(cis(arg a / 2))` unitary, so `M0 = c diag(a)` has spectrum delta,
+`M1 = D (c I + ρ1 v1 v1ᵀ) D` has spectrum mu, and `M` has spectrum w. For a
+witness the middle factor is `O diag(c, c, d1, d2) Oᵀ` with `O` real
+orthogonal and `ρk = dk − c`. So `v1` and `v2` are orthonormal columns of `O`.
+When `d1 = d2`, `v1 v1ᵀ + v2 v2ᵀ` is a rank-two projector, which forces the
+same. Then `c I + ρ1 v1 v1ᵀ = c P⊥ + d1 P` is unitary, because
+`|c| = |d1| = 1`, so `M1` is unitary and diagonalizable.
+
+For diagonalizable `A` and rank-one `R`, `dim ker(A + R − z) ≥ dim ker(A − z) − 1`,
+so multiplicities differ by at most one. `M1 − M0` and `M − M1` are rank
+one. A double mu value therefore has multiplicity at least one in delta and
+in w: it is a coincident data letter. `two_step` skips pin pairs with
+`t1 = t2` elsewhere, exactly up to the `XTOL` coincidence tolerance.
+
+The same argument applies to each candidate `mu = [t1, t2, m, pp/m]`. A
+free root on a pin (the chain candidates `m = t1, t2`), or a collision point
+`m = pp/m = ±sqrt(pp)`, repeats a value of mu. Off the coincident letters
+those candidates are skipped too. They had won 0 of 177,000 tries on the
+corpus and 0 of 82,000 on the held-out sets.
+
+The other session closed the unitarity step. Before the proof, the count
+was 0 wins in about 33,000 such pairs on the corpus and held-out seeds 9101
+and 9202, and the skip leaves all three bit-identical.
+
+### Pins are zero components of the peels
+
+On a Radical row the gate has a double value `c`. Rotations of the `c`
+eigenplane leave `O diag(c, c, d1, d2) Oᵀ` unchanged, so the witness fiber in
+SO(4) has dimension `6 − 1 − 3 = 2` rather than 3. In the peel form `M1` sits
+one rank-one step from `M0` and from `M`. A mu value equal to `delta_k` means
+`v1` has a zero `k`-th component, a D pin: the first peel leaves that
+eigenvalue in place. A mu value equal to a target root means `v2` vanishes on
+that eigenvector of `M1`, a W pin. Each pin is one real condition, so two
+pins cut the 2-dimensional fiber to finitely many frames, which `two_step`
+enumerates. A third coincidence is codimension one, which is why one-copy
+pairs only reach near-misses.
+
+Winning mu on the corpus (held-out seed 9101 in parentheses):
+
+| Rows | Pins | Wins |
+|---|---|---|
+| simple delta | two W | 55,195 (4,062) |
+| simple delta | W and D | 12,902 (1,117) |
+| simple delta | W and a coincident letter | 16,660 (949) |
+| simple delta | two coincident letters | 4,008 (97) |
+| clustered delta | W and the cluster copy | 23,816 (864) |
+| clustered delta | coincident letter and the cluster copy | 2,993 (96) |
+| clustered delta | two D (one the cluster copy) | 1,144 (57) |
+
+Some 99.7% of winning mu carry exactly two data values. The rest (four data
+values, no free root) come from degenerate inputs. Which zero pattern admits
+positive residue weights for given data is the open question. The strict
+word gate decides part of it from interlacing alone. Positive weights in a
+rank-one unitary step are equivalent to its two spectra interlacing on the
+circle, with pins as zero weights. Measured on every pair-loop candidate of
+the corpus and seed 9101, no winning mu failed to interlace delta and w once
+pins within `1e-3` were removed, and 54% of all candidates failed. As a gate
+before `try_mu` this saves nothing
+([log](optimization.md#interlacing-gate-before-try_mu-2026-10-27)), because
+`try_mu` rejects those candidates as early.
+
+### Target-side inheritance
+
+The rank-one lemma applies to the second peel as well. A target value `z`
+repeated `s` times in w appears at least `s − 1` times in mu. A pin pair
+whose pins do not supply those copies needs free roots on `z`. On `e51554e`
+such pairs numbered 115,056 on the corpus and 13,294 and 13,777 on held-out
+seeds 9101 and 9202, of about 600,000 and 87,000 pairs. They won 7, 7 and 6
+times, all kept below `FAST_ACCEPT`. Unlike the one-copy pairs on the delta
+side, these wins are real witnesses, so skipping such pairs would be an
+empirical prune, not an exact gate. The strict word gate returns no verdict
+on 56% of pairs, those where a target root repeats or meets a delta value.
+Its losing pairs cost 348 ms on the corpus and 99 ms on seed 9101. A word
+law for those cases has to treat a repeated target value as a forced mu
+copy, as `StrictWord` already treats a delta cluster.
+
+### An arc-count oracle for pin pairs
+
+Through the Cayley transform, a rank-one unitary step is a rank-one
+Hermitian step. So the two spectra differ by at most one letter in every arc
+of the circle, open or closed, with ties counted on the endpoint. For a pin
+pair `(t1, t2)` the question becomes whether some placement of the two free
+mu letters makes `delta → mu` and `mu → w` both satisfy this. A brute-force
+oracle (free letters at every data point and every gap midpoint) answers it
+with no word conventions, and handles clusters, doubled targets and
+coincident letters alike. On `1e6d6fd`:
+
+| Pairs | Seed 9101 (all rows) | Corpus (every fourth row) |
+|---|---|---|
+| winning pairs the oracle rejects | 0 of 7,508 | 0 of 30,862 |
+| strict word silent, oracle rejects | 11,944 of 42,108 | 7,250 of 81,088 |
+| strict word accepts, oracle rejects | 1,465 | 668 |
+| strict word rejects, oracle accepts | 469 | 657 |
+
+The oracle covers most of the strict word's silent cases. The strict word
+still rejects some pairs the oracle allows, probably because it also uses
+the direction of rotation.
+
+The law has an exact fast form. Two counting functions that differ by at
+most one everywhere means that the cyclic prefix sums of
+`count_x − count_y`, over the sorted distinct points, have a range of at
+most one. A free mu letter at a slot shifts the `delta − mu` prefix down and
+the `mu − w` prefix up from there on. So feasibility of a pin pair is a scan
+over slot pairs with suffix extremes, about 400 integer steps. It agreed
+with the brute-force oracle on all of the roughly 236,000 pairs above. As a
+gate after the strict word, the full-corpus and held-out output was
+bit-identical, which confirms the law on every row. But it was slower
+([log](optimization.md#arc-count-interlacing-gate-2026-10-27)), because it
+runs on every pair and the pairs it rejects were already cheap to lose.
+
+### What the numerical ladder still owns
+
+On held-out seed 9101 at `7629816`, 2,777 of 98,081 rows end in Numerical,
+which is about a quarter of solver time. By stratum: 2,085 have all four
+spectra distinct (3.3% of the 62,956 such rows). The rest come from small
+near-degenerate strata (a near-scalar `c` or `g`, pairs, triples), each 5
+to 11% of its stratum. All 384 three-Givens charts swept after
+`BOUNDARY_HEAD` found frames for only 166 of the 1,462 rows that reach
+`numerical::solve`, at 194 µs a call. A chart is a three-dimensional slice of
+SO(4) through a permutation vertex, and on these rows the witness fiber
+misses every such slice. Covering them algebraically needs sections that do
+not pass through vertices, as the spanning-tree miss start does
+numerically.
+
 ### Where the precision floor is
 
 Measured on 2026-09-24, with GULPS's tolerances consolidated to three scales

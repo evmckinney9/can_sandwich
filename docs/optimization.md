@@ -1294,6 +1294,57 @@ pinned worktrees, every row passing on all three sets.
 
 Latencies are in µs unless marked.
 
+## Equal pin pairs off coincident letters, 2026-10-27
+
+Baseline `3f148b6` from a pinned worktree. Kept as an exact gate
+([research](research.md#mu-repeats-only-at-coincident-letters)). Output is
+bit-identical on the corpus and both held-out sets. Time is unchanged:
+corpus 5.394, 5.453 → 5.420, 5.376 s; `s9101` 1.068, 1.066 → 1.064,
+1.073 s; `s9202` 1.042, 1.039 → 1.039, 1.048 s.
+
+## Candidates whose mu repeats off coincident letters, 2026-10-27
+
+Baseline `9b2126b` from a pinned worktree. Kept as an exact gate
+([research](research.md#mu-repeats-only-at-coincident-letters)). Output is
+bit-identical on the corpus and both held-out sets. Corpus 5.384, 5.375 →
+5.344, 5.314 s (−0.9%). `s9101` 1.063, 1.069 → 1.054, 1.062 s.
+`s9202` 1.041, 1.040 → 1.033, 1.035 s.
+
+## Interlacing gate before try_mu, 2026-10-27
+
+Baseline `9f241bb` from a pinned worktree. Rejected. The gate removed pin
+pairs (letters within `1e-3`), then required delta and mu, and mu and w, to
+alternate around the circle before `try_mu`. It rejected 287,000 of the
+530,000 pair-loop `try_mu` calls on the corpus and no winning candidate, and
+the output was bit-identical on all three sets. But `try_mu` already
+rejects those candidates early: corpus 5.443, 5.329 → 5.445, 5.444 s,
+`s9101` 1.065, 1.066 → 1.067, 1.065 s, `s9202` 1.038, 1.036 → 1.045,
+1.047 s. An exact version also has to remove only isolated pins (no third
+letter in the window), which would turn it off where delta clusters.
+
+## Strict word with doubled targets, 2026-10-27
+
+Baseline `6716d4e` from a pinned worktree. Rejected. `StrictWord` returned
+no verdict when a target value repeats. The candidate kept such words, and
+treated a doubled target `z` as a forced mu letter between its copies,
+fixing `x` in `z`'s gap at the number of targets below it plus one. With
+no doubled target it reduced to the old gate. It was not exact: 602 corpus
+rows changed (334 worse), and 13 and 15 held out, every row still passing.
+So some winning pairs fail the derived constraint, and the convention for
+the forced letter's `x` (or near-double targets within `XTOL`) is wrong
+somewhere. Time did not improve on a loaded machine: corpus 5.665, 5.705 →
+5.698, 5.702 s.
+
+## Arc-count interlacing gate, 2026-10-27
+
+Baseline `75765e1` from a pinned worktree. Rejected. `pins_interlace`
+checked, after the strict word gate, that two free mu letters can make both
+rank-one steps keep their prefix-sum range at most one
+([research](research.md#an-arc-count-oracle-for-pin-pairs)). Output was
+bit-identical on all three sets, but slower: corpus 5.338, 5.274 → 5.555,
+5.540 s (+4.5%), `s9101` 1.073, 1.048 → 1.078, 1.073 s, `s9202` 1.023,
+1.024 → 1.042, 1.044 s.
+
 ## Retired interfaces
 
 Runtime chart deduplication and `init_tables` were removed with the runtime
