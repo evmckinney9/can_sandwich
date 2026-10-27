@@ -394,7 +394,9 @@ pub(crate) const ACCEPT: f64 = 1e-13;
 const FRAME_ACCEPT: f64 = 1e-12;
 
 /// Use the reduced trilinear score only well below coefficient acceptance.
-/// Every candidate must still pass the final rootwise verifier.
+/// Every candidate must still pass the final rootwise verifier. Vertex,
+/// edge, face and Klein frames above it decline, since polishing cannot move
+/// them off their stratum.
 pub(crate) const FAST_ACCEPT: f64 = 1e-14;
 
 fn solve_scalar_factor(problem: &Problem) -> Option<Solution> {
@@ -629,8 +631,9 @@ fn solve_prefix(problem: &Problem, skip: Option<Rung>) -> Option<Solution> {
             if branch_mask == 0 {
                 continue;
             }
+            // A near miss declines, as for edge and face frames.
             let r = perm_vertex_residual(&problem.left, &problem.right, &problem.targets, &p);
-            if r < ACCEPT
+            if r < FAST_ACCEPT
                 && let Some(solution) = compiler_solution(problem, signed_perm(p), Rung::Vertex)
             {
                 return Some(solution);

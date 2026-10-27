@@ -375,6 +375,17 @@ The numerical fallback mostly handles perturbations of these strata:
 1,820 of the 2,000 sampled rows that reach it have a spectral gap between
 `1e-14` and `1e-4`.
 
+The same stall sets how a construction on a stratum should be accepted. A
+target a hair off the stratum leaves the stratum's frame a near miss: it can
+pass the `1e-13` acceptance ceiling, but polishing it costs about a millisecond
+and seldom gets below `1e-14`, since the frame sits at a critical point.
+Declining such frames above `1e-14` and building the target with a chart of
+higher rank is faster and more accurate for vertex, edge, face, Klein and
+radical frames. It does not help interior frames, which are regular points
+that polishing already corrects
+([log](optimization.md#edge-frames-accepted-below-fast_accept-2026-10-27),
+[interior](optimization.md#interior-frames-accepted-below-fast_accept-2026-10-27)).
+
 ### A single-qubit middle gate does not suffice
 
 The one-sided family $O=L_qP$, a middle gate $u\otimes I$, is closed under

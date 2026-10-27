@@ -700,12 +700,23 @@ fn random_starts(problem: &Problem, seed: &mut u64, branches: &[f64]) -> Option<
     None
 }
 
-fn solve_primary(problem: &Problem, c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<R4> {
+/// `start`, when given, is a frame near a solution (the spanning-tree
+/// solve's closest miss), refined after the wall split.
+fn solve_primary(
+    problem: &Problem,
+    c: [f64; 3],
+    g: [f64; 3],
+    t: [f64; 3],
+    start: Option<R4>,
+) -> Option<R4> {
     if let Some(o) = problem.early() {
         return Some(o);
     }
     let mut seed = seed(c, g, t);
     if let Some(o) = problem.split(seed, 1e-14, SPECTRAL_TOLERANCE, None) {
+        return Some(o);
+    }
+    if let Some(o) = start.and_then(|o| problem.iterate(o, 0.0)) {
         return Some(o);
     }
     if let Some(o) = inverse_algebraic(problem, c, g, t) {
@@ -740,7 +751,7 @@ fn inverse_algebraic(original: &Problem, c: [f64; 3], g: [f64; 3], t: [f64; 3]) 
 fn inverse_factor(original: &Problem, c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<R4> {
     let inverse_c = c.map(|x| -x);
     let dual = Problem::new(inverse_c, t, g);
-    let frame = solve_primary(&dual, inverse_c, t, g)?;
+    let frame = solve_primary(&dual, inverse_c, t, g, None)?;
     let state = dual.state(&frame, 0.0);
     let o = state.ordered_basis();
     let check = original.state(&o, 0.0);
@@ -786,7 +797,21 @@ fn near_commuting(problem: &Problem) -> Option<R4> {
     None
 }
 
-pub(crate) fn solve(problem: &Problem, c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<R4> {
+/// The spanning-tree solve's outcome: a frame meeting the refinement
+/// target, or the closest frame it reached, if any.
+#[derive(Clone, Copy)]
+pub(crate) enum TreeFrame {
+    Met(R4),
+    Miss(Option<R4>),
+}
+
+pub(crate) fn solve(
+    problem: &Problem,
+    c: [f64; 3],
+    g: [f64; 3],
+    t: [f64; 3],
+    start: Option<R4>,
+) -> Option<R4> {
     // Rank-two Horn bounds for ordered alcove coordinates, on both central
     // target lifts. Do not spend restart budgets on a certified violation.
     let ordered = |m: [f64; 3]| {
@@ -799,7 +824,7 @@ pub(crate) fn solve(problem: &Problem, c: [f64; 3], g: [f64; 3], t: [f64; 3]) ->
     {
         return None;
     }
-    solve_primary(problem, c, g, t)
+    solve_primary(problem, c, g, t, start)
         .or_else(|| near_commuting(problem))
         .or_else(|| inverse_factor(problem, c, g, t))
         .or_else(|| inverse_factor(&Problem::new(g, c, t), g, c, t).map(|o| o.transpose()))
@@ -867,8 +892,10 @@ impl Problem {
     /// a factor of the vertex distance each. Unlike `vertex_quadratic` it
     /// needs no window of 1e-7 and no simple vertex spectrum: the nearest
     /// vertex within 0.1 is tried, trees by decreasing `|det J|`, and the
-    /// first frame whose roots meet the refinement target is returned.
-    pub(crate) fn vertex_tree(&self) -> Option<R4> {
+    /// first frame whose roots meet the refinement target is returned. A
+    /// miss returns the closest frame, a start for the numerical ladder.
+    pub(crate) fn vertex_tree(&self) -> TreeFrame {
+        let mut closest: Option<(f64, R4)> = None;
         let mut nearest: Option<(f64, [usize; 4], f64, [usize; 4])> = None;
         for perm in *PERMS24 {
             let lam: [Z; 4] = std::array::from_fn(|k| self.left[k] * self.right[perm[k]]);
@@ -884,7 +911,9 @@ impl Problem {
                 }
             }
         }
-        let (_, perm, sign, s) = nearest?;
+        let Some((_, perm, sign, s)) = nearest else {
+            return TreeFrame::Miss(None);
+        };
         let g: [Z; 4] = std::array::from_fn(|k| self.right[perm[k]]);
         let lam: [Z; 4] = std::array::from_fn(|k| self.left[k] * g[k]);
         let want: [Z; 4] = std::array::from_fn(|k| self.target_roots[0][s[k]] * sign);
@@ -952,10 +981,13 @@ impl Problem {
                 let dist: [[f64; 4]; 4] = std::array::from_fn(|k| {
                     std::array::from_fn(|j| (roots[j] - want[k]).norm_sqr())
                 });
-                let (err, q) = PERMS24
+                let Some((err, q)) = PERMS24
                     .iter()
                     .map(|q| ((0..4).map(|k| dist[k][q[k]]).fold(0.0, f64::max), q))
-                    .min_by(|x, y| x.0.total_cmp(&y.0))?;
+                    .min_by(|x, y| x.0.total_cmp(&y.0))
+                else {
+                    break;
+                };
                 if !err.is_finite() || best.is_some_and(|(b, _)| err >= b) {
                     break;
                 }
@@ -963,15 +995,20 @@ impl Problem {
                 u += inverse
                     * SVector::<f64, 3>::from_fn(|k, _| goal[k] - (roots[q[k]] / lam[k]).arg());
             }
-            if let Some((_, u)) = best.filter(|&(err, _)| err.sqrt() <= ROOT_TOLERANCE) {
+            if let Some((err, u)) = best {
                 let mut o = frame(&u);
                 if o.determinant() < 0.0 {
                     o.row_mut(0).neg_mut();
                 }
-                return Some(o);
+                if err.sqrt() <= ROOT_TOLERANCE {
+                    return TreeFrame::Met(o);
+                }
+                if closest.is_none_or(|(c, _)| err < c) {
+                    closest = Some((err, o));
+                }
             }
         }
-        None
+        TreeFrame::Miss(closest.map(|(_, o)| o))
     }
 
     /// Second-order vertex frames. At a permutation frame P the spectral

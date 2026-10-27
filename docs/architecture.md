@@ -61,7 +61,9 @@ near a wall.
 only direct dependency.
 
 The spectral acceptance ceiling and polynomial residual limit are `1e-13`;
-frame and endpoint checks use `1e-12`. Numerical construction stops at the
+frame and endpoint checks use `1e-12`. Vertex, edge, face and Klein frames are
+accepted only below `1e-14` (`FAST_ACCEPT`); a looser one falls through to
+the next construction. Numerical construction stops at the
 spectral ceiling. Final polishing aims for root distances below `1e-14` and
 retains useful partial progress. When refinement stalls at a vertex, edge, or
 face frame, it restarts along the null space of the root Jacobian. If the

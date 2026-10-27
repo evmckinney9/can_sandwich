@@ -1166,6 +1166,134 @@ the held-out maxima stay at `2.004e-14` and `2.060e-14`.
 The corpus over-weights confluent rows, which the Face gate targets. The
 prune changed 4 held-out rows, and every one of them still passes.
 
+## Edge frames accepted below `FAST_ACCEPT`, 2026-10-27
+
+Baseline `3512d17`, same corpus SHA-256, held-out seeds 9101 and 9202, one
+runner process. Kept.
+
+On seed 9101, 85 Edge rows took over 1 ms each (132 ms), all labelled
+`bndV_tiny` or `bndE_tiny`. Their edge frames passed the compound residual at
+a median `2.4e-14`, against `6.7e-16` for all 16,376 accepted edge frames: the
+target sits a hair off the edge, the one-angle frame is a near miss, and the
+polish refine then ran about 1 ms and was discarded on 68 of 107 calls.
+`solve_edge` now accepts below `FAST_ACCEPT` instead of `ACCEPT`, the rule
+Klein already uses, so these rows go to the face, Klein and interior charts.
+
+Two alternating runs each:
+
+| Set | Baseline | Candidate | Rows over `1e-14` | Rows smaller / larger |
+|---|---|---|---|---|
+| Seed 9101 | 1.235, 1.239 s | 1.126, 1.128 s | 139 → 117 | 288 / 90 |
+| Seed 9202 | 1.161, 1.157 s | 1.073, 1.071 s | 128 → 116 | 298 / 134 |
+| Corpus | 5.447, 5.415 s | 5.326, 5.337 s | 557 → 556 | 141 / 55 |
+
+Every row passes on all three sets and each maximum is unchanged. The largest
+single increase is row 77,897 of seed 9101, from `1.1e-15` to `1.39e-14`.
+
+## Face frames accepted below `FAST_ACCEPT`, 2026-10-27
+
+Baseline `757a9c6`, same corpus SHA-256, held-out seeds 9101 and 9202, one
+runner process. Kept for accuracy.
+
+The edge rule applied to `solve_face`. The slow held-out Face rows are not
+near misses (median accepted residual `8.9e-16`, as for all face frames), so
+time barely moves, but the declined near misses come back better from the
+charts above:
+
+| Set | Baseline | Candidate | Rows over `1e-14` | Maximum | Rows smaller / larger |
+|---|---|---|---|---|---|
+| Seed 9101 | 1.130, 1.209 s | 1.141, 1.197 s | 117 → 113 | `2.00e-14` → `1.79e-14` | 290 / 134 |
+| Seed 9202 | 1.081 s | 1.042 s | 116 → 108 | `2.06e-14` → `2.03e-14` | 238 / 104 |
+| Corpus | 5.434 s | 5.347 s | 556 → 543 | `1.78e-14` unchanged | 268 / 93 |
+
+Every row passes. Every larger error stays below `1e-14`; the largest is row
+79,551 of seed 9101, from `1.1e-15` to `9.9e-15`.
+
+## Spanning-tree miss as a numerical start, 2026-10-27
+
+Baseline `33b219c` from a pinned worktree, binaries built before the runs.
+Kept.
+
+`vertex_tree` used to drop its closest frame when no tree met the
+refinement target. It now returns that frame, and `solve_primary` iterates
+from it after `split` and before `inverse_algebraic`. On held-out `s9101`
+Numerical rows, `PROF=1` showed it solving 202 of the 412 rows that reach
+that point, at about 6 µs. Run first, before `early` and `split`, it won 594
+rows but cost more than it saved, so the order matters.
+
+| Set | Baseline | Candidate | p99 | Rows above `1e-14` |
+|---|---|---|---|---|
+| Corpus | 5.257, 5.240 s | 5.166, 5.122 s (−2.0%) | 29.5 → 29.2 µs | 543 → 543 |
+| `s9101` | 1.075, 1.071 s | 1.050, 1.056 s (−1.9%) | 128.6 → 121.4 µs | 113 → 114 |
+| `s9202` | 1.030, 1.036 s | 1.016, 1.027 s (−0.9%) | 128.6 → 121.8 µs | 108 → 106 |
+
+Every row passes, and the maxima are unchanged on all three sets.
+
+## Vertex frames accepted below `FAST_ACCEPT`, 2026-10-27
+
+Baseline `b6f3551` built from a pinned worktree, same corpus SHA-256,
+held-out seeds 9101 and 9202, one runner process. Kept.
+
+The edge and face rule applied to signed-permutation vertex frames.
+
+| Set | Baseline | Candidate | Rows over `1e-14` | Rows smaller / larger |
+|---|---|---|---|---|
+| Seed 9101 | 1.075, 1.058 s | 1.025, 1.034 s | 114 → 105 | 584 / 195 |
+| Seed 9202 | 1.022, 1.026 s | 1.000, 1.010 s | 106 → 90 | 661 / 222 |
+| Corpus | 5.173, 5.143 s | 5.187, 5.115 s | 543 → 543 | 42 / 15 |
+
+Every row passes and each maximum is unchanged. The largest single increase
+is row 79,547 of seed 9101, from `8.6e-16` to `1.00e-14`.
+
+## Radical frames accepted only below FAST_ACCEPT, 2026-10-27
+
+Baseline `750f994` from a pinned worktree, binaries built before the runs.
+Kept for accuracy, at a time cost the owner accepted.
+
+`solve_radical_orientation` kept any reconstruction up to `ACCEPT`.
+Vertex, Edge, Face and Klein already decline above `FAST_ACCEPT`, and
+Radical now does too: a near-miss frame goes to the later rungs instead of
+to the polish.
+
+| Set | Baseline | Candidate | p99 | Rows above `1e-14` |
+|---|---|---|---|---|
+| Corpus | 5.201, 5.253 s | 5.446, 5.380 s (+3.6%) | 29.4 → 35.2 µs | 543 → 439 |
+| `s9101` | 1.032, 1.029 s | 1.068, 1.071 s (+3.8%) | 123.8 → 132.6 µs | 105 → 99 |
+| `s9202` | 1.014, 1.006 s | 1.103, 1.043 s (+6.3%) | 123.9 → 139.9 µs | 90 → 80 |
+
+Every row passes and the maxima are unchanged. On the corpus 24,408
+spectral errors change, 11,419 of them up. 30 of the rows that rise end
+above `1e-14` (at most `1.44e-14`), and 6 and 5 do on the held-out sets (at
+most `1.18e-14`). The net counts in the table already include them.
+
+## Interior frames accepted below `FAST_ACCEPT`, 2026-10-27
+
+Baseline `551b1f4` built from a pinned worktree, same corpus SHA-256,
+held-out seeds 9101 and 9202, one runner process. Rejected. No code.
+
+The candidate kept scanning charts when `rescue_root` left the frame at or
+above `FAST_ACCEPT`. Time was within noise on all three sets (seed 9101
+1.082, 1.073 → 1.072, 1.072 s; seed 9202 1.039, 1.038 → 1.051, 1.050 s; corpus
+5.372, 5.367 → 5.361, 5.349 s). Rows over `1e-14` fell 99 → 95, 80 → 76 and
+439 → 427 with maxima unchanged, but rows with larger error outnumbered rows
+with smaller error 1,205 to 586, 1,256 to 524 and 8,098 to 3,381, and the
+mean error rose by 0.5% to 0.7%. Unlike vertex, edge, face, Klein and radical
+frames, an interior frame is not confined to a stratum, so polishing already
+corrects its near misses.
+
+## Day total, 2026-10-27
+
+`52e78ee` (start of day) against `6b8d43c`, two alternating runs each from
+pinned worktrees, every row passing on all three sets.
+
+| Set | Solver time | Mean | p50 | p99 | p99.9 | Max | Rows above `1e-14` | Max error |
+|---|---|---|---|---|---|---|---|---|
+| Corpus | 7.226 → 5.332 s (−26.2%) | 6.57 → 4.85 µs | 2.07 → 1.83 | 40.2 → 34.6 | 446 → 130 | 47.5 → 6.6 ms | 557 → 439 | 1.780e-14 → 1.780e-14 |
+| `s9101` | 1.393 → 1.064 s (−23.6%) | 14.20 → 10.85 µs | 2.89 → 2.65 | 188 → 132 | 1,334 → 697 | 9.9 → 8.3 ms | 142 → 99 | 2.004e-14 → 1.789e-14 |
+| `s9202` | 1.308 → 1.044 s (−20.2%) | 13.35 → 10.65 µs | 2.89 → 2.66 | 178 → 135 | 1,228 → 651 | 4.6 → 4.1 ms | 126 → 80 | 2.060e-14 → 2.027e-14 |
+
+Latencies are in µs unless marked.
+
 ## Retired interfaces
 
 Runtime chart deduplication and `init_tables` were removed with the runtime

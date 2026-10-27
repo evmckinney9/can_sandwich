@@ -7,7 +7,7 @@
 //! after those cheaper strata and the Klein section have declined.
 
 use super::{
-    ACCEPT, C, Mat4, PLANES, Problem, Rung, Solution, SpectrumKind, StratumSignature,
+    ACCEPT, C, FAST_ACCEPT, Mat4, PLANES, Problem, Rung, Solution, SpectrumKind, StratumSignature,
     compiler_solution, compound_residual, recover_frame, rotate_rows, signed_perm,
 };
 
@@ -128,7 +128,8 @@ pub(crate) fn solve_face(problem: &Problem) -> Option<Solution> {
                             if r > 16.0 * ACCEPT {
                                 break 'orders;
                             }
-                            if r < ACCEPT
+                            // A near miss declines, as for edge frames.
+                            if r < FAST_ACCEPT
                                 && let Some(solution) = compiler_solution(problem, o, Rung::Face)
                             {
                                 return Some(solution);
@@ -263,8 +264,11 @@ pub(crate) fn solve_edge(
                 let mut o = signed_perm(p);
                 let (sine, cosine) = theta.sin_cos();
                 rotate_rows(&mut o, i, j, cosine, sine);
+                // A target a hair off the edge leaves this frame a near miss
+                // that polishing cannot move off the stratum; leave it to the
+                // face, Klein and interior charts, as Klein does.
                 let r = compound_residual(dc, lam, &o, t);
-                if r < ACCEPT {
+                if r < FAST_ACCEPT {
                     return Some((o, r));
                 }
             }
@@ -303,7 +307,7 @@ fn solve_radical_orientation(
     targets: &[[C; 4]; 2],
     cap: usize,
 ) -> Option<(Mat4, f64)> {
-    let mut accept = |candidate: crate::algebraic::radical::Frame| match orientation.reconstruction
+    let reconstruct = |candidate: crate::algebraic::radical::Frame| match orientation.reconstruction
     {
         RadicalReconstruction::Sandwich { transpose } => {
             let started = super::prof::start();
@@ -336,6 +340,10 @@ fn solve_radical_orientation(
             super::certify_frame_against_targets(o, dc, lam, targets)
         }
     };
+    // Like the other direct strata, keep only frames below FAST_ACCEPT: a
+    // near-miss above it costs the polish more than a later rung does.
+    let mut accept =
+        |candidate| reconstruct(candidate).filter(|&(_, residual)| residual < FAST_ACCEPT);
     let started = super::prof::start();
     let hit = crate::algebraic::radical::solve_oriented(
         &orientation.gate,

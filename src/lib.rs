@@ -142,7 +142,8 @@ fn recover(problem: Problem, c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<(P
     // A vertex frame that already meets the refinement target needs neither
     // the numerical ladder nor a polish: the spanning-tree solve, then the
     // second-order frames.
-    if let Some(o) = problem.vertex_tree()
+    let tree = problem.vertex_tree();
+    if let numerical::TreeFrame::Met(o) = tree
         && let Some(state) = spectral::verify(&problem, &o)
         && state.root_error <= numerical::ROOT_TOLERANCE
     {
@@ -161,17 +162,26 @@ fn recover(problem: Problem, c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<(P
     {
         return Some((problem, v));
     }
-    let found = numerical::solve(&problem, c, g, t)
-        .and_then(|o| {
-            let state = spectral::verify(&problem, &o)?;
-            Some(Solution {
-                o,
-                rung: Rung::Numerical,
-                state,
-            })
+    let found = numerical::solve(
+        &problem,
+        c,
+        g,
+        t,
+        match tree {
+            numerical::TreeFrame::Miss(closest) => closest,
+            numerical::TreeFrame::Met(_) => None,
+        },
+    )
+    .and_then(|o| {
+        let state = spectral::verify(&problem, &o)?;
+        Some(Solution {
+            o,
+            rung: Rung::Numerical,
+            state,
         })
-        // The second-order vertex frames, before a decline.
-        .or(vertex);
+    })
+    // The second-order vertex frames, before a decline.
+    .or(vertex);
     let primary = found.map(|solution| polish(&problem, c, g, t, solution));
     if primary
         .as_ref()
@@ -330,7 +340,7 @@ fn stratum_candidates(
         && let Some(b) = best
         && b.state.root_error > DUAL_TRIGGER
         && !matches!(b.rung, Rung::Numerical)
-        && let Some(o) = numerical::solve(problem, c, g, t)
+        && let Some(o) = numerical::solve(problem, c, g, t, None)
         && let Some(state) = spectral::verify(problem, &o)
     {
         let found = Solution {
