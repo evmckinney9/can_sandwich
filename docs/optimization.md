@@ -1345,6 +1345,15 @@ bit-identical on all three sets, but slower: corpus 5.338, 5.274 → 5.555,
 5.540 s (+4.5%), `s9101` 1.073, 1.048 → 1.078, 1.073 s, `s9202` 1.023,
 1.024 → 1.042, 1.044 s.
 
+## Near-wall continuation on the late Numerical rows, 2026-10-27
+
+Not changed. On the 210 held-out `s9101` rows that get past `split` to
+`inverse_algebraic` and the random starts, `near_wall` tried first, with
+gates from `1e-6` to `1e-2`, took 190 to 260 µs a call and won 53 to 66
+rows. The rows took 113 to 130 ms in all, against 84 ms with the current
+order (`inverse_algebraic` at 66 µs winning 94, then random starts). The
+order from `812c8cc` and `c7b586b` stands.
+
 ## Retired interfaces
 
 Runtime chart deduplication and `init_tables` were removed with the runtime

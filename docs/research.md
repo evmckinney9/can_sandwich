@@ -939,10 +939,18 @@ signature (a routed product `a_i b_j` equal to a target root), 73 only a
 roots), and 264 neither. `split` solves most 1+3 rows cheaply. The 210 rows
 that get past `split` to `inverse_algebraic` and the random starts are a
 different mix: 115 near a wall with no exact signature, 44 with only 2+2,
-28 with both, and 23 with only 1+3. Two constructions are missing. The first
-is a 2+2 wall frame whose invariant planes need not be coordinate-aligned,
-where Face covers only aligned blocks. The second is a continuation from the
-nearest wall's split witness for rows just off a wall.
+28 with both, and 23 with only 1+3. With `A` diagonal, a rank-2 tight
+inequality makes `O` carry a coordinate plane of `B` onto one of `A`, so an
+exact 2+2 wall has a block witness of Face's form. Instrumenting Face on the
+72 rows with a 2+2 signature at `1e-9` shows that the signature is mostly
+near-wall, not exact. Face's `1e-12` determinant match finds nothing on 19
+of them, and on most others the e1 parallelogram excludes every match. On 13
+rows Face does build a frame with coefficient residual below `1e-14`, but
+the root error there is above `DUAL_TRIGGER`, so the tail's numerical
+witness wins on accuracy. Two `block_angle` rejections fall within `1e-9`
+of `[0, 1]`. So what remains is the near-wall regime. Continuing from the
+nearby wall's frame is `near_wall`, which measured worse than the random
+starts on the corpus and held out (`812c8cc`).
 
 ### Where the precision floor is
 
