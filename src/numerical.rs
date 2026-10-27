@@ -786,6 +786,123 @@ fn exp_skew(b: &R4) -> R4 {
 }
 
 impl Problem {
+    /// Frames near a permutation vertex from a spanning tree of Givens
+    /// planes, `O = R_e1 R_e2 R_e3 P`. A diagonal sign conjugation flips any
+    /// one tree angle, so the roots are analytic in `u_e = sin^2 theta_e`, and
+    /// the 2x2 block of plane `e = (i, j)` gives column `e` of the Jacobian of
+    /// the root phases exactly at the vertex:
+    /// `d gamma_i / d u = Re[(d_i - d_j)(g_j - g_i) / (i (λ_i - λ_j))]`, the
+    /// negative for `gamma_j`. Fixed-Jacobian steps from the linear solve gain
+    /// a factor of the vertex distance each. Unlike `vertex_quadratic` it
+    /// needs no window of 1e-7 and no simple vertex spectrum: the nearest
+    /// vertex within 0.1 is tried, trees by decreasing `|det J|`, and the
+    /// first frame whose roots meet the refinement target is returned.
+    pub(crate) fn vertex_tree(&self) -> Option<R4> {
+        let mut nearest: Option<(f64, [usize; 4], f64, [usize; 4])> = None;
+        for perm in *PERMS24 {
+            let lam: [Z; 4] = std::array::from_fn(|k| self.left[k] * self.right[perm[k]]);
+            for sign in [1.0, -1.0] {
+                let dist: [[f64; 4]; 4] = std::array::from_fn(|k| {
+                    std::array::from_fn(|j| (self.target_roots[0][j] * sign - lam[k]).norm_sqr())
+                });
+                for s in *PERMS24 {
+                    let d = (0..4).map(|k| dist[k][s[k]]).fold(0.0, f64::max);
+                    if d <= 0.01 && nearest.is_none_or(|(n, ..)| d < n) {
+                        nearest = Some((d, perm, sign, s));
+                    }
+                }
+            }
+        }
+        let (_, perm, sign, s) = nearest?;
+        let g: [Z; 4] = std::array::from_fn(|k| self.right[perm[k]]);
+        let lam: [Z; 4] = std::array::from_fn(|k| self.left[k] * g[k]);
+        let want: [Z; 4] = std::array::from_fn(|k| self.target_roots[0][s[k]] * sign);
+        let goal = SVector::<f64, 3>::from_fn(|k, _| (want[k] / lam[k]).arg());
+        let mut p = R4::zeros();
+        for i in 0..4 {
+            p[(i, perm[i])] = 1.0;
+        }
+        let mut trees: Vec<(f64, SMatrix<f64, 3, 3>, [usize; 3])> = Vec::new();
+        for a in 0..6 {
+            for b in a + 1..6 {
+                for c in b + 1..6 {
+                    let tree = [a, b, c];
+                    let mut seen = [false; 4];
+                    for &e in &tree {
+                        (seen[PLANES[e].0], seen[PLANES[e].1]) = (true, true);
+                    }
+                    if !seen.iter().all(|&v| v) {
+                        continue;
+                    }
+                    let jacobian = SMatrix::<f64, 3, 3>::from_fn(|r, k| {
+                        let (i, j) = PLANES[tree[k]];
+                        let d = ((self.left[i] - self.left[j]) * (g[j] - g[i])
+                            / (Z::i() * (lam[i] - lam[j])))
+                            .re;
+                        if r == i {
+                            d
+                        } else if r == j {
+                            -d
+                        } else {
+                            0.0
+                        }
+                    });
+                    trees.push((jacobian.determinant().abs(), jacobian, tree));
+                }
+            }
+        }
+        trees.sort_by(|x, y| y.0.total_cmp(&x.0));
+        for (_, jacobian, tree) in trees {
+            let Some(inverse) = jacobian.try_inverse() else {
+                continue;
+            };
+            let frame = |u: &SVector<f64, 3>| {
+                let mut o = R4::identity();
+                for (k, &e) in tree.iter().enumerate() {
+                    let (i, j) = PLANES[e];
+                    let x = u[k].clamp(0.0, 1.0);
+                    let (sin, cos) = (x.sqrt(), (1.0 - x).sqrt());
+                    let mut r = R4::identity();
+                    (r[(i, i)], r[(i, j)], r[(j, i)], r[(j, j)]) = (cos, -sin, sin, cos);
+                    o *= r;
+                }
+                o * p
+            };
+            let mut u = inverse * goal;
+            if u.iter().any(|&v| v < -1e-9) {
+                continue;
+            }
+            let mut best: Option<(f64, SVector<f64, 3>)> = None;
+            for _ in 0..8 {
+                let Some(roots) = self.roots(&frame(&u)) else {
+                    break;
+                };
+                // Roots are labelled by continuity from the vertex.
+                let dist: [[f64; 4]; 4] = std::array::from_fn(|k| {
+                    std::array::from_fn(|j| (roots[j] - want[k]).norm_sqr())
+                });
+                let (err, q) = PERMS24
+                    .iter()
+                    .map(|q| ((0..4).map(|k| dist[k][q[k]]).fold(0.0, f64::max), q))
+                    .min_by(|x, y| x.0.total_cmp(&y.0))?;
+                if !err.is_finite() || best.is_some_and(|(b, _)| err >= b) {
+                    break;
+                }
+                best = Some((err, u));
+                u += inverse
+                    * SVector::<f64, 3>::from_fn(|k, _| goal[k] - (roots[q[k]] / lam[k]).arg());
+            }
+            if let Some((_, u)) = best.filter(|&(err, _)| err.sqrt() <= ROOT_TOLERANCE) {
+                let mut o = frame(&u);
+                if o.determinant() < 0.0 {
+                    o.row_mut(0).neg_mut();
+                }
+                return Some(o);
+            }
+        }
+        None
+    }
+
     /// Second-order vertex frames. At a permutation frame P the spectral
     /// map is critical: under O = exp(B) P root k of D_c^2 O D_g^2 O^T
     /// moves only at second order, by sum_j B_kj^2 w_kj with

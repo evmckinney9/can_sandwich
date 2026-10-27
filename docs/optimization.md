@@ -804,6 +804,107 @@ median of 3.2 µs per row. The slowest row, 1,094,103, is a near-wall stress
 row at 55 ms. The runner gained `--witnesses PATH`, and `tests/check80.py`
 reads its output.
 
+## Sparse-column atlas as a solver, 2026-10-26
+
+Baseline `98c99ed`, corpus SHA-256
+`61e29171e038a9b551ece779f5daf3c61e82375ecf5aecb8c27a31a6738c9416`,
+`rustc 1.97.1` (`x86_64-unknown-linux-gnu`, WSL2), 12 runner processes in
+parallel. Rejected. No code.
+
+The candidate, a separate project graded by the comparison runner, solves
+the [sparse-column atlas](research.md#a-sparse-column-atlas-in-three-orderings-covers-every-haar-row)
+at midpoints of the cubic breakpoint intervals, at the chord angle, and at
+tangencies of $h$ for repeated targets. It then tries signed permutations,
+a first-order solve on a spanning tree of Givens planes at the nearest
+vertex, a 2+2 facet split, and the two cyclic reorderings. Its internal
+check passes 1,099,409 of 1,099,979 rows, including all 300,000 Haar rows.
+
+On the 5,751 rows that production solves with `Rung::Numerical`:
+
+| Solver | Passed | Latency p50 | Latency p99 | Spectrum p50 | Spectrum p99 | Spectrum max |
+|---|---|---|---|---|---|---|
+| Production | 5,751 | 106 µs | 2.8 ms | `8.0e-16` | `8.8e-15` | `1.08e-14` |
+| Atlas | 5,502 | 13 ms | 314 ms | `1.3e-15` | `4.7e-14` | `5.00e-14` |
+
+The atlas is worse on coverage, runtime, and accuracy where production needs
+refinement, so it does not replace the numerical rung. The vertex and facet
+solves duplicate `vertex_quadratic` and the Horn-wall split, and the cyclic
+lift is `inverse_factor`.
+
+Production time by rung over the whole corpus, from `solve_report` with 12
+threads: Radical 35.1% (153,604 rows, p50 19 µs, p99 180 µs), Interior 15.7%,
+Klein 15.4%, Numerical 12.2% (5,751 rows, p50 65 µs, p99 1.96 ms), Face
+12.2%, Edge 7.0%, the rest 2.5%.
+
+## Block rotation as cosine and sine, 2026-10-27
+
+Baseline `52e78ee`, same corpus SHA-256, one runner process. Rejected. No code.
+
+`block_angle` returned `acos` of the rotation's cosine and every caller took
+`sin_cos` of it again. The candidate returned the clamped cosine and sine
+directly, in `support_strata` and the numerical block rotation. A sampling
+profile of every tenth Radical row put `block_angle` at about 9% of samples.
+
+Two alternating full-corpus runs per checkout: total solver time 7.134 and
+7.134 s at the baseline, 7.131 and 7.093 s for the candidate, within run to
+run noise. Radical and Face rows were 0.9% and 1.6% faster. All rows passed in
+both. 210,869 rows changed spectral error at rounding level, 109,982 smaller
+and 100,887 larger. Rows over `1e-14` went from 557 to 556, and the largest
+increase was row 1,072,141, from `2.5e-16` to `9.8e-15`. The Radical cost is
+in `two_step`, which builds and verifies a frame for each of several `μ`
+candidates per row, not in its trigonometry.
+
+## Trigonometry-free face admissibility, 2026-10-27
+
+Baseline `978b1cc`, same corpus SHA-256, one runner process. Kept.
+
+On every tenth corpus row, `solve_face` took 128 ms of `PROF=1` time, 1.64 µs
+per call over 78,135 calls. Radical rows averaged 7.3 block-determinant
+matches each, and `block_angle` rejected most of them after its `sin`,
+`from_polar` and `atan2` calls; libm was about half of Face's samples. With
+`u = z_p z̄_q z̄_x z_y`, `v = z_p z̄_q z_x z̄_y` and `z = cis(φ)`, its cos²θ is
+`(Re u − Re(root · conj(z_p z_q z_x z_y))) / (Re u − Re v)`. The candidate
+evaluates this from `dc`'s diagonal and the right phases, computed once per
+call, and skips `block_angle` only when cos² is outside `[−1e-7, 1 + 1e-7]`
+with `|Re u − Re v| ≥ 1e-6`. Rounding there is about `1e-10`, so it rejects
+only what `block_angle` rejects.
+
+Face time on the sample fell to 1.32 µs per call. Two alternating
+full-corpus runs: 7.165 and 7.136 s at the baseline, 6.953 and 6.966 s for
+the candidate (−2.7%). Every row's spectral, orthogonality and determinant
+error is bit-identical in both pairs.
+
+## Spanning-tree vertex frames, 2026-10-27
+
+Baseline `068810a`, same corpus SHA-256, one runner process. Kept.
+
+`recover` tried `vertex_quadratic` before the numerical ladder. It accepts
+only a vertex within `1e-7` of the target, alone in that window, with every
+vertex root gap above `1e-4`. Of the 5,751 rows that reach the Numerical
+rung, 2,998 have no vertex within `1e-7` and 1,738 of the rest have a gap
+below `1e-4`. Widening its guard or adding fixed-`w` correction steps was
+rejected earlier the same day: identical results and 2,054 ms rising to
+about 2,150 ms on those rows.
+
+`Problem::vertex_tree` replaces the quadratic's coordinates by a spanning
+tree of Givens planes, `O = R_e1 R_e2 R_e3 P`. The roots are analytic in
+`u_e = sin² θ_e`, and the 2x2 block of plane `e = (i, j)` gives that column
+of the root-phase Jacobian at the vertex exactly. The solve takes the
+nearest vertex within `0.1`, tries the 16 trees in decreasing `|det J|`, and
+takes fixed-Jacobian steps until the error stops falling. Each step costs one
+real symmetric eigensolve (`Problem::roots`), and roots are matched by
+squared distance. It runs ahead of `vertex_quadratic` and is kept only when
+`verify` puts its root error at or below `ROOT_TOLERANCE`. On the 5,751
+Numerical rows (sharded, `dev/inverse-horn-atlas`), the prototype passed
+2,383, averaging 21 µs per row. Production took 957 ms on those rows.
+
+Two alternating full-corpus runs: 7.318 and 7.131 s at the baseline, 6.701
+and 6.831 s for the candidate (−6.2%). p99.9 latency fell from 466 to 272 µs.
+Every row passes in both. 2,498 rows' spectral errors change, 1,267 up and
+1,231 down. Rows above `1e-14` stay at 557, and the maximum stays at
+`1.780e-14`. On the changed rows, orthogonality and determinant defects are
+at most `6.7e-16`.
+
 ## Retired interfaces
 
 Runtime chart deduplication and `init_tables` were removed with the runtime

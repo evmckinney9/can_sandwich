@@ -29,6 +29,17 @@ impl Problem {
         std::array::from_fn(|i| d[(i, i)])
     }
 
+    /// Roots of the sandwich from one real symmetric eigensolve, unordered
+    /// and unverified: the cheap evaluation inside an iteration whose result
+    /// `state` then checks.
+    pub(crate) fn roots(&self, o: &R4) -> Option<[Z; 4]> {
+        let s = self.sandwich(o);
+        let h = R4::from_fn(|i, j| s[(i, j)].re + 0.6180339887498949 * s[(i, j)].im);
+        let v = SymmetricEigen::try_new(h, f64::EPSILON, 100)?.eigenvectors;
+        let d = project(&s, &v);
+        Some(std::array::from_fn(|i| d[(i, i)]))
+    }
+
     pub(crate) fn match_roots(&self, roots: [Z; 4]) -> f64 {
         let mut best = f64::INFINITY;
         for sign in [-1.0, 1.0] {

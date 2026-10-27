@@ -698,7 +698,9 @@ and at most 3 for the rest. So $D$ fills most of $SO(3)$ for a target deep in
 the reachable set and shrinks toward the boundary, as the fiber's diameter
 $\sqrt{\delta}$ does, and no fixed finite list of $k_-$ is universal either.
 Coverage near the boundary must come from $k_-$ adapted to the data, which
-is what the stratum charts provide.
+is what the stratum charts provide. The sparse-column atlas
+[below](#a-sparse-column-atlas-in-three-orderings-covers-every-haar-row) is
+such a data-adapted family, and it covers every Haar row.
 
 ### What the cascade is, and what replaces it
 
@@ -724,6 +726,38 @@ simplification available is to replace the schedule by the rule; what a
 proof of completeness still needs is the radius of the small-$\delta$
 regime, where the second-order model of the fiber stops being accurate
 before the fixed slices begin to have real roots.
+
+### A sparse-column atlas in three orderings covers every Haar row
+
+A sparse-column chart $(i, j; k)$ is the set of $O$ whose column $k$ is
+supported on rows $\{i, j\}$: $O_{ik} = \sin\theta$, $O_{jk} = \cos\theta$, and
+the complementary block is $Q \in SO(3)$. There are 24 charts. By
+Cauchy–Binet, $(\operatorname{Re} e_1, \operatorname{Im} e_1, e_2)$ is affine in
+$P = Q \circ Q$, with coefficients affine in $\tau = \sin^2\theta$. At a fixed
+$\tau$ the three equations leave a line $P(s)$ in the Birkhoff polytope. A
+point of that line is orthostochastic exactly when Heron's
+$H(P) = 4abcd - (a + b + c + d - 1 - ad - bc)^2$, on the leading $2\times2$
+entries, is nonnegative, so a witness is a real root of the quartic
+$h(s) = H(P(s))$. Relaxed feasibility in $\tau$ changes only at real roots of
+18 cubics. Where $(1 - \tau)a_i + \tau a_j$ meets the chord through the other
+two source eigenvalues, $h$ has degree 3. The family has dimension 4, one more
+than a three-Givens chart, so it meets the fiber in a curve.
+
+On the 300,000 Haar rows, with both central signs and the transpose dual, the
+atlas has a witness for all but 45. For those 45, a multistart
+Levenberg–Marquardt fit over every chart, orientation, and sign stalls at
+residuals from `7.8e-5` to `1.4e-2`, and 19 of them have no relaxed-feasible
+$\tau$ in any chart. All 45 have a witness in both cyclic reorderings
+$(B, C^{-1}; A^{-1})$ and $(C^{-1}, A; B^{-1})$, which `inverse_factor` maps
+back to the original problem. So 24 charts in the three orderings cover all
+300,000 Haar rows: a finite list of degree-4 sections, chosen by the data,
+covers the generic regime of the corpus. This is a measurement, not a proof. A
+four-cycle family $R_{01}R_{23}R_{02}R_{13}$ under all row and column
+relabelings has a witness for only 33 of the 53 Haar rows that the atlas's
+own angle selection missed in the first ordering.
+
+As a solver the atlas is slower and less accurate than the cascade
+([log](optimization.md#sparse-column-atlas-as-a-solver-2026-10-26)).
 
 ### Where the precision floor is
 

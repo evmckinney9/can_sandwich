@@ -139,8 +139,22 @@ fn witness(c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<(Problem, Solution)>
 #[cold]
 #[inline(never)]
 fn recover(problem: Problem, c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Option<(Problem, Solution)> {
-    // A second-order vertex frame that already meets the refinement target
-    // needs neither the numerical ladder nor a polish.
+    // A vertex frame that already meets the refinement target needs neither
+    // the numerical ladder nor a polish: the spanning-tree solve, then the
+    // second-order frames.
+    if let Some(o) = problem.vertex_tree()
+        && let Some(state) = spectral::verify(&problem, &o)
+        && state.root_error <= numerical::ROOT_TOLERANCE
+    {
+        return Some((
+            problem,
+            Solution {
+                o,
+                rung: Rung::Numerical,
+                state,
+            },
+        ));
+    }
     let vertex = vertex_quadratic(&problem);
     if let Some(v) = vertex
         && v.state.root_error <= numerical::ROOT_TOLERANCE

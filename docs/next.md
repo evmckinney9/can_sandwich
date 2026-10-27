@@ -36,3 +36,8 @@ when it is done or rejected; its result goes in the doc that owns it.
    and strata" onward are a chronological notebook; "What the cascade is, and
    what replaces it" supersedes parts of the earlier ones. Rewrite them as one
    current account and cut what no longer informs an item here.
+7. **Profile the Radical rung.** It takes 35.1% of solver time over the
+   corpus, the largest share of any rung: 153,604 rows, p50 19 µs, p99
+   180 µs ([log](optimization.md#sparse-column-atlas-as-a-solver-2026-10-26)).
+   Decided by: a `PROF=1` breakdown of its stages, then runtime with errors
+   unchanged.

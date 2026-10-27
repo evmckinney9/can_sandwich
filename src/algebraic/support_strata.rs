@@ -31,6 +31,32 @@ pub(crate) fn solve_face(problem: &Problem) -> Option<Solution> {
     // the complement of pair t is pair 5-t.
     let d2p: [C; 6] = std::array::from_fn(|t| d2[PLANES[t].0] * d2[PLANES[t].1]);
     let lamp: [C; 6] = std::array::from_fn(|t| lam4[PLANES[t].0] * lam4[PLANES[t].1]);
+    // block_angle's admissibility test without trigonometry, from unit phases.
+    // It rejects only where cos^2 is outside [0, 1] by far more than either
+    // evaluation's rounding, and passes ill-conditioned blocks through.
+    let zl: [C; 4] = std::array::from_fn(|k| dc[(k, k)]);
+    let zr = std::cell::OnceCell::new();
+    let admissible = |(p, q): (usize, usize), (x, y): (usize, usize), root: C| {
+        let zr: &[C; 4] = zr.get_or_init(|| problem.right_phases.map(|p| C::from_polar(1.0, p)));
+        let pq = zl[p] * zl[q].conj();
+        let u = pq * zr[x].conj() * zr[y];
+        let v = pq * zr[x] * zr[y].conj();
+        let denominator = u.re - v.re;
+        if denominator.abs() < 1e-6 {
+            return true;
+        }
+        // Target roots are unit to rounding.
+        let cos_kappa = (root * (zl[p] * zl[q] * zr[x] * zr[y]).conj()).re;
+        let cosine_squared = (u.re - cos_kappa) / denominator;
+        (-1e-7..=1.0 + 1e-7).contains(&cosine_squared)
+    };
+    let angle = |pq, xy, root| {
+        if admissible(pq, xy, root) {
+            problem.block_angle(pq, xy, root)
+        } else {
+            None
+        }
+    };
     // The rho lift negates and permutes the roots, so its pair products are
     // exactly the first lift's, permuted with complements kept paired: a
     // lift without any block-determinant match implies the same for both.
@@ -67,10 +93,10 @@ pub(crate) fn solve_face(problem: &Problem) -> Option<Solution> {
                         for s2 in 0..2 {
                             let (xa, xb) = if s1 == 0 { (x, y) } else { (y, x) };
                             let (za, zb) = if s2 == 0 { (z, v) } else { (v, z) };
-                            let Some(th1) = problem.block_angle((a, b), (xa, xb), w[i]) else {
+                            let Some(th1) = angle((a, b), (xa, xb), w[i]) else {
                                 continue;
                             };
-                            let Some(th2) = problem.block_angle((c, d), (za, zb), w[k]) else {
+                            let Some(th2) = angle((c, d), (za, zb), w[k]) else {
                                 continue;
                             };
                             let mut perm = [0usize; 4];
