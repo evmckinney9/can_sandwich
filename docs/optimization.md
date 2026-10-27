@@ -874,6 +874,11 @@ full-corpus runs: 7.165 and 7.136 s at the baseline, 6.953 and 6.966 s for
 the candidate (−2.7%). Every row's spectral, orthogonality and determinant
 error is bit-identical in both pairs.
 
+Held out (`tests/heldout.py`, seeds 9101 and 9202, 98k rows each; two
+alternating runs against `978b1cc`): 1.389 and 1.389 s → 1.387 and 1.390 s,
+and 1.305 and 1.331 s → 1.305 and 1.310 s, bit-identical. The gain is in
+confluent rows, which the corpus holds far more of than these seeds.
+
 ## Spanning-tree vertex frames, 2026-10-27
 
 Baseline `068810a`, same corpus SHA-256, one runner process. Kept.
@@ -1043,6 +1048,9 @@ baseline, 5.653 and 5.651 s for the candidate (−5.6%). Rows over 50 µs at the
 baseline take 1,489 ms, 1,132 ms after. Every row's spectral, orthogonality
 and determinant error is bit-identical in both pairs.
 
+Held out (seeds 9101 and 9202, against `8030ef4`): 1.383 and 1.375 s →
+1.328 and 1.333 s, and 1.314 and 1.314 s → 1.298 and 1.261 s, bit-identical.
+
 ## Factoring the refinement Jacobian once per step, 2026-10-27
 
 Baseline `149f4c3`, same corpus SHA-256, one runner process. Rejected. No code.
@@ -1056,6 +1064,107 @@ runs: 5.677 and 5.631 s at the baseline, 5.662 and 5.663 s for the
 candidate. 10,511 rows changed spectral error, 5,306 smaller and 5,205
 larger, and the corpus maximum rose from `1.78e-14` to `1.87e-14` on row
 1,073,805.
+
+## Pin pairs that leave one cluster copy, 2026-10-27
+
+Baseline `e9bcf65`, same corpus SHA-256, binaries built before the runs.
+Kept as an empirical prune, not a lossless gate. These pairs can still win:
+one did on the corpus, and a later rung solved that row. Off the corpus, a
+row that only such a pair reaches falls to Interior and the numerical
+ladder.
+
+In `two_step` the pin-pair loop is 45% of its time on losing pairs: 521,246
+pairs at 1.17 µs. 217,135 of those pass every pair-level gate and lose all
+their candidates. On clustered data, `inherits_clusters` needs `s − 1`
+copies of each delta cluster in `mu = [t1, t2, m, pp/m]`. Sorting losing and
+winning pairs by how many copies `t1` and `t2` leave to `m` and `pp/m`:
+
+| Copies left | Losing pairs | Time | Winning pairs |
+|---|---|---|---|
+| none needed (all simple) | 61,299 | 202 ms | 93,799 |
+| 0 | 30,514 | 132 ms | 32,296 |
+| 1 | 118,058 | 173 ms | 1 |
+| 2 or more | 7,264 | 14 ms | 0 |
+
+Trying the one-copy pairs last in each pass gave bit-identical output, but
+Radical rows only went from 1,730 to 1,700 ms, because most of those pairs
+sit in calls that win nothing. Skipping them instead, two alternating
+full-corpus runs took 5.622 and 5.632 s at the baseline, and 5.465 and 5.447
+s for the candidate (−3.0%). p99 latency fell from 32.1 to 29.0 µs. One row
+changes, its error falls, and every row passes. Rows above `1e-14` stay at
+557, and the maximum stays at `1.780e-14`.
+
+An exact form of the prune does not pay. Testing the β-closure at
+`β* = v + pp/v` before rooting is not a necessary condition, because
+`lift_beta_roots` normalizes every lifted root to the unit circle. A root
+`m_raw = 2v` becomes the candidate `v`, while its β is `2v + pp/(2v)`. The
+first test that is exact comes after the lift. On the one-copy losing pairs
+(1.70 µs each), the β-closure and the gates before it take 0.37 µs, rooting
+and lifting 0.77 µs, and the candidates 0.56 µs. An exact test therefore
+saves at most the candidate stage, whose candidates `inherits_clusters`
+already rejects before `try_mu`.
+
+## Three-Givens charts from vertex cones, 2026-10-27
+
+Baseline `423b607`, same corpus SHA-256, one process, rung census by
+`solve_report` over every row. Rejected. No code.
+
+At a permutation vertex the chart invariants move by `sum (1 - x_k) d_k`
+to first order, with `d_k` the vertex value with plane `k` swapped minus the
+vertex value, so the triple of planes whose cone contains the target offset
+([research](research.md#charts-at-a-vertex-are-chosen-by-carathéodory))
+selects a chart. Both placements were measured:
+
+| Placement | Rung moves | Total solve time |
+|---|---|---|
+| After `BOUNDARY_HEAD`, all 24 vertices | Numerical → Interior 370 (34.7 → 56.7 ms), Klein → Interior 1,210, Interior → Numerical 34 | 5,749 → 6,698 ms |
+| Before `BOUNDARY_HEAD`, 4 nearest vertices | Numerical → Interior 267 (25.2 → 42.5 ms), Klein → Interior 889, Interior → Numerical 53 | 5,749 → 6,806 ms |
+
+The rule finds charts the schedule misses, but the rows it moves out of
+Numerical get slower, and the cone search costs more than the scheduled
+charts it would replace.
+
+## Inverse-problem witness after early and split, 2026-10-27
+
+Baseline `aa9105f`, same corpus SHA-256, binaries built before the runs.
+Kept. Also measured on the held-out sets `s9101` and `s9202`, with 98,081
+and 98,016 rows from fresh seeds.
+
+`8030ef4` placed `inverse_algebraic` before `solve_primary`. On held-out
+`s9101` Numerical rows, `PROF=1` showed it at 71 µs a call, 104 ms over
+1,463 calls, and it won 429. `early` and `split`, at about 9 µs each, won 746
+of the rows that reached them. It now runs inside `solve_primary` after
+`split` and before the random starts, which still catches the corpus row it
+was added for.
+
+| Set | Baseline | Candidate |
+|---|---|---|
+| Corpus (two alternating runs) | 5.511, 5.447 s | 5.416, 5.481 s |
+| `s9101` | 1.378 s, p99 169 µs | 1.256 s (−8.8%), p99 142 µs |
+| `s9202` | 1.236 s, p99 157 µs | 1.162 s (−6.0%), p99 136 µs |
+
+Every row passes on all three sets. On the corpus 272 spectral errors
+change (55 up). Rows above `1e-14` stay at 557, and the maximum stays at
+`1.780e-14`. The held-out maxima stay at `2.004e-14` and `2.060e-14`.
+
+## Held-out transfer of the 2026-10-27 commits
+
+Each commit was run against its parent on the held-out sets `s9101` and
+`s9202` (98,081 and 98,016 rows, fresh seeds), from frozen binaries. The
+times are the mean of two alternating runs. The `812c8cc` baseline is the
+`31e0cd3` runs from the row above. Every row passes for every commit, and
+the held-out maxima stay at `2.004e-14` and `2.060e-14`.
+
+| Commit | Corpus | `s9101` | `s9202` | Held-out rows changed |
+|---|---|---|---|---|
+| `d2e66d7` spanning-tree vertex frames | −6.2% | −3.3% | −2.7% | 1,300 and 1,272, half up |
+| `31e0cd3` Face e1 parallelogram | −5.6% | −0.8% | −0.9% | none |
+| `812c8cc` random starts before near-wall | −2.4% | −1.9% | −3.2% | 88 and 94 |
+| `ee83b91` one-copy pin-pair prune | −3.0% | −3.7% | −2.1% | 3 and 1 |
+| `c7b586b` inverse witness after split | 0% | −8.8% | −6.0% | (see its entry) |
+
+The corpus over-weights confluent rows, which the Face gate targets. The
+prune changed 4 held-out rows, and every one of them still passes.
 
 ## Retired interfaces
 

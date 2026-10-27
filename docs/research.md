@@ -624,9 +624,10 @@ $v_k = \cos^2\theta_k \approx 1 - X_k^2/2$, a small perturbation of the
 linear map $x \mapsto \sum x_k h_k$ on the simplicial cone. For an offset in
 the interior of such a cone the inverse function theorem gives a real root of
 the chart's degree-6 polynomial. So near every vertex value, the target
-selects its chart: the three $h_k$ whose cone contains the offset. The solver's
-schedule of 16 charts chosen by measured coverage is replaced by a rule with
-a proof, and the shell at the boundary of the trace hull is its domain. On the
+selects its chart: the three $h_k$ whose cone contains the offset, a rule
+with a proof whose domain is the shell at the boundary of the trace hull. As
+a solver stage it is slower than the measured 16-chart schedule, before or
+after it ([log](optimization.md#three-givens-charts-from-vertex-cones-2026-10-27)). On the
 240 regular rows that the scheduled charts miss, 221 have their offset inside
 the second-order cone of some vertex, and the chart the rule selects has a
 real root on 198 of them; a probe of all 384 (permutation, plane triple)

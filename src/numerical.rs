@@ -708,6 +708,9 @@ fn solve_primary(problem: &Problem, c: [f64; 3], g: [f64; 3], t: [f64; 3]) -> Op
     if let Some(o) = problem.split(seed, 1e-14, SPECTRAL_TOLERANCE, None) {
         return Some(o);
     }
+    if let Some(o) = inverse_algebraic(problem, c, g, t) {
+        return Some(o);
+    }
     if let Some(o) = random_starts(problem, &mut seed, &[0.0]) {
         return Some(o);
     }
@@ -796,8 +799,7 @@ pub(crate) fn solve(problem: &Problem, c: [f64; 3], g: [f64; 3], t: [f64; 3]) ->
     {
         return None;
     }
-    inverse_algebraic(problem, c, g, t)
-        .or_else(|| solve_primary(problem, c, g, t))
+    solve_primary(problem, c, g, t)
         .or_else(|| near_commuting(problem))
         .or_else(|| inverse_factor(problem, c, g, t))
         .or_else(|| inverse_factor(&Problem::new(g, c, t), g, c, t).map(|o| o.transpose()))

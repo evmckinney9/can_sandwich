@@ -77,6 +77,23 @@ fn inherits_clusters(mu: &[C; 4], delta: &[C; 4], dcl: &Clusters4) -> bool {
     })
 }
 
+/// Cluster copies that `inherits_clusters` still needs from the free roots
+/// of `mu = [t1, t2, m, pp / m]`.
+fn missing_copies(t1: C, t2: C, delta: &[C; 4], dcl: &Clusters4) -> usize {
+    (0..dcl.k)
+        .map(|cluster| {
+            let v = delta[dcl.cluster_rep(cluster)];
+            let have = [t1, t2]
+                .iter()
+                .filter(|&&r| (r - v).norm_sqr() < 1e-8)
+                .count();
+            dcl.cluster_len(cluster)
+                .saturating_sub(1)
+                .saturating_sub(have)
+        })
+        .sum()
+}
+
 impl Frame {
     pub(crate) fn matrix(&self, a: &[C; 4]) -> Mat4 {
         let c = self.c;
@@ -1693,12 +1710,18 @@ pub(crate) fn two_step<R>(
             // p99 by 30% but demotes low-multiplicity pins past the cap; sorting
             // within each pass loses the entire win, so the effect is pass
             // membership, not order.  The open question is which pin is correct.
+            // A pair that leaves exactly one cluster copy to the free roots
+            // passes the inheritance gate only if a free root lands on that
+            // copy. On the corpus 118,058 such pairs lost and one won, a row
+            // that a later rung then solves, so these pairs are not tried.
+            // This is an empirical prune, not a proof: such a pair can win.
             for pair in pairs[..npairs].iter().filter(|pair| {
-                if cap == usize::MAX {
+                let in_pass = if cap == usize::MAX {
                     pair.raw_index >= 6
                 } else {
                     pair.raw_index < cap
-                }
+                };
+                in_pass && (all_simple || missing_copies(pair.t1, pair.t2, &delta, &dcl) != 1)
             }) {
                 let (t1, t2) = (pair.t1, pair.t2);
                 let tp = crate::algebraic::prof::start();
