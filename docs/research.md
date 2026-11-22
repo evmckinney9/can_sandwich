@@ -1137,6 +1137,78 @@ studies below:
   ordering-0 Haar holes, but $U(2)$ alone misses generic $1+3$ walls and
   triple-root targets by the no-go theorem above.
 
+### Exact 3×3 wall closure (degree ≤ 9) and sparse-chart CAD (degree 30)
+
+Two algebraic gaps in the exact procedures above close cleanly using univariate
+real root isolation (verified in Julia with FLINT/Arb via `Arblib.jl`, without
+grids, Newton iteration, or continuation):
+
+- **Exact $3\times 3$ Horn-wall solver (degree $\le 9$).** On a $1+3$ wall, the
+  linear equation $p^{\mathsf T} P g = e_1(t)$ cuts the $3\times 3$ Birkhoff
+  polytope $\mathcal{B}_3$ to a convex polygon $\Pi_2$. Whenever $\partial \Pi_2$
+  contains no root (the 154 positive-orthant wall routes that two-Givens charts
+  miss), any feasible fiber satisfies $\max_{\Pi_2} H > 0$ at an interior
+  critical point $\partial_u H = \partial_v H = 0$ of Heron's quartic. The
+  $6\times 6$ Sylvester resultant of these two cubics eliminates one coordinate
+  to a univariate polynomial of degree $\le 9$; a single quartic $H(s) = 0$
+  along the segment from the critical point to any vertex of $\Pi_2$ (where
+  $H \le 0$) then isolates an exact orthostochastic point. On the 70
+  distinct-root exact $1+3$ wall rows in the 1,200-row stratified sample, this
+  solved 69/69 strictly feasible wall rows (`worst_spec = 1.98e-14`, including
+  8 positive-orthant interior routes via the degree-$\le 9$ resultant), with
+  the 70th resolved as a permutation vertex (`4.97e-16`).
+- **Exact decidability of sparse-column charts (degree 30).** In a sparse-column
+  chart $(i, j; k)$, dropping column 1 or 2 in Cramer's rule gives
+  $\deg_\tau V(\tau) = (0, 0, 1, 1)$ and $D(\tau) = c\,\tau(1 - \tau)$ with no
+  spurious linear factor. Symbolically in PARI/GP, the $s$-discriminant of the
+  Heron quartic factors as
+  $$\operatorname{disc}_s H(P(\tau, s)) = \tau^2 (1 - \tau)^2 \Delta_{30}(\tau),$$
+  where $\Delta_{30}(\tau)$ is irreducible of degree 30. Together with the
+  endpoints $\tau \in \{0, 1\}$ (exact $n = 3$, degree $\le 9$) and the nine
+  Birkhoff boundary intersections $B_m(\tau, s) = 0 \cap \{H = 0\}$ (degree
+  $\le 6$ three-Givens curves), the real roots in $(0, 1)$ form an exact 1D
+  cylindrical algebraic decomposition of the $\tau$-interval: feasibility is
+  constant on each open subinterval, so evaluating the quartic/cubic in $s$ at
+  the isolated critical $\tau$ values and interval midpoints decides and
+  constructs every chart witness without grids or refinement. On repeated-target
+  tangency row `193,235`, FLINT/Arb isolation of $\Delta_{30}(\tau) = 0$
+  recovers an ordering-0 witness directly (`spec_err = 8.69e-16`,
+  `‖OᵀO − I‖ = 2.83e-16`).
+- **Three-ordering coverage on degenerate strata and stratified corpus numbers.**
+  Writing the three cyclic orderings symmetrically as
+  $P^{1/2} O_1 G^{1/2} O_3 T^{-1/2} O_2 = I_4$, any triple-root or $2+2$
+  double-double target $T$ supplies a centralizer $SO(3)$ or $SO(2)^2$ acting on
+  $O_2$ and $O_3$, and any two repeated spectra supply $SO(2)_L \times SO(2)_R$
+  in the ordering placing them as inputs. Every such orbit intersects the 48
+  sparse-column/row charts $\mathcal{S}_{48}$ transversely with nonzero winding,
+  covering every degenerate stratum and an open neighborhood of it (predicting
+  the exact `16/24` and `12/24` sparse-row hit counts observed in ordering 1 on
+  $2+2$ and triple-root holes such as rows `924,614` and `877,374`). Targeted
+  adversarial tests (200 equilateral/near-equilateral triples, 248 all-three
+  near-$2+2$/triple triples, 300 extreme equilateral/well-spaced/near-$2+2$
+  triples, 30 exact $2+1+1$ double-root targets, and 16 twelve-dimensional
+  Nelder–Mead runs minimizing $\max(h_0, h_1, h_2)$) found 0 misses for the
+  three-ordering atlas $\mathcal{S}_{144}$. Even targeting ordering 0 alone
+  while maximizing the second-smallest target gap $g_2(T)$ only reached
+  $h_0 < 0$ by collapsing $g_1(T) < 5\times 10^{-4}$ (leaving $h_1, h_2 > 0.03$).
+  Proving that $\mathcal{S}_{144}$ has no floating hole in the regular interior
+  away from walls and degenerate strata remains open.
+
+  Tested with pure closed forms and 256-bit FLINT/Arb univariate isolation
+  (zero grids, zero Newton, `tol = 5e-14`), the solver passed **1,271 / 1,271**
+  in 18.7 s (`worst_spec = 2.98e-14`, `worst_orth = 2.31e-15`): 45/45 ordering-0
+  Haar holes (`5.20e-15`), 1/1 tangency row `193,235` (`9.16e-16`), 25/25 mod-2
+  all-even rows (`2.30e-15`), 87/87 `vertex` (`4.53e-15`), 104/104 `on_wall`
+  (`6.01e-15`), 680/680 `repeated_root` (`1.42e-14`), 29/29 `near_facet`
+  (`2.98e-14`), and 300/300 `generic` (`1.56e-14`). On extended corpus stress
+  suites it passed **42 / 42** `tests/stress_declines.csv` rows (`slack_p` down
+  to `1.1e-14`, `worst_spec = 3.28e-14`, `worst_orth = 3.85e-16`, all 42 via
+  $\Delta_{30}(\tau) = 0$), **100 / 100** early regression/boundary rows
+  (`2.18e-14`), and **1,999 / 1,999** strictly feasible rows in a 2,000-row
+  uniform stride across `cases.bin` (`4.93e-14`; the single remaining row
+  `1,073,050` has exact Horn margin $-2^{-53}$ and lands on vertex $I_4$ at
+  `2.19e-13`).
+
 ## Previous work
 
 Earlier studies, experiments, scripts, and data are preserved under
