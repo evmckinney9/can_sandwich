@@ -1078,6 +1078,65 @@ studies below:
   converged on 189/200 random triples (median 77 sweeps) but was rejected as
   numerical convergence.
 
+### Single-ordering fixed atlases cannot cover, and polar variety bounds
+
+- **Single-ordering no-go theorem.** Write $K = P^{1/2} O G^{1/2}$ with
+  $P = \operatorname{diag}(e^{2i\alpha_k})$ and
+  $G = \operatorname{diag}(e^{2i\beta_j})$. For any unit eigenvalue
+  $u = e^{2i\gamma}$ of $P O G O^{\mathsf T}$, a real vector $x \in \mathbb{R}^4$
+  satisfies $K K^{\mathsf T} x = u x$ if and only if $e^{-i\gamma} K^{\mathsf T} x$
+  is real, that is,
+  $$\ker\!\left(P^{1/2} O G O^{\mathsf T} P^{1/2} - e^{2i\gamma} I\right)
+    = \ker\!\left(\left(O \circ \sin(\alpha_k + \beta_j - \gamma)\right)^{\mathsf T}\right).$$
+  At a generic triple-root target $T = (u, u, u, v)$, the real Hadamard product
+  $O \circ \sin(\alpha_k + \beta_j - \gamma)$ has rank $1$, so every witness is
+  a rigid Cauchy orthogonal matrix
+  $O_{kj} = a_k b_j / \sin(\alpha_k + \beta_j - \gamma)$, determined up to
+  finite signs by Cauchy residues. As $(P, G, u)$ varies, these isolated
+  witnesses sweep an open dense subset of $SO(4)$. Consequently, **no**
+  data-independent proper closed subvariety $Z \subsetneq SO(4)$ of any
+  dimension $\le 5$ can meet every feasible fiber in a single ordering
+  $(P, G \to T)$: triple-root fibers avoid $Z$ on a nonempty open set of
+  $(P, G, u)$, and compactness of $Z$ extends the gap to an open neighborhood
+  of distinct-root triples.
+
+  This accounts for the 45 ordering-0 Haar misses of the sparse-column atlas:
+  all 45 sit near codimension-2 target singularities (12 near triple roots, 33
+  near $2+2$ double-doubles), with maximum second-smallest target gap `0.076`
+  turns. For maximally spaced inputs $P, G \approx e^{i\pi/4}(1, i, -1, -i)$
+  (gaps `0.25`), the ordering-0 hole rate rises to `0.75%` of Haar samples
+  (15/2,000, all near-triple, max first gap `0.062`, max second gap `0.141`).
+- **Polar varieties on $F_t$ (coverage by design, degree $\ge 200$).** Since
+  $F_t$ is compact and every critical point of the spectral map is a split
+  frame, any smooth function $h: SO(4) \to \mathbb{R}$ attains its extrema on
+  $\mathcal{P}_h(p, g) \cup \{\text{split frames}\}$. For $h(O) = O_{00}$, the
+  Lagrange multiplier equations force commuting real symmetric arrowhead
+  matrices $C$ (for $K K^{\mathsf T}$) and $C' = K^* C K$ (for
+  $K^{\mathsf T} K$), putting $O$ in the Cauchy-like form
+  $O_{ik} = O_{i0} O_{0k}(y_k - x_i)/(d_i - d'_k)$ with
+  $x_i = \cot(\alpha_0 - \alpha_i)$, $y_k = \cot(\beta_0 - \beta_k)$. In the
+  shared arrowhead eigenbasis, all 16 reality equations reduce to a degree-4
+  rational map
+  $\tilde{H}(z) = B(z)/A(z) = 1 - 2i\sum_{m=1}^4 w_m e^{i\theta_m}/(\mu_m - z)$
+  whose real degree-6 numerator $|B(z)|^2 - A(z)^2$ maps its six real roots
+  onto $\{p_i/p_0, g_j/g_0\}$. Monodromy in `HomotopyContinuation.jl` measures
+  its generic complex degree as **254** (modulo $\Gamma$, fixed $\pm T$).
+  Testing the maximally symmetric $\Gamma$-invariant and
+  $SO(2)^2_L \times SO(2)^2_R$-invariant quadric
+  $h(O) = \operatorname{tr}(J O J O^{\mathsf T})$ ($J = \operatorname{diag}(1,1,-1,-1)$)
+  still yields **$> 199$** distinct orthostochastic points $B_{ij} = O_{ij}^2$
+  modulo $\Gamma$ at the 400-solution monodromy cap, and $(k_-)_{11}$ in
+  $SO(3) \times SO(3)$ exceeds **500**. This proves a bounded-degree algebraic
+  construction with coverage by design exists, but runtime elimination on the
+  full 3D fiber is not practical.
+- **4D $U(2)$ subgroups.** Letting $k_-$ vary on a single-axis circle
+  $O = L_q R_{r(\phi)} \in SO(3)_+ \times SO(2)_-$ preserves a commuting
+  $\mathbb{Z}/2 \times \mathbb{Z}/2$ sign symmetry that cuts the fixed-$\phi$
+  slice degree from 16 to **8** (32 in $S^3$, 16 in $SO(3)_+$, measured in
+  `HomotopyContinuation.jl`). The three pure axes hit 5/5 of the worst
+  ordering-0 Haar holes, but $U(2)$ alone misses generic $1+3$ walls and
+  triple-root targets by the no-go theorem above.
+
 ## Previous work
 
 Earlier studies, experiments, scripts, and data are preserved under
