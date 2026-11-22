@@ -1025,6 +1025,59 @@ frame off that point.
   solution only with every entry of $B$ positive, which the charts cannot
   produce.
 
+### Palindromes, twisted hops, and equivariant wall involutions
+
+Exploration of closed-form families, monodromy degrees, and equivariant
+topology produced four structural findings before the atlas and handshake
+studies below:
+
+- **Palindromes ($c = g$, closed form).** For symmetric inputs $C \cdot U \cdot C$,
+  imposing $L^{\mathsf T} = S L S$ with a diagonal sign matrix $S$ reduces
+  $\operatorname{spec}(M M^{\mathsf T}) = \operatorname{spec}(R P)^2$ for a
+  symmetric involution $R = L S$. The rank-1 family $L = S(I - 2 v v^{\mathsf T})$
+  ($a \otimes a^\dagger$) satisfies a linear Cauchy system in $x_j = v_j^2$, and
+  the rank-2 family $L = I - 2 W W^{\mathsf T}$ ($(n \cdot \sigma) \otimes (m \cdot \sigma)$)
+  satisfies linear equations in the squared Plücker coordinates $\pi_{jl}$ of
+  $W \in \operatorname{Gr}_{\mathbb{R}}(2, 4)$, cutting out a conic whose
+  $\pi_{jl} = 0$ faces reduce to quadratics. Together they cover 60,000/60,000
+  Haar and 8,000/8,000 QLR-feasible $(c, c, t)$ triples (`max Weyl err = 1.3e-15`,
+  with 0.1% interior islands solved by degenerate pencil quadratics); ZVSW's
+  B-gate and Huang's $\sqrt{\text{iSWAP}}$ sit inside the rank-2 family.
+  Requiring $M^{\mathsf T} = A M A^{-1}$ with fixed $A$ forces $A^2$ to be
+  scalar and restricts $c - g$ to a finite partner set (codimension 3).
+- **Twisted hops, spectator conservation, and monodromy census.** On the SPE
+  line $\operatorname{CAN}(1/2, \beta, 0)$, the twisted family
+  $P \cdot (R_y(\phi) \otimes C) \cdot Q$ reads off one Weyl coordinate directly
+  as $\phi/\pi$ (verified 300/300); classification shows this decoupling
+  requires two coordinates in $\{0, 1/2\}$ (the SPE line and its Weyl images).
+  Chaining hops through collapsing junctions cancels every coordinate of the
+  slack gate and keeps the map $(p, r, \text{torus}) \mapsto (c, g, t)$ at
+  rank 8 (codimension 1). Across every tested finite-root generic section, the
+  monodromy group was full symmetric: $S_8$ for rank-1 at $c \neq g$, $S_{16}$
+  for the generic slice, $S_{48}$ for the $3+1$ degenerate twist, and $S_{56}$
+  for the $2+2$ pin.
+- **Equivariant wall involutions and Borsuk–Ulam.** For each pair $(j, k)$,
+  the reflection symmetry $\tau_{jk}(L) = R_k L R_j$ ($R_m = I - 2 e_m e_m^{\mathsf T}$)
+  preserves every fiber $F_t$ and acts freely off the $(j, k)$ $1+3$ wall. Near
+  an extremal wall (definite coupling Hessian $H$), the fiber contains an
+  antipodal $S^2$-bundle with $w_1^2 \neq 0$, so Borsuk–Ulam forces every chart
+  zeroing two $\tau_{jk}$-odd entries—including the six adapted sparse-column
+  and sparse-row charts—to meet $F_t$ (verified 50/50 synthetic vs 1/50 control,
+  and 217/222 vs 0/111 on isolated-root extremal boundary rows). The same
+  equivariant local model unifies $2+2$ walls ($S^3$, three odd zeros; 28/30 vs
+  0/30) and signed-permutation vertices (six 1D components recovering the 16
+  spanning-tree Carathéodory cones; 256/257 predicted hits on shell). Blow-up
+  chart coordinates at the split frame raise real-row exact solves from 8–9 to
+  169/174 on well-conditioned targets. However, the local guarantee fades away
+  from walls (and fails for indefinite $H$), and global topological certificates
+  cancel in the interior: mod-2 orbit counts fail on 0.07% of generic corpus
+  rows, and signed integer Brouwer degree on all $2{,}304 \times 2$ three-Givens
+  cubes gave **0 / 20** nonzero degrees on the first 20 all-even rows (**0 / 5**
+  across all three cyclic orderings, $6{,}912 \times 2$ cubes).
+- **Rejected iterative relay.** Alternating exact nearest-orbit projections
+  converged on 189/200 random triples (median 77 sweeps) but was rejected as
+  numerical convergence.
+
 ## Previous work
 
 Earlier studies, experiments, scripts, and data are preserved under
