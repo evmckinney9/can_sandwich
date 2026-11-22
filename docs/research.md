@@ -1209,6 +1209,105 @@ grids, Newton iteration, or continuation):
   `1,073,050` has exact Horn margin $-2^{-53}$ and lands on vertex $I_4$ at
   `2.19e-13`).
 
+### Path geometry, existing decompositions, and hinged handshakes
+
+A separate line of work tried to shift the work from elimination on a fixed
+chart into symmetric-space geometry and existing two-qubit decompositions:
+
+- **Symmetric-space framing and rigid-tiling obstruction.** In the magic basis,
+  a solution $O \in SO(4)$ to $P O G O^{\mathsf T} \sim \pm T$ is a geodesic
+  triangle in $SU(4)/SO(4)$ with side lengths $(c, g, t)$ in the Weyl chamber
+  $\mathcal{W}$. Cutting that triangle across a generic intermediate gate $y$
+  (palindromes, B-gate chains, fans, strips) always stalls at gluing the shared
+  local frame: a generic rung has only a finite stabilizer in $SO(4)$, so the
+  gluing step returns three coupled spectral invariants or six coupled
+  angle-closure equations. Likewise, any circuit decomposition whose
+  intermediate frames read off sequentially without solving coupled equations
+  conserves a Pauli subgroup, recovering the known Klein-coset and Givens-tree
+  sections. Decomposing via a shared real Borel flag gives a closed-form
+  section only where that Schubert cell meets the fiber; expressing the triangle
+  as a Lagrangian 5-gon reduces feasibility to $\operatorname{tr}(P^{-1} S_3) = e_1(G)$
+  (two real equations) on the 6D interlacing polytope, without yet giving an
+  exact covering slice.
+- **Hinged split-side handshakes.** Splitting one commuting canonical side along
+  its Cartan torus, $G = D_1 D_2$ (writing $A = D_1^{-1}$, $B = G A$, $\det A = 1$),
+  and forcing the intermediate gate $Y = A^{-1/2} (O^{\mathsf T} P O) A^{-1/2}$
+  onto a codimension-2 edge of $\mathcal{W}$ creates a continuous hinge
+  stabilizer that collapses the shared 6D frame to a projector and makes both
+  halves linear in its squared coordinates. $\mathcal{W}$ has two such edges:
+  - **Singlet ($3+1$) edge $L_{3+1} = \{(\alpha, \alpha, \alpha)\}$ ($\operatorname{SWAP}^\alpha$, hinge $SO(3)$, 4D in $SO(4)$, 1D fiber).**
+    With $Y = e^{i\alpha} I + (e^{-3i\alpha} - e^{i\alpha}) v v^{\mathsf T}$,
+    both halves are linear in $w_k = v_k^2 \in \Delta_3$. This 4D variety
+    contains every $1+3$ split frame and every triple-root Cauchy witness
+    ($D_1 = G^{-1}$), hitting 4/4 near-triple ordering-0 $\mathcal{S}_{48}$
+    Haar holes (`877,374`, `922,916`, `818,778`, `1,039,863`). In one slot,
+    double-node corners ($a_i = a_j$ or $b_i = b_j$) solve 312/327 (95.4%)
+    generic rows of the 1,200-row sample. Trying all three split slots resolves
+    7 of the 15 misses, leaving **8 / 327** generic rows (such as `782,269`)
+    and all 6/6 near-$2+2$ $\mathcal{S}_{48}$ holes (such as `924,614`) with no
+    singlet handshake curve in any slot.
+  - **CNOT ($2+2$) edge $L_{2+2} = \{(\theta, 0, 0)\}$ ($\operatorname{RXX}(\theta)$, hinge $SO(2) \times SO(2)$, 5D in $SO(4)$, 2D fiber).**
+    With $Y = e^{i\theta} I - 2i\sin\theta\, W W^{\mathsf T}$ for a real
+    2-plane $W \in \operatorname{Gr}_{\mathbb{R}}(2, 4)$, the handshake variety
+    has codimension 1 in $SO(4)$, intersects generic 3D fibers in a 2D surface
+    $\Sigma$, and contains every $2+2$ double-double target fiber. In the six
+    squared Plücker coordinates $\pi_{jk} = (\det W_{\{j,k\}})^2 \in \Delta_5$,
+    all six spectral invariants of both halves are strictly linear:
+    $$\sum_{j<k} (a_j + a_k)\,\pi_{jk} = \frac{e^{i\theta} e_1(A) - e_1(P)}{2i\sin\theta},
+      \qquad
+      \sum_{j<k} \sin(\alpha_j + \alpha_k - \theta)\,\pi_{jk} = \frac{e_2(P) - e_2(A)}{4\sin\theta},$$
+    together with the matching equations for $(B, \pm T)$ and $\sum \pi_{jk} = 1$.
+    Splitting into complementary pair-sums $s_m = \pi_{jk} + \pi_{lm}$ and
+    pair-differences $r_m = \pi_{jk} - \pi_{lm}$ ($\tilde{r}_m = r_m \sin\theta$)
+    decouples all four $e_1$ equations from $s$ into one $4\times 4$ linear
+    system for $(\tilde{r}_1, \tilde{r}_2, \tilde{r}_3, \cos\theta)$, followed
+    by one $3\times 3$ linear system for $(s_1, s_2, s_3)$ (verified to
+    `9.99e-16` on $\cos\theta$, `4.77e-15` on $s$, and `6.72e-18` on the
+    Plücker quadric). Because $r_m^2 = \tilde{r}_m^2 / (1 - \cos^2\theta)$ is
+    rational without square roots, the entire 2D fiber $\Sigma$ reduces to a
+    single explicit scalar rational equation $H_{\text{Plück}}(A) = 0$ on
+    $\mathbb{T}^3$ subject to $|\cos\theta(A)| < 1$ and $s_m(A) \ge |r_m(A)|$.
+- **Exact codimension-2 slices of the 2D edge fiber $\Sigma$.**
+  - **Disjoint double-corner ($a_0 = a_1 = u$, $b_2 = b_3 = v = \pm\sqrt{g_2 g_3}/u$, degree 6 in $u^2$).**
+    Half A and Half B decouple into two $4\times 4$ linear systems sharing
+    $(\pi_{01}, \pi_{23})$ with exact involution $\pi_{01}(u, z^{-1}) = \pi_{23}(u, z)$
+    ($z = e^{i\theta}$). Matching $r_1^A = r_1^B$ solves $\cos\theta$ as a
+    rational function of $u$; matching $s_1^A = s_1^B$ reduces to an irreducible
+    **degree-6 polynomial in $U = u^2$** (confirmed in PARI/GP with Frobenius
+    cycle types `[1, 1, 2, 2]`, `[2, 4]`, and `[3, 3]`). On the remaining 1D
+    cross-Plücker coordinate $s = \pi_{02}$, the $s^2$ terms cancel in
+    $b^2 - c^2$, collapsing the quartic Plücker relation to a **quadratic** in
+    $s$, followed by closed-form SVD/eigenbasis reconstruction of $W$ and
+    $O \in SO(4)$. Without numerical refinement, this degree-6 section solves
+    **72.0%** of Haar rows in three slots (144/200; 78/200 in one slot;
+    `max_err = 3.40e-12`), **33/45** strictly positive ordering-0
+    $\mathcal{S}_{48}$ Haar holes (including `924,614` at `4.00e-14` and
+    `877,374` at `1.51e-15`), and **7/8** generic rows missed by all three
+    singlet-handshake slots.
+  - **Other slices of $\Sigma$.** The overlapping double-corner
+    ($a_0 = a_1, b_1 = b_2$) gives a rational $\cos\theta(u)$ and a degree-28
+    univariate in $u$ (hitting `864,800` and `750,017`); pure CNOT
+    ($\theta = \pi/2$) block-diagonalizes $s$ and $r$ into two $3\times 3$
+    linear systems; and a single corner plus one vanishing Plücker coordinate
+    ($a_i = a_j, \pi_{kl} = 0$) collapses the Plücker relation to $b^2 = c^2$
+    and hits `782,269`, but has bidegrees $(u:36, w:18)$ and $(u:41, w:24)$.
+- **Coverage of the 3-slot edge and singlet union.** Parameterized directly on
+  $\operatorname{Gr}_{\mathbb{R}}(2, 4)$ across all three split slots, the 5D
+  edge handshake hits **45/45** ordering-0 $\mathcal{S}_{48}$ Haar holes,
+  **8/8** three-slot singlet-handshake misses, **40/40** equilateral and
+  near-equilateral triples, **20/20** small-angle near-identity triples, **5/5**
+  equilateral-plus-exact-triple-$T$ triples (`a = 0.1..0.7`), and **10/10**
+  Haar disjoint-double-corner misses. It misses only triples where multiple
+  gates sit simultaneously on or near the $3+1$ singlet edge (19/20 all-three
+  near-triple, 17/20 exact triple-$P$ plus triple-$G$), where the singlet
+  handshake hits **20/20** exact triple-$P$ plus triple-$G$ and resolves the
+  remaining near-triple miss. Across all tested adversarial families, the union
+  of the 5D edge ($2+2$) and 4D singlet ($3+1$) handshakes has **0 misses**.
+  Proving coverage by design for that union—and extracting a point from the 2D
+  surface $\Sigma = \{H_{\text{Plück}}(A) = 0\} \subset \mathbb{T}^3$ by a
+  bounded-degree exact procedure without missing small closed components—remains
+  open.
+
 ## Previous work
 
 Earlier studies, experiments, scripts, and data are preserved under
